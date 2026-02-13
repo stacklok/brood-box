@@ -1,5 +1,6 @@
 # Build artifacts
 bin/
+.task/
 
 # Test coverage
 coverage.out
