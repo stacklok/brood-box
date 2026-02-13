@@ -39,6 +39,7 @@ func rootCmd() *cobra.Command {
 		sshPort   uint16
 		cfgPath   string
 		image     string
+		debug     bool
 	)
 
 	cmd := &cobra.Command{
@@ -63,6 +64,7 @@ Example:
 				sshPort:   sshPort,
 				cfgPath:   cfgPath,
 				image:     image,
+				debug:     debug,
 			})
 		},
 		SilenceUsage:  true,
@@ -75,6 +77,7 @@ Example:
 	cmd.Flags().Uint16Var(&sshPort, "ssh-port", 0, "Host SSH port (0 = auto-pick)")
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/sandbox-agent/config.yaml)")
 	cmd.Flags().StringVar(&image, "image", "", "Override OCI image reference")
+	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
 
 	// Add list subcommand.
 	cmd.AddCommand(listCmd())
@@ -104,6 +107,7 @@ type runFlags struct {
 	sshPort   uint16
 	cfgPath   string
 	image     string
+	debug     bool
 }
 
 func run(parentCtx context.Context, agentName string, flags runFlags) error {
@@ -113,7 +117,9 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	var logLevel slog.LevelVar
 	logLevel.Set(slog.LevelInfo)
-	if lvl := os.Getenv("SLOG_LEVEL"); lvl != "" {
+	if flags.debug {
+		logLevel.Set(slog.LevelDebug)
+	} else if lvl := os.Getenv("SLOG_LEVEL"); lvl != "" {
 		if err := logLevel.UnmarshalText([]byte(lvl)); err != nil {
 			return fmt.Errorf("invalid SLOG_LEVEL %q: %w", lvl, err)
 		}
