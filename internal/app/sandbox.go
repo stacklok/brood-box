@@ -147,7 +147,7 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 	sessionOpts := infrassh.SessionOpts{
 		Host:    "127.0.0.1",
 		Port:    sandboxVM.SSHPort(),
-		User:    "root",
+		User:    "sandbox",
 		KeyPath: sandboxVM.SSHKeyPath(),
 		Command: ag.Command,
 	}

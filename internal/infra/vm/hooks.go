@@ -28,7 +28,7 @@ ip addr add 192.168.127.2/24 dev eth0
 ip route add default via 192.168.127.1
 echo "nameserver 192.168.127.1" > /etc/resolv.conf
 # SSH (dropbear — no /var/empty ownership requirement)
-mkdir -p /root/.ssh && chmod 700 /root/.ssh
+mkdir -p /home/sandbox/.ssh && chmod 700 /home/sandbox/.ssh && chown sandbox:sandbox /home/sandbox/.ssh
 dropbear -F -E -R -p 22 &
 # Workspace
 mkdir -p /workspace
@@ -37,10 +37,10 @@ wait
 `
 
 // InjectSSHKeys returns a RootFS hook that writes the given public key
-// into /root/.ssh/authorized_keys in the guest rootfs.
+// into /home/sandbox/.ssh/authorized_keys in the guest rootfs.
 func InjectSSHKeys(pubKey string) func(string, *image.OCIConfig) error {
 	return func(rootfsPath string, _ *image.OCIConfig) error {
-		sshDir := filepath.Join(rootfsPath, "root", ".ssh")
+		sshDir := filepath.Join(rootfsPath, "home", "sandbox", ".ssh")
 		if err := os.MkdirAll(sshDir, 0o700); err != nil {
 			return fmt.Errorf("creating .ssh dir: %w", err)
 		}
@@ -48,6 +48,15 @@ func InjectSSHKeys(pubKey string) func(string, *image.OCIConfig) error {
 		authKeysPath := filepath.Join(sshDir, "authorized_keys")
 		if err := os.WriteFile(authKeysPath, []byte(pubKey+"\n"), 0o600); err != nil {
 			return fmt.Errorf("writing authorized_keys: %w", err)
+		}
+
+		// Chown to sandbox user (UID/GID 1000) — rootfs hooks run as the
+		// host user so the files are created with host ownership.
+		if err := os.Chown(sshDir, 1000, 1000); err != nil {
+			return fmt.Errorf("chowning .ssh dir: %w", err)
+		}
+		if err := os.Chown(authKeysPath, 1000, 1000); err != nil {
+			return fmt.Errorf("chowning authorized_keys: %w", err)
 		}
 
 		return nil

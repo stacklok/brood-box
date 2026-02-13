@@ -143,7 +143,7 @@ func TestSandboxRunner_Run(t *testing.T) {
 	// Verify terminal session was started.
 	assert.Equal(t, "127.0.0.1", terminal.runOpts.Host)
 	assert.Equal(t, uint16(2222), terminal.runOpts.Port)
-	assert.Equal(t, "root", terminal.runOpts.User)
+	assert.Equal(t, "sandbox", terminal.runOpts.User)
 	assert.Equal(t, []string{"test-cmd"}, terminal.runOpts.Command)
 
 	// Verify VM was stopped.
