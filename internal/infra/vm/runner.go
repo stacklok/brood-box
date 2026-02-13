@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 
@@ -109,10 +110,18 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 		return nil, fmt.Errorf("reading public key: %w", err)
 	}
 
-	// Determine SSH port.
+	// Resolve SSH port. When 0, pick a free ephemeral port up front so
+	// we know the actual port before propolis starts. The runner inside
+	// propolis would also bind :0, but it never reports the resolved
+	// port back — so we reserve one ourselves and pass the concrete value.
 	sshPort := cfg.SSHPort
 	if sshPort == 0 {
-		sshPort = 0 // propolis will pick an ephemeral port
+		picked, pickErr := pickFreePort()
+		if pickErr != nil {
+			return nil, fmt.Errorf("picking ephemeral SSH port: %w", pickErr)
+		}
+		sshPort = picked
+		r.logger.Info("picked ephemeral SSH port", "port", sshPort)
 	}
 
 	// Build propolis options.
@@ -128,22 +137,9 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 			InjectEnvFile(cfg.EnvVars),
 		),
 		propolis.WithInitOverride("/sandbox-init.sh"),
-		propolis.WithPostBoot(func(ctx context.Context, vm *propolis.VM) error {
-			// Find the actual SSH port from the VM's port forwards.
-			ports := vm.Ports()
-			var actualPort uint16
-			for _, p := range ports {
-				if p.Guest == 22 {
-					actualPort = p.Host
-					break
-				}
-			}
-			if actualPort == 0 {
-				return fmt.Errorf("SSH port forward not found")
-			}
-
-			r.logger.Info("waiting for SSH", "port", actualPort)
-			client := propolisssh.NewClient("127.0.0.1", actualPort, "root", privKeyPath)
+		propolis.WithPostBoot(func(ctx context.Context, _ *propolis.VM) error {
+			r.logger.Info("waiting for SSH", "port", sshPort)
+			client := propolisssh.NewClient("127.0.0.1", sshPort, "root", privKeyPath)
 			return client.WaitForReady(ctx)
 		}),
 	}
@@ -175,6 +171,7 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 
 	return &propolisVM{
 		vm:         pvm,
+		sshPort:    sshPort,
 		sshKeyPath: privKeyPath,
 		sshKeyDir:  keyDir,
 		logger:     r.logger,
@@ -184,6 +181,7 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 // propolisVM wraps a propolis.VM to implement our VM interface.
 type propolisVM struct {
 	vm         *propolis.VM
+	sshPort    uint16
 	sshKeyPath string
 	sshKeyDir  string
 	logger     *slog.Logger
@@ -201,13 +199,7 @@ func (v *propolisVM) Stop(ctx context.Context) error {
 }
 
 func (v *propolisVM) SSHPort() uint16 {
-	ports := v.vm.Ports()
-	for _, p := range ports {
-		if p.Guest == 22 {
-			return p.Host
-		}
-	}
-	return 0
+	return v.sshPort
 }
 
 func (v *propolisVM) DataDir() string {
@@ -226,4 +218,21 @@ func vmDataDir(name string) (string, error) {
 		return "", fmt.Errorf("determining home directory: %w", err)
 	}
 	return filepath.Join(home, ".config", "sandbox-agent", "vms", name), nil
+}
+
+// pickFreePort asks the kernel for a free TCP port by binding to :0, reading
+// the assigned port, then closing the listener. There is a small TOCTOU window
+// between closing the listener and propolis binding the same port, but in
+// practice this is reliable for localhost ephemeral ports.
+func pickFreePort() (uint16, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return 0, err
+	}
+	addr := ln.Addr().(*net.TCPAddr)
+	port := uint16(addr.Port)
+	if err := ln.Close(); err != nil {
+		return 0, fmt.Errorf("closing ephemeral listener: %w", err)
+	}
+	return port, nil
 }
