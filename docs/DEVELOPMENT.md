@@ -43,6 +43,12 @@ task verify
 | `task verify` | Full pipeline: fmt + lint + test |
 | `task run -- <args>` | Build and run with arguments |
 | `task clean` | Remove `bin/` and coverage files |
+| `task image-base` | Build base guest image |
+| `task image-claude-code` | Build claude-code guest image |
+| `task image-codex` | Build codex guest image |
+| `task image-opencode` | Build opencode guest image |
+| `task image-all` | Build all guest images |
+| `task image-push` | Push all images to GHCR |
 
 ## Project Layout
 
@@ -61,6 +67,11 @@ sandbox-agent/
 │       ├── config/loader.go      # YAML config file reader
 │       ├── vm/                   # Propolis VM runner + rootfs hooks
 │       └── ssh/terminal.go       # Interactive PTY SSH session
+├── images/                       # OCI guest image definitions
+│   ├── base/Containerfile        # Wolfi base: sshd, bash, git, coreutils
+│   ├── claude-code/Containerfile # Base + Claude Code binary
+│   ├── codex/Containerfile       # Base + Codex binary
+│   └── opencode/Containerfile    # Base + OpenCode binary
 ├── docs/                         # Documentation
 ├── Taskfile.yaml                 # Development task runner
 ├── CLAUDE.md                     # AI assistant instructions

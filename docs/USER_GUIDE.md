@@ -145,6 +145,49 @@ before the agent starts. Values are shell-escaped for safety.
 - **Terminal resize** (SIGWINCH) is forwarded to the VM session automatically.
 - Ephemeral SSH keys are generated per session and deleted on exit.
 
+## Building Guest Images
+
+sandbox-agent runs agents inside OCI images that boot as microVMs. Pre-built
+images are available from GHCR, but you can also build them locally.
+
+### Prerequisites
+
+- [Podman](https://podman.io/) (or Docker)
+
+### Build All Images
+
+```bash
+task image-all
+```
+
+This builds the base image first, then all three agent images in parallel:
+
+| Image | Contents |
+|-------|----------|
+| `ghcr.io/stacklok/sandbox-agent/base:latest` | Wolfi + sshd, bash, git, coreutils |
+| `ghcr.io/stacklok/sandbox-agent/claude-code:latest` | Base + Claude Code binary |
+| `ghcr.io/stacklok/sandbox-agent/codex:latest` | Base + Codex binary |
+| `ghcr.io/stacklok/sandbox-agent/opencode:latest` | Base + OpenCode binary |
+
+### Build Individual Images
+
+```bash
+task image-base          # Base image only
+task image-claude-code   # Claude Code (builds base if needed)
+task image-codex         # Codex (builds base if needed)
+task image-opencode      # OpenCode (builds base if needed)
+```
+
+### Push to GHCR
+
+```bash
+# Login first
+podman login ghcr.io
+
+# Build and push all images
+task image-push
+```
+
 ## Troubleshooting
 
 ### "agent not found: <name>"

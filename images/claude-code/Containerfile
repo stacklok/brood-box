@@ -1,0 +1,16 @@
+# SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+# Claude Code guest image for sandbox-agent.
+# Installs the Claude Code native binary (Bun-based) on top of the base image.
+FROM ghcr.io/stacklok/sandbox-agent/base:latest
+
+# Install Claude Code native binary
+RUN curl -fsSL https://claude.ai/install.sh | bash && \
+    mv /root/.local/bin/claude /usr/local/bin/claude
+
+# Set sandbox env vars that should be baked into the image
+ENV IS_SANDBOX=1
+ENV DISABLE_AUTOUPDATER=1
+ENV DISABLE_TELEMETRY=1
+ENV DISABLE_ERROR_REPORTING=1

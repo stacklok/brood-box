@@ -5,6 +5,7 @@ version: '3'
 
 vars:
   BINARY_NAME: sandbox-agent
+  IMAGE_REGISTRY: ghcr.io/stacklok/sandbox-agent
   VERSION:
     sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
   COMMIT:
@@ -19,6 +20,8 @@ vars:
 #   task test          → Run tests with race detector
 #   task lint          → Run linter
 #   task verify        → fmt + lint + test
+#   task image-all     → Build all OCI guest images
+#   task image-push    → Push all images to GHCR
 
 tasks:
   default:
@@ -99,3 +102,41 @@ tasks:
     cmds:
       - rm -rf bin/
       - rm -f coverage.out coverage.html
+
+  # --- OCI guest images ---
+
+  image-base:
+    desc: Build base guest image
+    cmds:
+      - podman build -t {{.IMAGE_REGISTRY}}/base:latest images/base/
+
+  image-claude-code:
+    desc: Build claude-code guest image
+    deps: [image-base]
+    cmds:
+      - podman build -t {{.IMAGE_REGISTRY}}/claude-code:latest images/claude-code/
+
+  image-codex:
+    desc: Build codex guest image
+    deps: [image-base]
+    cmds:
+      - podman build -t {{.IMAGE_REGISTRY}}/codex:latest images/codex/
+
+  image-opencode:
+    desc: Build opencode guest image
+    deps: [image-base]
+    cmds:
+      - podman build -t {{.IMAGE_REGISTRY}}/opencode:latest images/opencode/
+
+  image-all:
+    desc: Build all guest images
+    deps: [image-claude-code, image-codex, image-opencode]
+
+  image-push:
+    desc: Push all images to GHCR
+    deps: [image-all]
+    cmds:
+      - podman push {{.IMAGE_REGISTRY}}/base:latest
+      - podman push {{.IMAGE_REGISTRY}}/claude-code:latest
+      - podman push {{.IMAGE_REGISTRY}}/codex:latest
+      - podman push {{.IMAGE_REGISTRY}}/opencode:latest

@@ -16,13 +16,22 @@ import (
 
 // initScript is the guest init script that starts networking, SSH, and
 // mounts the workspace via virtio-fs.
+// Network uses static IP because propolis VirtualNetwork topology is fixed:
+// gateway 192.168.127.1, guest 192.168.127.2, DNS at 192.168.127.1.
 const initScript = `#!/bin/sh
 set -e
+# Loopback
 ip link set lo up
-udhcpc -i eth0 -s /etc/udhcpc/default.script 2>/dev/null || true
+# Network (static IP — propolis VirtualNetwork topology is fixed)
+ip link set eth0 up
+ip addr add 192.168.127.2/24 dev eth0
+ip route add default via 192.168.127.1
+echo "nameserver 192.168.127.1" > /etc/resolv.conf
+# SSH
 mkdir -p /root/.ssh && chmod 700 /root/.ssh
 mkdir -p /run/sshd
 /usr/sbin/sshd -D &
+# Workspace
 mkdir -p /workspace
 mount -t virtiofs workspace /workspace 2>/dev/null || true
 wait

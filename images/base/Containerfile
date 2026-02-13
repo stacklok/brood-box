@@ -1,0 +1,32 @@
+# SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
+# SPDX-License-Identifier: Apache-2.0
+
+# Base image for sandbox-agent guest VMs.
+# Provides: sshd, bash, git, ip, mount, curl, GNU coreutils/findutils/grep/sed/awk.
+FROM cgr.dev/chainguard/wolfi-base:latest
+
+RUN apk add --no-cache \
+    openssh-server \
+    openssh-client \
+    bash \
+    git \
+    ca-certificates-bundle \
+    iproute2 \
+    coreutils \
+    findutils \
+    grep \
+    sed \
+    gawk \
+    curl
+
+# Ensure /usr/local/bin exists (not present in Wolfi by default)
+RUN mkdir -p /usr/local/bin
+
+# Configure SSH: allow root login with key auth only
+RUN ssh-keygen -A && \
+    mkdir -p /run/sshd /root/.ssh && \
+    chmod 700 /root/.ssh && \
+    sed -i 's/#PermitRootLogin.*/PermitRootLogin yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PubkeyAuthentication.*/PubkeyAuthentication yes/' /etc/ssh/sshd_config && \
+    sed -i 's/#PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config && \
+    echo "PasswordAuthentication no" >> /etc/ssh/sshd_config
