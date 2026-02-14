@@ -11,6 +11,27 @@ import (
 	"github.com/stacklok/sandbox-agent/internal/domain/agent"
 )
 
+func TestReviewConfig_Defaults(t *testing.T) {
+	t.Parallel()
+
+	// Zero-value ReviewConfig means review is implicitly enabled (nil pointer).
+	var cfg ReviewConfig
+	assert.Nil(t, cfg.Enabled)
+	assert.Empty(t, cfg.ExcludePatterns)
+}
+
+func TestReviewConfig_Explicit(t *testing.T) {
+	t.Parallel()
+
+	enabled := true
+	cfg := ReviewConfig{
+		Enabled:         &enabled,
+		ExcludePatterns: []string{"*.log", "tmp/"},
+	}
+	assert.True(t, *cfg.Enabled)
+	assert.Equal(t, []string{"*.log", "tmp/"}, cfg.ExcludePatterns)
+}
+
 func TestMerge(t *testing.T) {
 	t.Parallel()
 

@@ -15,8 +15,12 @@ import (
 	"github.com/stacklok/sandbox-agent/internal/domain/agent"
 	"github.com/stacklok/sandbox-agent/internal/domain/config"
 	infraconfig "github.com/stacklok/sandbox-agent/internal/infra/config"
+	"github.com/stacklok/sandbox-agent/internal/infra/diff"
+	"github.com/stacklok/sandbox-agent/internal/infra/exclude"
+	"github.com/stacklok/sandbox-agent/internal/infra/review"
 	infrassh "github.com/stacklok/sandbox-agent/internal/infra/ssh"
 	"github.com/stacklok/sandbox-agent/internal/infra/vm"
+	"github.com/stacklok/sandbox-agent/internal/infra/workspace"
 )
 
 // RunOpts holds runtime options for a sandbox execution.
@@ -35,6 +39,12 @@ type RunOpts struct {
 
 	// ImageOverride overrides the agent's OCI image reference.
 	ImageOverride string
+
+	// ReviewEnabled controls whether snapshot isolation is active.
+	ReviewEnabled bool
+
+	// ExcludePatterns are additional gitignore-style patterns to exclude.
+	ExcludePatterns []string
 }
 
 // SandboxDeps holds all dependencies for SandboxRunner.
@@ -45,6 +55,12 @@ type SandboxDeps struct {
 	CfgLoader   *infraconfig.Loader
 	EnvProvider agent.EnvProvider
 	Logger      *slog.Logger
+
+	// Snapshot isolation dependencies (nil = disabled).
+	WorkspaceCloner workspace.WorkspaceCloner
+	Reviewer        review.Reviewer
+	Flusher         review.Flusher
+	Differ          diff.Differ
 
 	// Stdin, Stdout, Stderr are the terminal file descriptors for the
 	// interactive SSH session. These must be real *os.File values (not
@@ -58,29 +74,37 @@ type SandboxDeps struct {
 // SandboxRunner orchestrates the full sandbox VM lifecycle:
 // resolve agent, load config, collect env, start VM, run terminal, stop VM.
 type SandboxRunner struct {
-	registry    agent.Registry
-	vmRunner    vm.VMRunner
-	terminal    infrassh.TerminalSession
-	cfgLoader   *infraconfig.Loader
-	envProvider agent.EnvProvider
-	logger      *slog.Logger
-	stdin       *os.File
-	stdout      *os.File
-	stderr      *os.File
+	registry        agent.Registry
+	vmRunner        vm.VMRunner
+	terminal        infrassh.TerminalSession
+	cfgLoader       *infraconfig.Loader
+	envProvider     agent.EnvProvider
+	logger          *slog.Logger
+	workspaceCloner workspace.WorkspaceCloner
+	reviewer        review.Reviewer
+	flusher         review.Flusher
+	differ          diff.Differ
+	stdin           *os.File
+	stdout          *os.File
+	stderr          *os.File
 }
 
 // NewSandboxRunner creates a new SandboxRunner with the given dependencies.
 func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 	return &SandboxRunner{
-		registry:    deps.Registry,
-		vmRunner:    deps.VMRunner,
-		terminal:    deps.Terminal,
-		cfgLoader:   deps.CfgLoader,
-		envProvider: deps.EnvProvider,
-		logger:      deps.Logger,
-		stdin:       deps.Stdin,
-		stdout:      deps.Stdout,
-		stderr:      deps.Stderr,
+		registry:        deps.Registry,
+		vmRunner:        deps.VMRunner,
+		terminal:        deps.Terminal,
+		cfgLoader:       deps.CfgLoader,
+		envProvider:     deps.EnvProvider,
+		logger:          deps.Logger,
+		workspaceCloner: deps.WorkspaceCloner,
+		reviewer:        deps.Reviewer,
+		flusher:         deps.Flusher,
+		differ:          deps.Differ,
+		stdin:           deps.Stdin,
+		stdout:          deps.Stdout,
+		stderr:          deps.Stderr,
 	}
 }
 
@@ -135,14 +159,48 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 		s.logger.Info("forwarding environment variables", "keys", keys)
 	}
 
-	// 4. Start VM.
+	// 4. Set up workspace path (possibly with snapshot isolation).
+	workspacePath := opts.Workspace
+	var snap *workspace.Snapshot
+	var matcher exclude.Matcher
+
+	if opts.ReviewEnabled && s.workspaceCloner != nil {
+		s.logger.Info("creating workspace snapshot for review isolation")
+
+		excludeCfg, err := exclude.LoadExcludeConfig(workspacePath, opts.ExcludePatterns, s.logger)
+		if err != nil {
+			return fmt.Errorf("loading exclude config: %w", err)
+		}
+
+		matcher = exclude.NewMatcherFromConfig(excludeCfg)
+
+		snap, err = s.workspaceCloner.CreateSnapshot(ctx, workspacePath, matcher)
+		if err != nil {
+			return fmt.Errorf("creating workspace snapshot: %w", err)
+		}
+		// Cleanup runs LAST in LIFO defer order.
+		defer func() {
+			s.logger.Info("cleaning up workspace snapshot")
+			if cleanErr := snap.Cleanup(); cleanErr != nil {
+				s.logger.Error("failed to clean up snapshot", "error", cleanErr)
+			}
+		}()
+
+		s.logger.Info("workspace snapshot created",
+			"original", snap.OriginalPath,
+			"snapshot", snap.SnapshotPath,
+		)
+		workspacePath = snap.SnapshotPath
+	}
+
+	// 5. Start VM with (possibly overridden) workspace path.
 	vmCfg := vm.VMConfig{
 		Name:          "sandbox-" + ag.Name,
 		Image:         ag.Image,
 		CPUs:          ag.DefaultCPUs,
 		Memory:        ag.DefaultMemory,
 		SSHPort:       opts.SSHPort,
-		WorkspacePath: opts.Workspace,
+		WorkspacePath: workspacePath,
 		EnvVars:       envVars,
 	}
 
@@ -150,17 +208,6 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 	if err != nil {
 		return fmt.Errorf("starting sandbox VM: %w", err)
 	}
-
-	// 5. Ensure VM is stopped on exit. Use a fresh context because the
-	// parent ctx may already be cancelled (e.g. SIGINT triggered shutdown).
-	defer func() {
-		s.logger.Info("shutting down sandbox VM")
-		stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer stopCancel()
-		if stopErr := sandboxVM.Stop(stopCtx); stopErr != nil {
-			s.logger.Error("failed to stop VM", "error", stopErr)
-		}
-	}()
 
 	// 6. Run interactive terminal session.
 	sessionOpts := infrassh.SessionOpts{
@@ -179,5 +226,64 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 		"command", ag.Command,
 	)
 
-	return s.terminal.Run(ctx, sessionOpts)
+	termErr := s.terminal.Run(ctx, sessionOpts)
+
+	// 7. Stop VM EXPLICITLY before diff/review.
+	// This prevents the agent from modifying snapshot files between diff and flush.
+	// Use a fresh context because the parent ctx may already be cancelled
+	// (e.g. SIGINT triggered shutdown).
+	s.logger.Info("shutting down sandbox VM")
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopCancel()
+	if stopErr := sandboxVM.Stop(stopCtx); stopErr != nil {
+		s.logger.Error("failed to stop VM", "error", stopErr)
+	}
+
+	// 8. Diff + review + flush (only when snapshot isolation is active).
+	if snap != nil && s.differ != nil && s.reviewer != nil && s.flusher != nil {
+		if reviewErr := s.runReview(snap, matcher); reviewErr != nil {
+			s.logger.Error("review/flush failed", "error", reviewErr)
+			// Don't mask terminal errors with review errors.
+		}
+	}
+
+	return termErr
+}
+
+// runReview performs the diff → review → flush sequence after the VM is stopped.
+func (s *SandboxRunner) runReview(snap *workspace.Snapshot, matcher exclude.Matcher) error {
+	s.logger.Info("computing workspace diff")
+	changes, err := s.differ.Diff(snap.OriginalPath, snap.SnapshotPath, matcher)
+	if err != nil {
+		return fmt.Errorf("computing diff: %w", err)
+	}
+
+	if len(changes) == 0 {
+		s.logger.Info("no workspace changes detected")
+		return nil
+	}
+
+	s.logger.Info("workspace changes detected", "count", len(changes))
+
+	result, err := s.reviewer.Review(changes)
+	if err != nil {
+		return fmt.Errorf("reviewing changes: %w", err)
+	}
+
+	if len(result.Accepted) == 0 {
+		s.logger.Info("no changes accepted")
+		return nil
+	}
+
+	s.logger.Info("flushing accepted changes",
+		"accepted", len(result.Accepted),
+		"rejected", len(result.Rejected),
+	)
+
+	if err := s.flusher.Flush(snap.OriginalPath, snap.SnapshotPath, result.Accepted); err != nil {
+		return fmt.Errorf("flushing changes: %w", err)
+	}
+
+	s.logger.Info("changes flushed successfully")
+	return nil
 }

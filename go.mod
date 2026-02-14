@@ -7,11 +7,14 @@ go 1.25.7
 
 require (
 	github.com/creack/pty v1.1.24
+	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
+	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stacklok/propolis v0.1.0
 	github.com/stretchr/testify v1.11.1
 	github.com/vishvananda/netlink v1.3.1
 	golang.org/x/crypto v0.48.0
+	golang.org/x/sys v0.41.0
 	golang.org/x/term v0.40.0
 	gopkg.in/yaml.v3 v3.0.1
 )
@@ -54,5 +57,4 @@ require (
 	go.opentelemetry.io/otel/metric v1.40.0 // indirect
 	go.opentelemetry.io/otel/trace v1.40.0 // indirect
 	golang.org/x/sync v0.19.0 // indirect
-	golang.org/x/sys v0.41.0 // indirect
 )

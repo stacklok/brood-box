@@ -34,6 +34,11 @@ DDD layered architecture with dependency injection:
 - `internal/infra/ssh/` — Interactive PTY terminal session
 - `internal/infra/config/` — YAML config loader
 - `internal/infra/agent/` — Built-in agent registry
+- `internal/domain/snapshot/` — Snapshot isolation domain types (FileChange, ExcludeConfig, ReviewDecision)
+- `internal/infra/exclude/` — Gitignore-compatible exclude pattern loading + two-tier matching
+- `internal/infra/workspace/` — COW workspace cloning (FICLONE on Linux, clonefile on macOS, copy fallback)
+- `internal/infra/diff/` — SHA-256 based file diff engine
+- `internal/infra/review/` — Interactive per-file terminal review + flusher with hash verification
 
 **Rule**: `domain/` NEVER imports from `infra/` or `app/`. Interfaces live in domain, implementations in infra.
 
@@ -49,6 +54,27 @@ DDD layered architecture with dependency injection:
 - Prefer table-driven tests. Test files go alongside the code they test.
 - Imperative mood commit messages, capitalize, no trailing period, limit subject to 50 chars.
 - IMPORTANT: Never use `git add -A`. Stage specific files only.
+
+## Workspace Snapshot Isolation
+
+By default, the workspace is mounted as a COW snapshot. After the agent finishes, you review changes per-file before they touch the real workspace.
+
+- `--no-review` — Disable snapshot isolation, mount workspace directly
+- `--exclude "pattern"` — Additional gitignore-style exclude patterns (repeatable)
+- `.sandboxignore` — Per-workspace exclude file (gitignore syntax) in workspace root
+- Security patterns (`.env*`, `*.pem`, `.ssh/`, etc.) are **non-overridable** — cannot be negated
+- Performance patterns (`node_modules/`, `vendor/`, etc.) can be negated in `.sandboxignore`
+
+Config file (`~/.config/sandbox-agent/config.yaml`):
+```yaml
+review:
+  enabled: true
+  exclude_patterns:
+    - "*.log"
+    - "tmp/"
+```
+
+Execution order: create snapshot → start VM → terminal → stop VM → diff → review → flush → cleanup.
 
 ## Things That Will Bite You
 

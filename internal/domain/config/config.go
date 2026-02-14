@@ -12,8 +12,22 @@ type Config struct {
 	// Defaults specifies default resource limits.
 	Defaults DefaultsConfig `yaml:"defaults"`
 
+	// Review configures workspace snapshot isolation.
+	Review ReviewConfig `yaml:"review"`
+
 	// Agents maps agent names to configuration overrides.
 	Agents map[string]AgentOverride `yaml:"agents"`
+}
+
+// ReviewConfig configures workspace snapshot isolation and review behavior.
+type ReviewConfig struct {
+	// Enabled controls whether snapshot isolation is active.
+	// When nil, defaults to true (enabled).
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// ExcludePatterns are additional gitignore-style patterns to exclude
+	// from the workspace snapshot.
+	ExcludePatterns []string `yaml:"exclude_patterns,omitempty"`
 }
 
 // DefaultsConfig specifies default VM resource limits.

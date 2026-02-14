@@ -18,8 +18,11 @@ import (
 	"github.com/stacklok/sandbox-agent/internal/domain/agent"
 	infraagent "github.com/stacklok/sandbox-agent/internal/infra/agent"
 	infraconfig "github.com/stacklok/sandbox-agent/internal/infra/config"
+	"github.com/stacklok/sandbox-agent/internal/infra/diff"
+	"github.com/stacklok/sandbox-agent/internal/infra/review"
 	infrassh "github.com/stacklok/sandbox-agent/internal/infra/ssh"
 	"github.com/stacklok/sandbox-agent/internal/infra/vm"
+	"github.com/stacklok/sandbox-agent/internal/infra/workspace"
 	"github.com/stacklok/sandbox-agent/internal/version"
 )
 
@@ -33,13 +36,15 @@ func main() {
 
 func rootCmd() *cobra.Command {
 	var (
-		cpus      uint32
-		memory    uint32
-		workspace string
-		sshPort   uint16
-		cfgPath   string
-		image     string
-		debug     bool
+		cpus     uint32
+		memory   uint32
+		wsPath   string
+		sshPort  uint16
+		cfgPath  string
+		image    string
+		debug    bool
+		noReview bool
+		excludes []string
 	)
 
 	cmd := &cobra.Command{
@@ -48,23 +53,31 @@ func rootCmd() *cobra.Command {
 		Long: `sandbox-agent boots a microVM, mounts your workspace, forwards secrets,
 and drops into an interactive terminal session with a coding agent.
 
+By default, the workspace is mounted as a COW snapshot. After the agent
+finishes, you review changes per-file before they touch the real workspace.
+Use --no-review to disable snapshot isolation and mount the workspace directly.
+
 Supported agents: claude-code, codex, opencode
 
 Example:
   sandbox-agent claude-code
   sandbox-agent codex --cpus 4 --memory 4096
-  sandbox-agent opencode --workspace /path/to/project`,
+  sandbox-agent opencode --workspace /path/to/project
+  sandbox-agent claude-code --no-review
+  sandbox-agent claude-code --exclude "*.log" --exclude "tmp/"`,
 		Args:    cobra.ExactArgs(1),
 		Version: fmt.Sprintf("%s (%s)", version.Version, version.Commit),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return run(cmd.Context(), args[0], runFlags{
 				cpus:      cpus,
 				memory:    memory,
-				workspace: workspace,
+				workspace: wsPath,
 				sshPort:   sshPort,
 				cfgPath:   cfgPath,
 				image:     image,
 				debug:     debug,
+				noReview:  noReview,
+				excludes:  excludes,
 			})
 		},
 		SilenceUsage:  true,
@@ -73,11 +86,13 @@ Example:
 
 	cmd.Flags().Uint32Var(&cpus, "cpus", 0, "Number of vCPUs (0 = agent default)")
 	cmd.Flags().Uint32Var(&memory, "memory", 0, "RAM in MiB (0 = agent default)")
-	cmd.Flags().StringVar(&workspace, "workspace", "", "Workspace directory to mount (default: current directory)")
+	cmd.Flags().StringVar(&wsPath, "workspace", "", "Workspace directory to mount (default: current directory)")
 	cmd.Flags().Uint16Var(&sshPort, "ssh-port", 0, "Host SSH port (0 = auto-pick)")
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/sandbox-agent/config.yaml)")
 	cmd.Flags().StringVar(&image, "image", "", "Override OCI image reference")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging")
+	cmd.Flags().BoolVar(&noReview, "no-review", false, "Disable workspace snapshot isolation (mount workspace directly)")
+	cmd.Flags().StringSliceVar(&excludes, "exclude", nil, "Additional exclude patterns for workspace snapshot (repeatable)")
 
 	// Add list subcommand.
 	cmd.AddCommand(listCmd())
@@ -108,6 +123,8 @@ type runFlags struct {
 	cfgPath   string
 	image     string
 	debug     bool
+	noReview  bool
+	excludes  []string
 }
 
 func run(parentCtx context.Context, agentName string, flags runFlags) error {
@@ -130,13 +147,18 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	slog.SetDefault(logger)
 
 	// Resolve workspace.
-	workspace := flags.workspace
-	if workspace == "" {
+	ws := flags.workspace
+	if ws == "" {
 		var err error
-		workspace, err = os.Getwd()
+		ws, err = os.Getwd()
 		if err != nil {
 			return fmt.Errorf("getting current directory: %w", err)
 		}
+	}
+
+	// Clean up stale snapshot dirs from previous crashes.
+	if !flags.noReview {
+		workspace.CleanupStaleSnapshots(ws, logger)
 	}
 
 	// Build registry with config-based custom agents.
@@ -165,8 +187,22 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		}
 	}
 
+	// Determine review mode. Default is enabled unless --no-review is set
+	// or config explicitly disables it.
+	reviewEnabled := !flags.noReview
+	if reviewEnabled && cfg != nil && cfg.Review.Enabled != nil && !*cfg.Review.Enabled {
+		reviewEnabled = false
+	}
+
+	// Merge exclude patterns from config and CLI.
+	var excludePatterns []string
+	if cfg != nil {
+		excludePatterns = append(excludePatterns, cfg.Review.ExcludePatterns...)
+	}
+	excludePatterns = append(excludePatterns, flags.excludes...)
+
 	// Wire dependencies.
-	runner := app.NewSandboxRunner(app.SandboxDeps{
+	deps := app.SandboxDeps{
 		Registry:    registry,
 		VMRunner:    vm.NewPropolisRunner("", logger),
 		Terminal:    infrassh.NewInteractiveSession(logger),
@@ -176,14 +212,28 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		Stdin:       os.Stdin,
 		Stdout:      os.Stdout,
 		Stderr:      os.Stderr,
-	})
+	}
+
+	// Wire snapshot isolation dependencies only when review is enabled.
+	if reviewEnabled {
+		deps.WorkspaceCloner = workspace.NewFSWorkspaceCloner(
+			workspace.NewPlatformCloner(), logger,
+		)
+		deps.Reviewer = review.NewInteractiveReviewer(os.Stdin, os.Stdout)
+		deps.Flusher = review.NewFSFlusher()
+		deps.Differ = diff.NewFSDiffer()
+	}
+
+	runner := app.NewSandboxRunner(deps)
 
 	err = runner.Run(ctx, agentName, app.RunOpts{
-		CPUs:          flags.cpus,
-		Memory:        flags.memory,
-		Workspace:     workspace,
-		SSHPort:       flags.sshPort,
-		ImageOverride: flags.image,
+		CPUs:            flags.cpus,
+		Memory:          flags.memory,
+		Workspace:       ws,
+		SSHPort:         flags.sshPort,
+		ImageOverride:   flags.image,
+		ReviewEnabled:   reviewEnabled,
+		ExcludePatterns: excludePatterns,
 	})
 
 	if err != nil {
