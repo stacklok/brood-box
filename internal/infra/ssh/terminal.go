@@ -35,7 +35,7 @@ type SessionOpts struct {
 	KeyPath string
 
 	// Command is the command to execute in the VM.
-	// It will be wrapped: source /etc/sandbox-env && cd /workspace && exec <cmd>
+	// It will be wrapped: . /etc/sandbox-env && cd /workspace && exec <cmd>
 	Command []string
 
 	// Stdin is the input stream (typically os.Stdin).
@@ -201,8 +201,8 @@ func (s *InteractiveSession) handleResize(ctx context.Context, stdin *os.File, s
 // workspace, and executes the command.
 func buildCommand(command []string) string {
 	var parts []string
-	parts = append(parts, "source /etc/profile 2>/dev/null || true")
-	parts = append(parts, "source /etc/sandbox-env 2>/dev/null || true")
+	parts = append(parts, ". /etc/profile 2>/dev/null || true")
+	parts = append(parts, ". /etc/sandbox-env 2>/dev/null || true")
 	parts = append(parts, "cd /workspace")
 	parts = append(parts, "exec "+strings.Join(command, " "))
 	return strings.Join(parts, " && ")
