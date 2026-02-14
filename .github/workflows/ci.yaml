@@ -38,6 +38,11 @@ jobs:
         run: |
           sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
 
+      - name: Build sandbox-init (for go:embed)
+        run: |
+          mkdir -p internal/infra/vm/initbin
+          CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o internal/infra/vm/initbin/sandbox-init ./cmd/sandbox-init
+
       - name: Run tests
         run: |
           task test
@@ -63,6 +68,11 @@ jobs:
         run: |
           sh -c "$(curl --location https://taskfile.dev/install.sh)" -- -d -b /usr/local/bin
 
+      - name: Build sandbox-init (for go:embed)
+        run: |
+          mkdir -p internal/infra/vm/initbin
+          CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o internal/infra/vm/initbin/sandbox-init ./cmd/sandbox-init
+
       - name: Run linter
         run: |
           task lint
@@ -83,6 +93,11 @@ jobs:
       - name: Configure Git for private modules
         run: |
           git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Build sandbox-init (for go:embed)
+        run: |
+          mkdir -p internal/infra/vm/initbin
+          CGO_ENABLED=0 GOOS=linux go build -ldflags "-s -w" -o internal/infra/vm/initbin/sandbox-init ./cmd/sandbox-init
 
       - name: Verify compilation
         run: |

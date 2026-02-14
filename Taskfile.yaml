@@ -29,8 +29,23 @@ tasks:
     cmds:
       - task --list
 
+  build-init:
+    desc: Cross-compile sandbox-init binary for guest VM
+    env:
+      CGO_ENABLED: "0"
+      GOOS: linux
+    cmds:
+      - mkdir -p internal/infra/vm/initbin
+      - go build -ldflags "-s -w" -o internal/infra/vm/initbin/sandbox-init ./cmd/sandbox-init
+    sources:
+      - cmd/sandbox-init/**/*.go
+      - internal/guest/**/*.go
+    generates:
+      - internal/infra/vm/initbin/sandbox-init
+
   build:
     desc: Build sandbox-agent binary (pure Go, no CGO)
+    deps: [build-init]
     env:
       CGO_ENABLED: "0"
     cmds:
@@ -102,6 +117,7 @@ tasks:
     cmds:
       - rm -rf bin/
       - rm -f coverage.out coverage.html
+      - rm -f internal/infra/vm/initbin/sandbox-init
 
   # --- OCI guest images ---
 

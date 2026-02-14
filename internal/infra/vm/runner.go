@@ -134,10 +134,10 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg VMConfig) (VM, error) {
 		propolis.WithPorts(propolis.PortForward{Host: sshPort, Guest: 22}),
 		propolis.WithRootFSHook(
 			InjectSSHKeys(pubKey),
-			InjectInitScript(),
+			InjectInitBinary(),
 			InjectEnvFile(cfg.EnvVars),
 		),
-		propolis.WithInitOverride("/sandbox-init.sh"),
+		propolis.WithInitOverride("/sandbox-init"),
 		propolis.WithPostBoot(func(ctx context.Context, _ *propolis.VM) error {
 			r.logger.Info("waiting for SSH", "port", sshPort)
 			client := propolisssh.NewClient("127.0.0.1", sshPort, "sandbox", privKeyPath)

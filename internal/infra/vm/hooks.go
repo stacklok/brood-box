@@ -12,42 +12,8 @@ import (
 	"github.com/stacklok/propolis/image"
 
 	domainagent "github.com/stacklok/sandbox-agent/internal/domain/agent"
+	"github.com/stacklok/sandbox-agent/internal/infra/vm/initbin"
 )
-
-// initScript is the guest init script that starts networking, SSH, and
-// mounts the workspace via virtio-fs.
-// Network uses static IP because propolis VirtualNetwork topology is fixed:
-// gateway 192.168.127.1, guest 192.168.127.2, DNS at 192.168.127.1.
-const initScript = `#!/bin/sh
-set -e
-# Loopback
-ip link set lo up
-# Network (static IP — propolis VirtualNetwork topology is fixed)
-ip link set eth0 up
-ip addr add 192.168.127.2/24 dev eth0
-ip route add default via 192.168.127.1
-echo "nameserver 192.168.127.1" > /etc/resolv.conf
-# SSH (dropbear — no /var/empty ownership requirement)
-mkdir -p /home/sandbox/.ssh && chmod 700 /home/sandbox/.ssh && chown sandbox:sandbox /home/sandbox/.ssh
-dropbear -F -E -R -p 22 &
-# Workspace
-mkdir -p /workspace
-mounted=false
-for i in 1 2 3 4 5; do
-  if mount -t virtiofs workspace /workspace 2>/tmp/mount-err; then
-    mounted=true
-    break
-  fi
-  sleep 0.5
-done
-if [ "$mounted" = "true" ]; then
-  chown sandbox:sandbox /workspace
-else
-  echo "WARNING: virtiofs workspace mount failed after 5 attempts:" >&2
-  cat /tmp/mount-err >&2
-fi
-wait
-`
 
 // InjectSSHKeys returns a RootFS hook that writes the given public key
 // into /home/sandbox/.ssh/authorized_keys in the guest rootfs.
@@ -76,13 +42,14 @@ func InjectSSHKeys(pubKey string) func(string, *image.OCIConfig) error {
 	}
 }
 
-// InjectInitScript returns a RootFS hook that writes the sandbox init
-// script to /sandbox-init.sh in the guest rootfs.
-func InjectInitScript() func(string, *image.OCIConfig) error {
+// InjectInitBinary returns a RootFS hook that writes the embedded sandbox-init
+// binary to /sandbox-init in the guest rootfs. This replaces the former shell
+// init script and its dependencies (dropbear, iproute2, mount).
+func InjectInitBinary() func(string, *image.OCIConfig) error {
 	return func(rootfsPath string, _ *image.OCIConfig) error {
-		initPath := filepath.Join(rootfsPath, "sandbox-init.sh")
-		if err := os.WriteFile(initPath, []byte(initScript), 0o755); err != nil {
-			return fmt.Errorf("writing init script: %w", err)
+		initPath := filepath.Join(rootfsPath, "sandbox-init")
+		if err := os.WriteFile(initPath, initbin.Binary, 0o755); err != nil {
+			return fmt.Errorf("writing init binary: %w", err)
 		}
 		return nil
 	}
@@ -107,7 +74,7 @@ func InjectEnvFile(envVars map[string]string) func(string, *image.OCIConfig) err
 		}
 
 		envPath := filepath.Join(etcDir, "sandbox-env")
-		if err := os.WriteFile(envPath, []byte(sb.String()), 0o644); err != nil {
+		if err := os.WriteFile(envPath, []byte(sb.String()), 0o600); err != nil {
 			return fmt.Errorf("writing env file: %w", err)
 		}
 

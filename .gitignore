@@ -1,6 +1,7 @@
 # Build artifacts
 bin/
 .task/
+internal/infra/vm/initbin/sandbox-init
 
 # Test coverage
 coverage.out
