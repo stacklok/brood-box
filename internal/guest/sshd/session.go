@@ -43,7 +43,7 @@ type sessionState struct {
 }
 
 func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
-	defer ch.Close()
+	defer func() { _ = ch.Close() }()
 
 	state := &sessionState{
 		env: make(map[string]string),
@@ -195,7 +195,7 @@ func (s *Server) runWithPTY(ch ssh.Channel, cmd *exec.Cmd, state *sessionState, 
 		s.logger.Error("failed to start command with PTY", "error", err)
 		return 1
 	}
-	defer ptmx.Close()
+	defer func() { _ = ptmx.Close() }()
 
 	// Handle window-change requests.
 	go func() {

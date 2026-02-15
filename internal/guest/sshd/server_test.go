@@ -68,7 +68,7 @@ func dialSSH(t *testing.T, port int, signer ssh.Signer) *ssh.Client {
 	}
 	client, err := ssh.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), clientCfg)
 	require.NoError(t, err)
-	t.Cleanup(func() { client.Close() })
+	t.Cleanup(func() { _ = client.Close() })
 	return client
 }
 
@@ -80,7 +80,7 @@ func TestAuthorizedKeyAccepted(t *testing.T) {
 
 	session, err := client.NewSession()
 	require.NoError(t, err)
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	out, err := session.CombinedOutput("echo connected")
 	require.NoError(t, err)
@@ -111,7 +111,7 @@ func TestExecCommand(t *testing.T) {
 
 	session, err := client.NewSession()
 	require.NoError(t, err)
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	out, err := session.CombinedOutput("echo hello")
 	require.NoError(t, err)
@@ -126,7 +126,7 @@ func TestExecCommandEnv(t *testing.T) {
 
 	session, err := client.NewSession()
 	require.NoError(t, err)
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	out, err := session.CombinedOutput("echo $TEST_VAR")
 	require.NoError(t, err)
@@ -141,7 +141,7 @@ func TestExitCode(t *testing.T) {
 
 	session, err := client.NewSession()
 	require.NoError(t, err)
-	defer session.Close()
+	defer func() { _ = session.Close() }()
 
 	err = session.Run("exit 42")
 	require.Error(t, err)

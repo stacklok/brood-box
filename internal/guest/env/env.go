@@ -27,7 +27,7 @@ func Load(path string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("opening env file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	reader := io.LimitReader(f, maxFileSize)
 	scanner := bufio.NewScanner(reader)

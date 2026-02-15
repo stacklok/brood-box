@@ -138,14 +138,14 @@ func (s *Server) Close() {
 }
 
 func (s *Server) handleConnection(conn net.Conn) {
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, s.sshCfg)
 	if err != nil {
 		s.logger.Warn("SSH handshake failed", "error", err)
 		return
 	}
-	defer sshConn.Close()
+	defer func() { _ = sshConn.Close() }()
 
 	// Discard all global requests.
 	go ssh.DiscardRequests(reqs)
