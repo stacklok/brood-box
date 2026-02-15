@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"sync"
@@ -34,6 +35,26 @@ type windowChangeRequest struct {
 	Rows    uint32
 	Width   uint32
 	Height  uint32
+}
+
+type signalRequest struct {
+	Signal string
+}
+
+// sshSignalToOS maps SSH signal names to OS signals.
+var sshSignalToOS = map[string]syscall.Signal{
+	"ABRT": syscall.SIGABRT,
+	"FPE":  syscall.SIGFPE,
+	"HUP":  syscall.SIGHUP,
+	"ILL":  syscall.SIGILL,
+	"INT":  syscall.SIGINT,
+	"KILL": syscall.SIGKILL,
+	"PIPE": syscall.SIGPIPE,
+	"QUIT": syscall.SIGQUIT,
+	"SEGV": syscall.SIGSEGV,
+	"TERM": syscall.SIGTERM,
+	"USR1": syscall.SIGUSR1,
+	"USR2": syscall.SIGUSR2,
 }
 
 // sessionState tracks state for a single SSH session.
@@ -187,9 +208,13 @@ func (s *Server) executeCommand(ch ssh.Channel, command string, state *sessionSt
 		return s.runWithPTY(ch, cmd, state, reqs)
 	}
 
-	// For non-PTY sessions, drain remaining requests.
+	// For non-PTY sessions, handle signal requests and drain the rest.
 	go func() {
 		for req := range reqs {
+			if req.Type == "signal" {
+				signalProcess(cmd.Process, req, s.logger)
+				continue
+			}
 			if req.WantReply {
 				_ = req.Reply(false, nil)
 			}
@@ -211,7 +236,7 @@ func (s *Server) runWithPTY(ch ssh.Channel, cmd *exec.Cmd, state *sessionState, 
 	}
 	defer func() { _ = ptmx.Close() }()
 
-	// Handle window-change requests.
+	// Handle window-change and signal requests while the command runs.
 	go func() {
 		for req := range reqs {
 			switch req.Type {
@@ -223,6 +248,8 @@ func (s *Server) runWithPTY(ch ssh.Channel, cmd *exec.Cmd, state *sessionState, 
 				if req.WantReply {
 					_ = req.Reply(true, nil)
 				}
+			case "signal":
+				signalProcess(cmd.Process, req, s.logger)
 			default:
 				if req.WantReply {
 					_ = req.Reply(false, nil)
@@ -264,6 +291,40 @@ func (s *Server) runWithoutPTY(ch ssh.Channel, cmd *exec.Cmd) int {
 	}()
 
 	return exitCode(cmd.Wait())
+}
+
+// signalProcess forwards an SSH "signal" request to the running process.
+func signalProcess(proc *os.Process, req *ssh.Request, logger *slog.Logger) {
+	if proc == nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+
+	var sr signalRequest
+	if err := ssh.Unmarshal(req.Payload, &sr); err != nil {
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+
+	sig, ok := sshSignalToOS[sr.Signal]
+	if !ok {
+		logger.Warn("unknown SSH signal", "signal", sr.Signal)
+		if req.WantReply {
+			_ = req.Reply(false, nil)
+		}
+		return
+	}
+
+	if err := proc.Signal(sig); err != nil {
+		logger.Warn("failed to signal process", "signal", sr.Signal, "error", err)
+	}
+	if req.WantReply {
+		_ = req.Reply(true, nil)
+	}
 }
 
 func sendExitStatus(ch ssh.Channel, code int) {
