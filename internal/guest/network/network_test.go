@@ -13,6 +13,7 @@ import (
 )
 
 func TestConfigureRequiresRoot(t *testing.T) {
+	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("test must run as non-root")
 	}

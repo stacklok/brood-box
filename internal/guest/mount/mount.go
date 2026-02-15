@@ -23,14 +23,14 @@ type mountEntry struct {
 }
 
 // Essential mounts the core filesystems required for a minimal Linux userspace.
-func Essential() error {
+func Essential(logger *slog.Logger) error {
 	mounts := []mountEntry{
 		{"proc", "/proc", "proc", syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_NOEXEC, ""},
 		{"sysfs", "/sys", "sysfs", syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_NOEXEC, ""},
-		{"devtmpfs", "/dev", "devtmpfs", 0, ""},
+		{"devtmpfs", "/dev", "devtmpfs", syscall.MS_NOSUID | syscall.MS_NOEXEC, ""},
 		{"devpts", "/dev/pts", "devpts", syscall.MS_NOSUID | syscall.MS_NOEXEC, ""},
-		{"tmpfs", "/tmp", "tmpfs", syscall.MS_NOSUID | syscall.MS_NODEV, ""},
-		{"tmpfs", "/run", "tmpfs", syscall.MS_NOSUID | syscall.MS_NODEV, ""},
+		{"tmpfs", "/tmp", "tmpfs", syscall.MS_NOSUID | syscall.MS_NODEV, "size=256m"},
+		{"tmpfs", "/run", "tmpfs", syscall.MS_NOSUID | syscall.MS_NODEV | syscall.MS_NOEXEC, "size=64m"},
 	}
 
 	for _, m := range mounts {
@@ -40,7 +40,7 @@ func Essential() error {
 
 		if err := syscall.Mount(m.source, m.target, m.fstype, m.flags, m.data); err != nil {
 			if errors.Is(err, syscall.EBUSY) {
-				slog.Debug("filesystem already mounted", "target", m.target)
+				logger.Debug("filesystem already mounted", "target", m.target)
 				continue
 			}
 			return fmt.Errorf("mounting %s on %s: %w", m.fstype, m.target, err)
@@ -56,7 +56,7 @@ func Essential() error {
 	}
 
 	for _, sl := range symlinks {
-		if err := os.Symlink(sl[0], sl[1]); err != nil && !os.IsExist(err) {
+		if err := os.Symlink(sl[0], sl[1]); err != nil && !errors.Is(err, os.ErrExist) {
 			return fmt.Errorf("creating symlink %s: %w", sl[1], err)
 		}
 	}
@@ -65,22 +65,23 @@ func Essential() error {
 }
 
 // Workspace mounts a virtiofs share at the given mount point, retrying up to
-// maxRetries times to allow the host to expose the filesystem.
-func Workspace(mountPoint, tag string, maxRetries int) error {
+// maxRetries times to allow the host to expose the filesystem. On success the
+// mount point is chowned to uid:gid.
+func Workspace(logger *slog.Logger, mountPoint, tag string, uid, gid, maxRetries int) error {
 	if err := os.MkdirAll(mountPoint, 0o755); err != nil {
 		return fmt.Errorf("creating workspace mount point %s: %w", mountPoint, err)
 	}
 
 	var lastErr error
 	for i := range maxRetries {
-		lastErr = syscall.Mount(tag, mountPoint, "virtiofs", 0, "")
+		lastErr = syscall.Mount(tag, mountPoint, "virtiofs", syscall.MS_NOSUID|syscall.MS_NODEV, "")
 		if lastErr == nil {
-			if err := os.Chown(mountPoint, 1000, 1000); err != nil {
+			if err := os.Chown(mountPoint, uid, gid); err != nil {
 				return fmt.Errorf("chown workspace %s: %w", mountPoint, err)
 			}
 			return nil
 		}
-		slog.Warn("virtiofs mount failed, retrying",
+		logger.Warn("virtiofs mount failed, retrying",
 			"tag", tag,
 			"attempt", i+1,
 			"max", maxRetries,

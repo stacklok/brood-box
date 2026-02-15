@@ -31,6 +31,8 @@ tasks:
 
   build-init:
     desc: Cross-compile sandbox-init binary for guest VM
+    # GOARCH inherits from host — KVM guests always match host architecture.
+    # Override with GOARCH=<arch> task build-init if cross-compiling.
     env:
       CGO_ENABLED: "0"
       GOOS: linux

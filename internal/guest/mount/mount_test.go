@@ -6,6 +6,7 @@
 package mount
 
 import (
+	"log/slog"
 	"os"
 	"testing"
 
@@ -13,17 +14,19 @@ import (
 )
 
 func TestEssentialRequiresRoot(t *testing.T) {
+	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("test must run as non-root")
 	}
-	err := Essential()
+	err := Essential(slog.Default())
 	assert.Error(t, err)
 }
 
 func TestWorkspaceReturnsErrorForInvalidMount(t *testing.T) {
+	t.Parallel()
 	if os.Getuid() == 0 {
 		t.Skip("test must run as non-root")
 	}
-	err := Workspace(t.TempDir()+"/ws", "nonexistent-tag", 1)
+	err := Workspace(slog.Default(), t.TempDir()+"/ws", "nonexistent-tag", 1000, 1000, 1)
 	assert.Error(t, err)
 }

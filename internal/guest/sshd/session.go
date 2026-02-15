@@ -70,7 +70,9 @@ func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 				Value string
 			}
 			if err := ssh.Unmarshal(req.Payload, &envReq); err == nil {
-				state.env[envReq.Name] = envReq.Value
+				if isAllowedEnvVar(envReq.Name) {
+					state.env[envReq.Name] = envReq.Value
+				}
 			}
 			if req.WantReply {
 				_ = req.Reply(true, nil)
@@ -112,6 +114,18 @@ func (s *Server) handleSession(ch ssh.Channel, reqs <-chan *ssh.Request) {
 			}
 		}
 	}
+}
+
+// allowedEnvVars is the set of environment variable names that clients
+// may set via SSH "env" requests. This prevents overriding security-sensitive
+// variables like PATH, LD_PRELOAD, or HOME.
+var allowedEnvVars = map[string]bool{
+	"TERM": true, "LANG": true, "LC_ALL": true, "LC_CTYPE": true,
+	"COLORTERM": true, "EDITOR": true, "VISUAL": true,
+}
+
+func isAllowedEnvVar(name string) bool {
+	return allowedEnvVars[name]
 }
 
 func (s *Server) executeCommand(ch ssh.Channel, command string, state *sessionState, reqs <-chan *ssh.Request) int {

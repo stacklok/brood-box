@@ -11,6 +11,7 @@ import (
 	"bufio"
 	"fmt"
 	"log/slog"
+	"net"
 	"os"
 
 	"golang.org/x/crypto/ssh"
@@ -27,7 +28,7 @@ import (
 func Run(logger *slog.Logger) (shutdown func(), err error) {
 	// 1. Essential mounts — /proc is needed before netlink can work.
 	logger.Info("mounting essential filesystems")
-	if err := mount.Essential(); err != nil {
+	if err := mount.Essential(logger); err != nil {
 		return nil, fmt.Errorf("essential mounts: %w", err)
 	}
 
@@ -39,7 +40,7 @@ func Run(logger *slog.Logger) (shutdown func(), err error) {
 
 	// 3. Workspace mount (non-fatal — VM is still useful without it).
 	logger.Info("mounting workspace")
-	if err := mount.Workspace("/workspace", "workspace", 5); err != nil {
+	if err := mount.Workspace(logger, "/workspace", "workspace", 1000, 1000, 5); err != nil {
 		logger.Warn("workspace mount failed, continuing without workspace", "error", err)
 	}
 
@@ -55,7 +56,8 @@ func Run(logger *slog.Logger) (shutdown func(), err error) {
 		return nil, fmt.Errorf("parsing authorized keys: %w", err)
 	}
 
-	// 6. Start SSH server.
+	// 6. Start SSH server — bind synchronously so listen errors surface
+	// immediately rather than being swallowed in a goroutine.
 	cfg := sshd.Config{
 		Port:           22,
 		AuthorizedKeys: authorizedKeys,
@@ -72,19 +74,24 @@ func Run(logger *slog.Logger) (shutdown func(), err error) {
 		return nil, fmt.Errorf("creating SSH server: %w", err)
 	}
 
+	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.Port))
+	if err != nil {
+		return nil, fmt.Errorf("listening on port %d: %w", cfg.Port, err)
+	}
+
 	go func() {
-		if err := srv.ListenAndServe(); err != nil {
+		if err := srv.Serve(ln); err != nil {
 			logger.Error("SSH server error", "error", err)
 		}
 	}()
 
-	logger.Info("sandbox init ready", "ssh_port", 22)
+	logger.Info("sandbox init ready", "ssh_port", cfg.Port)
 
 	return func() { srv.Close() }, nil
 }
 
 // parseAuthorizedKeys reads an authorized_keys file and returns the parsed
-// public keys.
+// public keys. Returns an error if no valid keys are found.
 func parseAuthorizedKeys(path string) ([]ssh.PublicKey, error) {
 	f, err := os.Open(path)
 	if err != nil {
@@ -96,7 +103,7 @@ func parseAuthorizedKeys(path string) ([]ssh.PublicKey, error) {
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
 		line := scanner.Bytes()
-		if len(line) == 0 {
+		if len(line) == 0 || line[0] == '#' {
 			continue
 		}
 		key, _, _, _, err := ssh.ParseAuthorizedKey(line)
@@ -107,6 +114,9 @@ func parseAuthorizedKeys(path string) ([]ssh.PublicKey, error) {
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("no valid keys found in %s", path)
 	}
 	return keys, nil
 }

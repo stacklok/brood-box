@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 )
@@ -54,6 +55,7 @@ func New(cfg Config) (*Server, error) {
 	}
 
 	sshCfg := &ssh.ServerConfig{
+		MaxAuthTries: 1,
 		PublicKeyCallback: func(_ ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
 			for _, ak := range cfg.AuthorizedKeys {
 				if subtle.ConstantTimeCompare(key.Marshal(), ak.Marshal()) == 1 {
@@ -140,6 +142,12 @@ func (s *Server) Close() {
 func (s *Server) handleConnection(conn net.Conn) {
 	defer func() { _ = conn.Close() }()
 
+	// Prevent slow handshakes from holding a connection slot.
+	if err := conn.SetDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		s.logger.Warn("failed to set handshake deadline", "error", err)
+		return
+	}
+
 	sshConn, chans, reqs, err := ssh.NewServerConn(conn, s.sshCfg)
 	if err != nil {
 		s.logger.Warn("SSH handshake failed", "error", err)
@@ -147,13 +155,26 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 	defer func() { _ = sshConn.Close() }()
 
+	// Clear deadline for active session.
+	if err := conn.SetDeadline(time.Time{}); err != nil {
+		s.logger.Warn("failed to clear deadline", "error", err)
+	}
+
 	// Discard all global requests.
 	go ssh.DiscardRequests(reqs)
+
+	const maxChannelsPerConn = 10
+	var channelCount int
 
 	for newCh := range chans {
 		// SECURITY: Reject non-session channels.
 		if newCh.ChannelType() != "session" {
 			_ = newCh.Reject(ssh.UnknownChannelType, "only session channels are supported")
+			continue
+		}
+		channelCount++
+		if channelCount > maxChannelsPerConn {
+			_ = newCh.Reject(ssh.ResourceShortage, "too many channels")
 			continue
 		}
 		ch, requests, err := newCh.Accept()

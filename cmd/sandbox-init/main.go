@@ -25,9 +25,11 @@ func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
+	slog.SetDefault(logger)
 
 	// PID 1 must reap orphaned children.
-	reaper.Start()
+	stopReaper := reaper.Start(logger)
+	defer stopReaper()
 
 	shutdown, err := boot.Run(logger)
 	if err != nil {

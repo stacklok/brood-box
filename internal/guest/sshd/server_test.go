@@ -73,6 +73,7 @@ func dialSSH(t *testing.T, port int, signer ssh.Signer) *ssh.Client {
 }
 
 func TestAuthorizedKeyAccepted(t *testing.T) {
+	t.Parallel()
 	signer, pubKey := generateTestKeyPair(t)
 	_, port := startTestServer(t, pubKey)
 
@@ -88,6 +89,7 @@ func TestAuthorizedKeyAccepted(t *testing.T) {
 }
 
 func TestUnauthorizedKeyRejected(t *testing.T) {
+	t.Parallel()
 	_, pubKey1 := generateTestKeyPair(t)
 	signer2, _ := generateTestKeyPair(t)
 	_, port := startTestServer(t, pubKey1)
@@ -100,10 +102,11 @@ func TestUnauthorizedKeyRejected(t *testing.T) {
 	}
 	_, err := ssh.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", port), clientCfg)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unable to authenticate")
+	assert.Contains(t, err.Error(), "handshake failed")
 }
 
 func TestExecCommand(t *testing.T) {
+	t.Parallel()
 	signer, pubKey := generateTestKeyPair(t)
 	_, port := startTestServer(t, pubKey)
 
@@ -119,6 +122,7 @@ func TestExecCommand(t *testing.T) {
 }
 
 func TestExecCommandEnv(t *testing.T) {
+	t.Parallel()
 	signer, pubKey := generateTestKeyPair(t)
 	_, port := startTestServer(t, pubKey)
 
@@ -134,6 +138,7 @@ func TestExecCommandEnv(t *testing.T) {
 }
 
 func TestExitCode(t *testing.T) {
+	t.Parallel()
 	signer, pubKey := generateTestKeyPair(t)
 	_, port := startTestServer(t, pubKey)
 
@@ -152,6 +157,7 @@ func TestExitCode(t *testing.T) {
 }
 
 func TestNonSessionChannelRejected(t *testing.T) {
+	t.Parallel()
 	signer, pubKey := generateTestKeyPair(t)
 	_, port := startTestServer(t, pubKey)
 
