@@ -13,7 +13,6 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
-	"sync"
 	"syscall"
 	"unsafe" //nolint:gosec // TIOCSWINSZ ioctl requires unsafe pointer
 
@@ -259,25 +258,15 @@ func (s *Server) runWithPTY(ch ssh.Channel, cmd *exec.Cmd, state *sessionState, 
 	}()
 
 	// Bidirectional copy.
-	var wg sync.WaitGroup
-	wg.Add(1)
 	go func() {
-		defer wg.Done()
 		_, _ = io.Copy(ptmx, ch)
 	}()
 
 	_, _ = io.Copy(ch, ptmx)
 
-	// Wait for process to exit.
+	// Wait for process to exit. The channel→pty goroutine will be
+	// cleaned up when handleSession closes the channel after we return.
 	err = cmd.Wait()
-
-	// Close the channel to unblock the channel→pty goroutine which is
-	// stuck on ch.Read(). Without this, wg.Wait() deadlocks because
-	// the goroutine never returns — the channel stays open until
-	// handleSession's defer, which can't run until we return.
-	_ = ch.CloseWrite()
-
-	wg.Wait()
 
 	return exitCode(err)
 }
