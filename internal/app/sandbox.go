@@ -238,6 +238,27 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	}, nil
 }
 
+// Attach runs an interactive terminal session against the sandbox VM.
+// It blocks until the remote command exits or the context is cancelled.
+// The terminal parameter provides I/O streams and PTY control for this session.
+func (s *SandboxRunner) Attach(ctx context.Context, sb *Sandbox, terminal session.Terminal) error {
+	sessionOpts := session.SessionOpts{
+		Host:     "127.0.0.1",
+		Port:     sb.VM.SSHPort(),
+		User:     "sandbox",
+		KeyPath:  sb.VM.SSHKeyPath(),
+		Command:  sb.Agent.Command,
+		Terminal: terminal,
+	}
+
+	s.logger.Info("connecting to sandbox VM",
+		"port", sessionOpts.Port,
+		"command", sb.Agent.Command,
+	)
+
+	return s.sessionRunner.Run(ctx, sessionOpts)
+}
+
 // Run executes the full sandbox lifecycle for the named agent.
 func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts) error {
 	// 1. Resolve agent from registry.
