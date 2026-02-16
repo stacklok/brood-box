@@ -259,6 +259,16 @@ func (s *SandboxRunner) Attach(ctx context.Context, sb *Sandbox, terminal sessio
 	return s.sessionRunner.Run(ctx, sessionOpts)
 }
 
+// Stop gracefully shuts down the sandbox VM.
+// Uses a fresh context with timeout to ensure shutdown completes even if the
+// parent context is already cancelled.
+func (s *SandboxRunner) Stop(sb *Sandbox) error {
+	s.logger.Info("shutting down sandbox VM")
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer stopCancel()
+	return sb.VM.Stop(stopCtx)
+}
+
 // Run executes the full sandbox lifecycle for the named agent.
 func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts) error {
 	// 1. Resolve agent from registry.
