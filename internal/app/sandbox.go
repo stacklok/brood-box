@@ -269,6 +269,34 @@ func (s *SandboxRunner) Stop(sb *Sandbox) error {
 	return sb.VM.Stop(stopCtx)
 }
 
+// Changes computes the diff between the original workspace and the snapshot.
+// Returns nil with no error if snapshot isolation was not active or differ is nil.
+func (s *SandboxRunner) Changes(sb *Sandbox) ([]snapshot.FileChange, error) {
+	if sb.Snapshot == nil || s.differ == nil {
+		return nil, nil
+	}
+	s.logger.Info("computing workspace diff")
+	changes, err := s.differ.Diff(sb.Snapshot.OriginalPath, sb.Snapshot.SnapshotPath, sb.DiffMatcher)
+	if err != nil {
+		return nil, fmt.Errorf("computing diff: %w", err)
+	}
+	return changes, nil
+}
+
+// Flush applies the accepted file changes from the snapshot to the original workspace.
+// Returns nil if snapshot isolation was not active, flusher is nil, or no changes provided.
+func (s *SandboxRunner) Flush(sb *Sandbox, accepted []snapshot.FileChange) error {
+	if sb.Snapshot == nil || s.flusher == nil || len(accepted) == 0 {
+		return nil
+	}
+	s.logger.Info("flushing accepted changes", "count", len(accepted))
+	if err := s.flusher.Flush(sb.Snapshot.OriginalPath, sb.Snapshot.SnapshotPath, accepted); err != nil {
+		return fmt.Errorf("flushing changes: %w", err)
+	}
+	s.logger.Info("changes flushed successfully")
+	return nil
+}
+
 // Run executes the full sandbox lifecycle for the named agent.
 func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts) error {
 	// 1. Resolve agent from registry.
