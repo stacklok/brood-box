@@ -124,6 +124,120 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 	}
 }
 
+// Prepare resolves the agent, applies config, collects env, sets up the
+// workspace snapshot (if enabled), and starts the VM.
+// The caller must call Cleanup() on the returned Sandbox when done.
+func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunOpts) (*Sandbox, error) {
+	// 1. Resolve agent from registry.
+	ag, err := s.registry.Get(agentName)
+	if err != nil {
+		return nil, fmt.Errorf("resolving agent: %w", err)
+	}
+
+	// 2. Apply config overrides.
+	cfg := s.config
+	if cfg == nil {
+		cfg = &config.Config{}
+	}
+
+	override := config.AgentOverride{}
+	if cfg.Agents != nil {
+		if o, ok := cfg.Agents[agentName]; ok {
+			override = o
+		}
+	}
+
+	if opts.CPUs > 0 {
+		override.CPUs = opts.CPUs
+	}
+	if opts.Memory > 0 {
+		override.Memory = opts.Memory
+	}
+	if opts.ImageOverride != "" {
+		override.Image = opts.ImageOverride
+	}
+
+	ag = config.Merge(ag, override, cfg.Defaults)
+
+	s.logger.Info("resolved agent",
+		"name", ag.Name,
+		"image", ag.Image,
+		"cpus", ag.DefaultCPUs,
+		"memory", ag.DefaultMemory,
+	)
+
+	// 3. Collect env vars.
+	envVars := agent.ForwardEnv(ag.EnvForward, s.envProvider)
+	if len(envVars) > 0 {
+		keys := make([]string, 0, len(envVars))
+		for k := range envVars {
+			keys = append(keys, k)
+		}
+		s.logger.Info("forwarding environment variables", "keys", keys)
+	}
+
+	// 4. Set up workspace path (possibly with snapshot isolation).
+	workspacePath := opts.Workspace
+	var snap *workspace.Snapshot
+
+	snapshotMatcher := opts.Snapshot.SnapshotMatcher
+	if snapshotMatcher == nil {
+		snapshotMatcher = snapshot.NopMatcher
+	}
+
+	diffMatcher := opts.Snapshot.DiffMatcher
+	if diffMatcher == nil {
+		diffMatcher = snapshot.NopMatcher
+	}
+
+	if opts.Snapshot.Enabled && s.workspaceCloner != nil {
+		s.logger.Info("creating workspace snapshot for review isolation")
+
+		snap, err = s.workspaceCloner.CreateSnapshot(ctx, workspacePath, snapshotMatcher)
+		if err != nil {
+			return nil, fmt.Errorf("creating workspace snapshot: %w", err)
+		}
+
+		s.logger.Info("workspace snapshot created",
+			"original", snap.OriginalPath,
+			"snapshot", snap.SnapshotPath,
+		)
+		workspacePath = snap.SnapshotPath
+	}
+
+	// 5. Start VM with (possibly overridden) workspace path.
+	vmCfg := domvm.VMConfig{
+		Name:          "sandbox-" + ag.Name,
+		Image:         ag.Image,
+		CPUs:          ag.DefaultCPUs,
+		Memory:        ag.DefaultMemory,
+		SSHPort:       opts.SSHPort,
+		WorkspacePath: workspacePath,
+		EnvVars:       envVars,
+	}
+
+	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)
+	if err != nil {
+		// Clean up snapshot if we created one before VM start failed.
+		if snap != nil {
+			if cleanErr := snap.Cleanup(); cleanErr != nil {
+				s.logger.Error("failed to clean up snapshot after VM start failure", "error", cleanErr)
+			}
+		}
+		return nil, fmt.Errorf("starting sandbox VM: %w", err)
+	}
+
+	return &Sandbox{
+		Agent:         ag,
+		VM:            sandboxVM,
+		VMConfig:      vmCfg,
+		Snapshot:      snap,
+		WorkspacePath: workspacePath,
+		DiffMatcher:   diffMatcher,
+		EnvVars:       envVars,
+	}, nil
+}
+
 // Run executes the full sandbox lifecycle for the named agent.
 func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts) error {
 	// 1. Resolve agent from registry.
