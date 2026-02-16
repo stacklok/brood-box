@@ -12,6 +12,8 @@ import (
 	"os"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/stacklok/sandbox-agent/internal/domain/agent"
 	"github.com/stacklok/sandbox-agent/internal/domain/config"
 	infraconfig "github.com/stacklok/sandbox-agent/internal/infra/config"
@@ -162,7 +164,7 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 	// 4. Set up workspace path (possibly with snapshot isolation).
 	workspacePath := opts.Workspace
 	var snap *workspace.Snapshot
-	var matcher exclude.Matcher
+	var diffMatcher exclude.Matcher
 
 	if opts.ReviewEnabled && s.workspaceCloner != nil {
 		s.logger.Info("creating workspace snapshot for review isolation")
@@ -172,9 +174,19 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 			return fmt.Errorf("loading exclude config: %w", err)
 		}
 
-		matcher = exclude.NewMatcherFromConfig(excludeCfg)
+		// Snapshot matcher: excludes secrets and performance dirs from the clone.
+		snapshotMatcher := exclude.NewMatcherFromConfig(excludeCfg)
 
-		snap, err = s.workspaceCloner.CreateSnapshot(ctx, workspacePath, matcher)
+		// Load .gitignore patterns separately — gitignored files stay in the
+		// snapshot (the agent may need them) but are excluded from the diff
+		// so changes to build artifacts don't appear in review.
+		gitignorePatterns, err := exclude.LoadGitignorePatterns(workspacePath, s.logger)
+		if err != nil {
+			s.logger.Warn("failed to load .gitignore patterns", "error", err)
+		}
+		diffMatcher = exclude.NewDiffMatcher(excludeCfg, gitignorePatterns)
+
+		snap, err = s.workspaceCloner.CreateSnapshot(ctx, workspacePath, snapshotMatcher)
 		if err != nil {
 			return fmt.Errorf("creating workspace snapshot: %w", err)
 		}
@@ -226,7 +238,24 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 		"command", ag.Command,
 	)
 
+	// Save terminal state BEFORE the SSH session so we can force-restore
+	// it after. The SSH session puts stdin in raw mode; its internal defer
+	// may race with the stdin-reading goroutine, leaving the terminal in
+	// a broken state.
+	var savedTermState *term.State
+	if s.stdin != nil && term.IsTerminal(int(s.stdin.Fd())) {
+		savedTermState, _ = term.GetState(int(s.stdin.Fd()))
+	}
+
 	termErr := s.terminal.Run(ctx, sessionOpts)
+
+	// Force-restore terminal to cooked mode for the interactive review.
+	// This must happen before any stdin reads (review prompts, etc.).
+	if savedTermState != nil {
+		if err := term.Restore(int(s.stdin.Fd()), savedTermState); err != nil {
+			s.logger.Warn("failed to restore terminal state", "error", err)
+		}
+	}
 
 	// 7. Stop VM EXPLICITLY before diff/review.
 	// This prevents the agent from modifying snapshot files between diff and flush.
@@ -242,7 +271,7 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 	// 8. Diff + review + flush (only when snapshot isolation is active).
 	var reviewErr error
 	if snap != nil && s.differ != nil && s.reviewer != nil && s.flusher != nil {
-		reviewErr = s.runReview(snap, matcher)
+		reviewErr = s.runReview(snap, diffMatcher)
 		if reviewErr != nil {
 			s.logger.Error("review/flush failed", "error", reviewErr)
 		}

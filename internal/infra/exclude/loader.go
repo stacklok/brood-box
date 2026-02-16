@@ -42,6 +42,32 @@ func LoadExcludeConfig(workspacePath string, cliPatterns []string, logger *slog.
 	}, nil
 }
 
+// LoadGitignorePatterns reads .gitignore from the workspace root and returns
+// the patterns. These are loaded separately from the exclude config because
+// gitignored files should be present in the snapshot (the agent may need them)
+// but excluded from the diff (changes to build artifacts shouldn't appear in review).
+func LoadGitignorePatterns(workspacePath string, logger *slog.Logger) ([]string, error) {
+	gitignorePath := filepath.Join(workspacePath, ".gitignore")
+	patterns, err := readIgnoreFile(gitignorePath, nil, logger)
+	if err != nil {
+		return nil, fmt.Errorf("reading .gitignore: %w", err)
+	}
+	return patterns, nil
+}
+
+// NewDiffMatcher creates a Matcher that combines the snapshot exclude config
+// with additional gitignore patterns. Used for diff computation where gitignored
+// files should be skipped.
+func NewDiffMatcher(cfg snapshot.ExcludeConfig, gitignorePatterns []string) Matcher {
+	var userAndPerf []string
+	userAndPerf = append(userAndPerf, cfg.PerformancePatterns...)
+	userAndPerf = append(userAndPerf, cfg.FilePatterns...)
+	userAndPerf = append(userAndPerf, cfg.CLIPatterns...)
+	userAndPerf = append(userAndPerf, gitignorePatterns...)
+
+	return NewMatcher(userAndPerf, cfg.SecurityPatterns)
+}
+
 // readIgnoreFile reads a .sandboxignore file and returns the cleaned patterns.
 // Negation patterns that would re-include security-sensitive files are stripped.
 func readIgnoreFile(path string, securityPatterns []string, logger *slog.Logger) ([]string, error) {

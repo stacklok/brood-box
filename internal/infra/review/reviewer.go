@@ -77,7 +77,9 @@ func (r *InteractiveReviewer) prompt(scanner *bufio.Scanner, relPath string) sna
 			return snapshot.Skip
 		}
 
-		input := strings.TrimSpace(strings.ToLower(scanner.Text()))
+		// Trim \r in addition to whitespace — raw terminal mode may leave
+		// carriage returns in the input even after terminal restore.
+		input := strings.TrimSpace(strings.TrimRight(strings.ToLower(scanner.Text()), "\r"))
 		switch input {
 		case "y", "yes":
 			return snapshot.Accept
