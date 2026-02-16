@@ -7,6 +7,7 @@ package review
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"strings"
@@ -44,6 +45,10 @@ func (r *InteractiveReviewer) Review(changes []snapshot.FileChange) (snapshot.Re
 	_, _ = fmt.Fprintf(r.out, "\n")
 
 	scanner := bufio.NewScanner(r.in)
+	// Use a custom split function that handles \r, \n, and \r\n.
+	// After an SSH raw-mode session the terminal may send bare \r
+	// instead of \n, causing the default ScanLines to hang.
+	scanner.Split(scanLinesAny)
 
 	for i, ch := range changes {
 		_, _ = fmt.Fprintf(r.out, "--- Change %d/%d: [%s] %s ---\n", i+1, len(changes), ch.Kind, ch.RelPath)
@@ -77,9 +82,7 @@ func (r *InteractiveReviewer) prompt(scanner *bufio.Scanner, relPath string) sna
 			return snapshot.Skip
 		}
 
-		// Trim \r in addition to whitespace — raw terminal mode may leave
-		// carriage returns in the input even after terminal restore.
-		input := strings.TrimSpace(strings.TrimRight(strings.ToLower(scanner.Text()), "\r"))
+		input := strings.TrimSpace(strings.ToLower(scanner.Text()))
 		switch input {
 		case "y", "yes":
 			return snapshot.Accept
@@ -91,4 +94,36 @@ func (r *InteractiveReviewer) prompt(scanner *bufio.Scanner, relPath string) sna
 			_, _ = fmt.Fprintf(r.out, "Invalid input. Please enter y, n, or s.\n")
 		}
 	}
+}
+
+// scanLinesAny is a bufio.SplitFunc that splits on \n, \r\n, or bare \r.
+// This handles terminals that send \r (carriage return) instead of \n after
+// a raw-mode SSH session where the terminal may not be fully restored.
+func scanLinesAny(data []byte, atEOF bool) (advance int, token []byte, err error) {
+	if atEOF && len(data) == 0 {
+		return 0, nil, nil
+	}
+
+	// Look for \r\n first (Windows-style).
+	if i := bytes.Index(data, []byte("\r\n")); i >= 0 {
+		return i + 2, data[:i], nil
+	}
+
+	// Look for bare \n (Unix-style).
+	if i := bytes.IndexByte(data, '\n'); i >= 0 {
+		return i + 1, data[:i], nil
+	}
+
+	// Look for bare \r (raw terminal mode).
+	if i := bytes.IndexByte(data, '\r'); i >= 0 {
+		return i + 1, data[:i], nil
+	}
+
+	// At EOF, deliver remaining data as a line.
+	if atEOF {
+		return len(data), data, nil
+	}
+
+	// Request more data.
+	return 0, nil, nil
 }

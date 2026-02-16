@@ -52,7 +52,10 @@ func (d *FSDiffer) Diff(originalDir, snapshotDir string, matcher exclude.Matcher
 		return nil, fmt.Errorf("indexing original directory: %w", err)
 	}
 
-	snapIndex, err := buildIndex(snapshotDir, nil)
+	// Apply the same matcher to the snapshot index so that gitignored files
+	// (build artifacts, etc.) that were copied into the snapshot don't appear
+	// as spurious "added" entries in the diff.
+	snapIndex, err := buildIndex(snapshotDir, matcher)
 	if err != nil {
 		return nil, fmt.Errorf("indexing snapshot directory: %w", err)
 	}
