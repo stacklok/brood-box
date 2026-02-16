@@ -236,11 +236,14 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 
 	// Wire dependencies.
+	terminal := infraterminal.NewOSTerminal(os.Stdin, os.Stdout, os.Stderr)
+
+	var reviewer *review.InteractiveReviewer
 	deps := app.SandboxDeps{
 		Registry:      registry,
 		VMRunner:      infravm.NewPropolisRunner("", logger),
 		SessionRunner: infrassh.NewInteractiveSession(logger),
-		Terminal:      infraterminal.NewOSTerminal(os.Stdin, os.Stdout, os.Stderr),
+		Terminal:      terminal,
 		Config:        cfg,
 		EnvProvider:   agent.NewOSEnvProvider(os.Environ),
 		Logger:        logger,
@@ -251,14 +254,15 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		deps.WorkspaceCloner = infraws.NewFSWorkspaceCloner(
 			infraws.NewPlatformCloner(), logger,
 		)
-		deps.Reviewer = review.NewInteractiveReviewer(os.Stdin, os.Stdout)
+		reviewer = review.NewInteractiveReviewer(os.Stdin, os.Stdout)
+		deps.Reviewer = reviewer
 		deps.Flusher = review.NewFSFlusher()
 		deps.Differ = diff.NewFSDiffer()
 	}
 
 	runner := app.NewSandboxRunner(deps)
 
-	err = runner.Run(ctx, agentName, app.RunOpts{
+	opts := app.RunOpts{
 		CPUs:          flags.cpus,
 		Memory:        flags.memory,
 		Workspace:     ws,
@@ -269,7 +273,58 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			SnapshotMatcher: snapshotMatcher,
 			DiffMatcher:     diffMatcher,
 		},
-	})
+	}
+
+	sb, err := runner.Prepare(ctx, agentName, opts)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		logger.Info("cleaning up workspace snapshot")
+		if cleanErr := sb.Cleanup(); cleanErr != nil {
+			logger.Error("failed to clean up snapshot", "error", cleanErr)
+		}
+	}()
+
+	restore, _ := terminal.MakeRaw()
+	termErr := runner.Attach(ctx, sb, terminal)
+	restore()
+
+	if stopErr := runner.Stop(sb); stopErr != nil {
+		logger.Error("failed to stop VM", "error", stopErr)
+	}
+
+	var reviewErr error
+	if reviewEnabled && sb.Snapshot != nil && reviewer != nil {
+		changes, chErr := runner.Changes(sb)
+		if chErr != nil {
+			reviewErr = chErr
+		} else if len(changes) > 0 {
+			logger.Info("workspace changes detected", "count", len(changes))
+			result, revErr := reviewer.Review(changes)
+			if revErr != nil {
+				reviewErr = fmt.Errorf("reviewing changes: %w", revErr)
+			} else if len(result.Accepted) > 0 {
+				logger.Info("flushing accepted changes",
+					"accepted", len(result.Accepted),
+					"rejected", len(result.Rejected),
+				)
+				reviewErr = runner.Flush(sb, result.Accepted)
+			} else {
+				logger.Info("no changes accepted")
+			}
+		} else {
+			logger.Info("no workspace changes detected")
+		}
+		if reviewErr != nil {
+			logger.Error("review/flush failed", "error", reviewErr)
+		}
+	}
+
+	err = termErr
+	if err == nil {
+		err = reviewErr
+	}
 
 	if err != nil {
 		// Propagate the agent's exit code without printing an error.

@@ -310,9 +310,7 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 		}
 	}()
 
-	restore, _ := s.terminal.MakeRaw()
 	termErr := s.Attach(ctx, sb, s.terminal)
-	restore()
 
 	if stopErr := s.Stop(sb); stopErr != nil {
 		s.logger.Error("failed to stop VM", "error", stopErr)
