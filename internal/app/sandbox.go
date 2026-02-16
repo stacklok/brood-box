@@ -299,196 +299,54 @@ func (s *SandboxRunner) Flush(sb *Sandbox, accepted []snapshot.FileChange) error
 
 // Run executes the full sandbox lifecycle for the named agent.
 func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts) error {
-	// 1. Resolve agent from registry.
-	ag, err := s.registry.Get(agentName)
+	sb, err := s.Prepare(ctx, agentName, opts)
 	if err != nil {
-		return fmt.Errorf("resolving agent: %w", err)
+		return err
 	}
-
-	// 2. Apply config overrides.
-	cfg := s.config
-	if cfg == nil {
-		cfg = &config.Config{}
-	}
-
-	override := config.AgentOverride{}
-	if cfg.Agents != nil {
-		if o, ok := cfg.Agents[agentName]; ok {
-			override = o
+	defer func() {
+		s.logger.Info("cleaning up workspace snapshot")
+		if cleanErr := sb.Cleanup(); cleanErr != nil {
+			s.logger.Error("failed to clean up snapshot", "error", cleanErr)
 		}
-	}
+	}()
 
-	// Apply CLI flag overrides.
-	if opts.CPUs > 0 {
-		override.CPUs = opts.CPUs
-	}
-	if opts.Memory > 0 {
-		override.Memory = opts.Memory
-	}
-	if opts.ImageOverride != "" {
-		override.Image = opts.ImageOverride
-	}
-
-	ag = config.Merge(ag, override, cfg.Defaults)
-
-	s.logger.Info("resolved agent",
-		"name", ag.Name,
-		"image", ag.Image,
-		"cpus", ag.DefaultCPUs,
-		"memory", ag.DefaultMemory,
-	)
-
-	// 3. Collect env vars.
-	envVars := agent.ForwardEnv(ag.EnvForward, s.envProvider)
-	if len(envVars) > 0 {
-		keys := make([]string, 0, len(envVars))
-		for k := range envVars {
-			keys = append(keys, k)
-		}
-		s.logger.Info("forwarding environment variables", "keys", keys)
-	}
-
-	// 4. Set up workspace path (possibly with snapshot isolation).
-	workspacePath := opts.Workspace
-	var snap *workspace.Snapshot
-
-	snapshotMatcher := opts.Snapshot.SnapshotMatcher
-	if snapshotMatcher == nil {
-		snapshotMatcher = snapshot.NopMatcher
-	}
-
-	diffMatcher := opts.Snapshot.DiffMatcher
-	if diffMatcher == nil {
-		diffMatcher = snapshot.NopMatcher
-	}
-
-	if opts.Snapshot.Enabled && s.workspaceCloner != nil {
-		s.logger.Info("creating workspace snapshot for review isolation")
-
-		snap, err = s.workspaceCloner.CreateSnapshot(ctx, workspacePath, snapshotMatcher)
-		if err != nil {
-			return fmt.Errorf("creating workspace snapshot: %w", err)
-		}
-		// Cleanup runs LAST in LIFO defer order.
-		defer func() {
-			s.logger.Info("cleaning up workspace snapshot")
-			if cleanErr := snap.Cleanup(); cleanErr != nil {
-				s.logger.Error("failed to clean up snapshot", "error", cleanErr)
-			}
-		}()
-
-		s.logger.Info("workspace snapshot created",
-			"original", snap.OriginalPath,
-			"snapshot", snap.SnapshotPath,
-		)
-		workspacePath = snap.SnapshotPath
-	}
-
-	// 5. Start VM with (possibly overridden) workspace path.
-	vmCfg := domvm.VMConfig{
-		Name:          "sandbox-" + ag.Name,
-		Image:         ag.Image,
-		CPUs:          ag.DefaultCPUs,
-		Memory:        ag.DefaultMemory,
-		SSHPort:       opts.SSHPort,
-		WorkspacePath: workspacePath,
-		EnvVars:       envVars,
-	}
-
-	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)
-	if err != nil {
-		return fmt.Errorf("starting sandbox VM: %w", err)
-	}
-
-	// 6. Run interactive terminal session.
-	sessionOpts := session.SessionOpts{
-		Host:     "127.0.0.1",
-		Port:     sandboxVM.SSHPort(),
-		User:     "sandbox",
-		KeyPath:  sandboxVM.SSHKeyPath(),
-		Command:  ag.Command,
-		Terminal: s.terminal,
-	}
-
-	s.logger.Info("connecting to sandbox VM",
-		"port", sessionOpts.Port,
-		"command", ag.Command,
-	)
-
-	// Save terminal state BEFORE the SSH session so we can force-restore
-	// it after. The SSH session puts stdin in raw mode; its internal defer
-	// may race with the stdin-reading goroutine, leaving the terminal in
-	// a broken state.
 	restore, _ := s.terminal.MakeRaw()
-	termErr := s.sessionRunner.Run(ctx, sessionOpts)
-
-	// Force-restore terminal to cooked mode for the interactive review.
-	// This must happen before any stdin reads (review prompts, etc.).
-	// The restore func is idempotent (via sync.Once), so it's safe even
-	// though the SSH session's defer also calls it.
+	termErr := s.Attach(ctx, sb, s.terminal)
 	restore()
 
-	// 7. Stop VM EXPLICITLY before diff/review.
-	// This prevents the agent from modifying snapshot files between diff and flush.
-	// Use a fresh context because the parent ctx may already be cancelled
-	// (e.g. SIGINT triggered shutdown).
-	s.logger.Info("shutting down sandbox VM")
-	stopCtx, stopCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer stopCancel()
-	if stopErr := sandboxVM.Stop(stopCtx); stopErr != nil {
+	if stopErr := s.Stop(sb); stopErr != nil {
 		s.logger.Error("failed to stop VM", "error", stopErr)
 	}
 
-	// 8. Diff + review + flush (only when snapshot isolation is active).
 	var reviewErr error
-	if snap != nil && s.differ != nil && s.reviewer != nil && s.flusher != nil {
-		reviewErr = s.runReview(snap, diffMatcher)
+	if sb.Snapshot != nil && s.reviewer != nil {
+		changes, chErr := s.Changes(sb)
+		if chErr != nil {
+			reviewErr = chErr
+		} else if len(changes) > 0 {
+			s.logger.Info("workspace changes detected", "count", len(changes))
+			result, revErr := s.reviewer.Review(changes)
+			if revErr != nil {
+				reviewErr = fmt.Errorf("reviewing changes: %w", revErr)
+			} else if len(result.Accepted) > 0 {
+				s.logger.Info("flushing accepted changes",
+					"accepted", len(result.Accepted),
+					"rejected", len(result.Rejected),
+				)
+				reviewErr = s.Flush(sb, result.Accepted)
+			} else {
+				s.logger.Info("no changes accepted")
+			}
+		} else {
+			s.logger.Info("no workspace changes detected")
+		}
 		if reviewErr != nil {
 			s.logger.Error("review/flush failed", "error", reviewErr)
 		}
 	}
 
-	// Return terminal error if present; otherwise surface review error.
 	if termErr != nil {
 		return termErr
 	}
 	return reviewErr
-}
-
-// runReview performs the diff → review → flush sequence after the VM is stopped.
-func (s *SandboxRunner) runReview(snap *workspace.Snapshot, matcher snapshot.Matcher) error {
-	s.logger.Info("computing workspace diff")
-	changes, err := s.differ.Diff(snap.OriginalPath, snap.SnapshotPath, matcher)
-	if err != nil {
-		return fmt.Errorf("computing diff: %w", err)
-	}
-
-	if len(changes) == 0 {
-		s.logger.Info("no workspace changes detected")
-		return nil
-	}
-
-	s.logger.Info("workspace changes detected", "count", len(changes))
-
-	result, err := s.reviewer.Review(changes)
-	if err != nil {
-		return fmt.Errorf("reviewing changes: %w", err)
-	}
-
-	if len(result.Accepted) == 0 {
-		s.logger.Info("no changes accepted")
-		return nil
-	}
-
-	s.logger.Info("flushing accepted changes",
-		"accepted", len(result.Accepted),
-		"rejected", len(result.Rejected),
-	)
-
-	if err := s.flusher.Flush(snap.OriginalPath, snap.SnapshotPath, result.Accepted); err != nil {
-		return fmt.Errorf("flushing changes: %w", err)
-	}
-
-	s.logger.Info("changes flushed successfully")
-	return nil
 }
