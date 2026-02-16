@@ -26,6 +26,7 @@ type SpinnerObserver struct {
 	out  io.Writer
 	mu   sync.Mutex
 	stop chan struct{} // nil when no spinner is active
+	wg   sync.WaitGroup
 
 	successStyle lipgloss.Style
 	warnStyle    lipgloss.Style
@@ -53,6 +54,7 @@ func (s *SpinnerObserver) Start(_ progress.Phase, msg string) {
 	s.stop = stop
 	s.mu.Unlock()
 
+	s.wg.Add(1)
 	go s.animate(msg, stop)
 }
 
@@ -81,9 +83,11 @@ func (s *SpinnerObserver) stopSpinner() {
 		s.stop = nil
 	}
 	s.mu.Unlock()
+	s.wg.Wait()
 }
 
 func (s *SpinnerObserver) animate(msg string, stop <-chan struct{}) {
+	defer s.wg.Done()
 	ticker := time.NewTicker(80 * time.Millisecond)
 	defer ticker.Stop()
 

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 
@@ -57,8 +56,6 @@ func TestSpinnerObserver_StartThenComplete(t *testing.T) {
 	obs := NewSpinnerObserver(&buf)
 
 	obs.Start(progress.PhaseStartingVM, "Starting VM...")
-	// Give the goroutine a moment to emit at least one frame.
-	time.Sleep(150 * time.Millisecond)
 	obs.Complete("VM started")
 
 	output := buf.String()
@@ -73,11 +70,9 @@ func TestSpinnerObserver_MultiplePhases(t *testing.T) {
 	obs := NewSpinnerObserver(&buf)
 
 	obs.Start(progress.PhaseResolvingAgent, "Resolving...")
-	time.Sleep(100 * time.Millisecond)
 	obs.Complete("Resolved")
 
 	obs.Start(progress.PhaseStartingVM, "Starting...")
-	time.Sleep(100 * time.Millisecond)
 	obs.Complete("Started")
 
 	output := buf.String()
