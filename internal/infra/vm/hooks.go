@@ -81,3 +81,20 @@ func InjectEnvFile(envVars map[string]string) func(string, *image.OCIConfig) err
 		return nil
 	}
 }
+
+// InjectMCPConfig returns a RootFS hook that writes agent-specific MCP
+// configuration files so the agent discovers the vmcp endpoint on boot.
+func InjectMCPConfig(format domainagent.MCPConfigFormat, gatewayIP string, port uint16) func(string, *image.OCIConfig) error {
+	return func(rootfsPath string, _ *image.OCIConfig) error {
+		switch format {
+		case domainagent.MCPConfigFormatClaudeCode:
+			return injectClaudeCodeMCP(rootfsPath, gatewayIP, port)
+		case domainagent.MCPConfigFormatCodex:
+			return injectCodexMCP(rootfsPath, gatewayIP, port)
+		case domainagent.MCPConfigFormatOpenCode:
+			return injectOpenCodeMCP(rootfsPath, gatewayIP, port)
+		default:
+			return nil
+		}
+	}
+}

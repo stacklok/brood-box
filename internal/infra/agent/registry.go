@@ -33,6 +33,8 @@ func builtinAgents() map[string]domainagent.Agent {
 	claudeLockedHosts := []egress.Host{
 		{Name: "api.anthropic.com", Ports: []uint16{443}},
 		{Name: "*.anthropic.com", Ports: []uint16{443}},
+		{Name: "claude.com", Ports: []uint16{443}},
+		{Name: "*.claude.com", Ports: []uint16{443}},
 	}
 
 	codexLockedHosts := []egress.Host{
@@ -43,6 +45,8 @@ func builtinAgents() map[string]domainagent.Agent {
 	opencodeLockedHosts := []egress.Host{
 		{Name: "api.anthropic.com", Ports: []uint16{443}},
 		{Name: "*.anthropic.com", Ports: []uint16{443}},
+		{Name: "claude.com", Ports: []uint16{443}},
+		{Name: "*.claude.com", Ports: []uint16{443}},
 		{Name: "api.openai.com", Ports: []uint16{443}},
 		{Name: "*.openai.com", Ports: []uint16{443}},
 		{Name: "openrouter.ai", Ports: []uint16{443}},
@@ -58,6 +62,7 @@ func builtinAgents() map[string]domainagent.Agent {
 			DefaultCPUs:          2,
 			DefaultMemory:        2048,
 			DefaultEgressProfile: egress.ProfileStandard,
+			MCPConfigFormat:      domainagent.MCPConfigFormatClaudeCode,
 			EgressHosts: map[egress.ProfileName][]egress.Host{
 				egress.ProfileLocked:   claudeLockedHosts,
 				egress.ProfileStandard: append(claudeLockedHosts, devInfraHosts...),
@@ -71,6 +76,7 @@ func builtinAgents() map[string]domainagent.Agent {
 			DefaultCPUs:          2,
 			DefaultMemory:        2048,
 			DefaultEgressProfile: egress.ProfileStandard,
+			MCPConfigFormat:      domainagent.MCPConfigFormatCodex,
 			EgressHosts: map[egress.ProfileName][]egress.Host{
 				egress.ProfileLocked:   codexLockedHosts,
 				egress.ProfileStandard: append(codexLockedHosts, devInfraHosts...),
@@ -84,6 +90,7 @@ func builtinAgents() map[string]domainagent.Agent {
 			DefaultCPUs:          2,
 			DefaultMemory:        2048,
 			DefaultEgressProfile: egress.ProfileStandard,
+			MCPConfigFormat:      domainagent.MCPConfigFormatOpenCode,
 			EgressHosts: map[egress.ProfileName][]egress.Host{
 				egress.ProfileLocked:   opencodeLockedHosts,
 				egress.ProfileStandard: append(opencodeLockedHosts, devInfraHosts...),

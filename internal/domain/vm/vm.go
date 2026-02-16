@@ -6,7 +6,9 @@ package vm
 
 import (
 	"context"
+	"net/http"
 
+	"github.com/stacklok/sandbox-agent/internal/domain/agent"
 	"github.com/stacklok/sandbox-agent/internal/domain/egress"
 )
 
@@ -36,6 +38,25 @@ type VMConfig struct {
 
 	// EgressPolicy restricts outbound VM traffic. Nil means no restrictions.
 	EgressPolicy *egress.Policy
+
+	// HostServices are HTTP services to expose on the VM gateway IP.
+	// Each service is reachable from the guest at http://192.168.127.1:<port>/.
+	HostServices []HostService
+
+	// MCPConfigFormat identifies how MCP config should be injected into the rootfs.
+	MCPConfigFormat agent.MCPConfigFormat
+}
+
+// HostService describes an HTTP service exposed from host to guest.
+type HostService struct {
+	// Name identifies the service (e.g., "mcp").
+	Name string
+
+	// Port is the TCP port on the gateway IP.
+	Port uint16
+
+	// Handler serves HTTP requests for this service.
+	Handler http.Handler
 }
 
 // VMRunner creates and manages sandbox VMs.

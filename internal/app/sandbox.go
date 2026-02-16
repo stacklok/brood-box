@@ -14,6 +14,7 @@ import (
 	"github.com/stacklok/sandbox-agent/internal/domain/agent"
 	"github.com/stacklok/sandbox-agent/internal/domain/config"
 	"github.com/stacklok/sandbox-agent/internal/domain/egress"
+	"github.com/stacklok/sandbox-agent/internal/domain/hostservice"
 	"github.com/stacklok/sandbox-agent/internal/domain/progress"
 	"github.com/stacklok/sandbox-agent/internal/domain/session"
 	"github.com/stacklok/sandbox-agent/internal/domain/snapshot"
@@ -80,6 +81,9 @@ type SandboxDeps struct {
 	Reviewer        snapshot.Reviewer
 	Flusher         snapshot.Flusher
 	Differ          snapshot.Differ
+
+	// MCPProvider creates host services for MCP proxy (nil = disabled).
+	MCPProvider hostservice.Provider
 }
 
 // Sandbox holds the state of a running sandbox session.
@@ -123,6 +127,7 @@ type SandboxRunner struct {
 	reviewer        snapshot.Reviewer
 	flusher         snapshot.Flusher
 	differ          snapshot.Differ
+	mcpProvider     hostservice.Provider
 }
 
 // NewSandboxRunner creates a new SandboxRunner with the given dependencies.
@@ -143,6 +148,7 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 		reviewer:        deps.Reviewer,
 		flusher:         deps.Flusher,
 		differ:          deps.Differ,
+		mcpProvider:     deps.MCPProvider,
 	}
 }
 
@@ -234,7 +240,25 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		s.logger.Debug("forwarding environment variables", "keys", keys)
 	}
 
-	// 4. Set up workspace path (possibly with snapshot isolation).
+	// 4. Set up MCP host services if enabled.
+	var hostServices []domvm.HostService
+	mcpCfg := s.resolveMCPConfig(cfg, agentName)
+	if mcpCfg.Enabled && s.mcpProvider != nil {
+		s.observer.Start(progress.PhaseConfiguringMCP, "Discovering MCP servers...")
+		services, mcpErr := s.mcpProvider.Services(ctx)
+		if mcpErr != nil {
+			s.observer.Fail("Failed to configure MCP")
+			return nil, fmt.Errorf("configuring MCP services: %w", mcpErr)
+		}
+		for _, svc := range services {
+			hostServices = append(hostServices, domvm.HostService{
+				Name: svc.Name, Port: svc.Port, Handler: svc.Handler,
+			})
+		}
+		s.observer.Complete(fmt.Sprintf("MCP proxy ready on port %d", mcpCfg.Port))
+	}
+
+	// 5. Set up workspace path (possibly with snapshot isolation).
 	workspacePath := opts.Workspace
 	var snap *workspace.Snapshot
 
@@ -265,18 +289,20 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		workspacePath = snap.SnapshotPath
 	}
 
-	// 5. Start VM with (possibly overridden) workspace path.
+	// 6. Start VM with (possibly overridden) workspace path.
 	s.observer.Start(progress.PhaseStartingVM, "Starting sandbox VM...")
 
 	vmCfg := domvm.VMConfig{
-		Name:          "sandbox-" + ag.Name,
-		Image:         ag.Image,
-		CPUs:          ag.DefaultCPUs,
-		Memory:        ag.DefaultMemory,
-		SSHPort:       opts.SSHPort,
-		WorkspacePath: workspacePath,
-		EnvVars:       envVars,
-		EgressPolicy:  egressPolicy,
+		Name:            "sandbox-" + ag.Name,
+		Image:           ag.Image,
+		CPUs:            ag.DefaultCPUs,
+		Memory:          ag.DefaultMemory,
+		SSHPort:         opts.SSHPort,
+		WorkspacePath:   workspacePath,
+		EnvVars:         envVars,
+		EgressPolicy:    egressPolicy,
+		HostServices:    hostServices,
+		MCPConfigFormat: ag.MCPConfigFormat,
 	}
 
 	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)
@@ -421,4 +447,36 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 		return termErr
 	}
 	return reviewErr
+}
+
+// resolveMCPConfig returns the effective MCP configuration by merging
+// global config with any agent-specific override.
+func (s *SandboxRunner) resolveMCPConfig(cfg *config.Config, agentName string) config.MCPConfig {
+	mcpCfg := cfg.MCP
+
+	// Apply agent-specific override if present.
+	if override, ok := cfg.Agents[agentName]; ok && override.MCP != nil {
+		if override.MCP.Enabled {
+			mcpCfg.Enabled = true
+		}
+		if override.MCP.Group != "" {
+			mcpCfg.Group = override.MCP.Group
+		}
+		if override.MCP.Port != 0 {
+			mcpCfg.Port = override.MCP.Port
+		}
+		if override.MCP.ConfigPath != "" {
+			mcpCfg.ConfigPath = override.MCP.ConfigPath
+		}
+	}
+
+	// Apply defaults.
+	if mcpCfg.Group == "" {
+		mcpCfg.Group = "default"
+	}
+	if mcpCfg.Port == 0 {
+		mcpCfg.Port = 4483
+	}
+
+	return mcpCfg
 }

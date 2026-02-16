@@ -10,6 +10,23 @@ import (
 	"github.com/stacklok/sandbox-agent/internal/domain/egress"
 )
 
+// MCPConfigFormat identifies how an agent consumes MCP server configuration.
+type MCPConfigFormat string
+
+const (
+	// MCPConfigFormatClaudeCode injects a Claude Code MCP config file.
+	MCPConfigFormatClaudeCode MCPConfigFormat = "claude-code"
+
+	// MCPConfigFormatCodex injects a Codex MCP config file.
+	MCPConfigFormatCodex MCPConfigFormat = "codex"
+
+	// MCPConfigFormatOpenCode injects an OpenCode MCP config file.
+	MCPConfigFormatOpenCode MCPConfigFormat = "opencode"
+
+	// MCPConfigFormatNone means no MCP config injection.
+	MCPConfigFormatNone MCPConfigFormat = "none"
+)
+
 // Agent describes a coding agent that can run inside a sandbox VM.
 type Agent struct {
 	// Name is the unique identifier for this agent (e.g., "claude-code").
@@ -36,6 +53,9 @@ type Agent struct {
 
 	// EgressHosts maps profile names to allowed host lists for this agent.
 	EgressHosts map[egress.ProfileName][]egress.Host
+
+	// MCPConfigFormat identifies how MCP server configuration is injected.
+	MCPConfigFormat MCPConfigFormat
 }
 
 // Registry provides access to known agents by name.

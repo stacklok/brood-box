@@ -23,6 +23,8 @@ const (
 	PhaseComputingDiff
 	// PhaseFlushingChanges is the accepted-changes flush phase.
 	PhaseFlushingChanges
+	// PhaseConfiguringMCP is the MCP proxy configuration phase.
+	PhaseConfiguringMCP
 	// PhaseCleaning is the snapshot cleanup phase.
 	PhaseCleaning
 )

@@ -28,6 +28,7 @@ import (
 	"github.com/stacklok/sandbox-agent/internal/infra/diff"
 	"github.com/stacklok/sandbox-agent/internal/infra/exclude"
 	infralogging "github.com/stacklok/sandbox-agent/internal/infra/logging"
+	inframcp "github.com/stacklok/sandbox-agent/internal/infra/mcp"
 	infraprogress "github.com/stacklok/sandbox-agent/internal/infra/progress"
 	"github.com/stacklok/sandbox-agent/internal/infra/review"
 	infrassh "github.com/stacklok/sandbox-agent/internal/infra/ssh"
@@ -68,6 +69,10 @@ func rootCmd() *cobra.Command {
 		logFile       string
 		egressProfile string
 		allowHosts    []string
+		mcpEnabled    bool
+		mcpGroup      string
+		mcpPort       uint16
+		mcpConfig     string
 	)
 
 	cmd := &cobra.Command{
@@ -89,7 +94,9 @@ Example:
   sandbox-agent claude-code --no-review
   sandbox-agent claude-code --exclude "*.log" --exclude "tmp/"
   sandbox-agent claude-code --egress-profile locked
-  sandbox-agent claude-code --allow-host "custom-api.example.com:443"`,
+  sandbox-agent claude-code --allow-host "custom-api.example.com:443"
+  sandbox-agent claude-code --mcp
+  sandbox-agent claude-code --mcp --mcp-group "coding-tools"`,
 		Args:    cobra.ExactArgs(1),
 		Version: fmt.Sprintf("%s (%s)", version.Version, version.Commit),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -106,6 +113,10 @@ Example:
 				logFile:       logFile,
 				egressProfile: egressProfile,
 				allowHosts:    allowHosts,
+				mcpEnabled:    mcpEnabled,
+				mcpGroup:      mcpGroup,
+				mcpPort:       mcpPort,
+				mcpConfig:     mcpConfig,
 			})
 		},
 		SilenceUsage:  true,
@@ -124,6 +135,10 @@ Example:
 	cmd.Flags().StringVar(&logFile, "log-file", "", "Override log file path (default: ~/.config/sandbox-agent/logs/sandbox-agent.log)")
 	cmd.Flags().StringVar(&egressProfile, "egress-profile", "", "Egress restriction level: permissive, standard, locked (default: agent's built-in default)")
 	cmd.Flags().StringSliceVar(&allowHosts, "allow-host", nil, "Additional allowed egress host, format: hostname[:port] (repeatable)")
+	cmd.Flags().BoolVar(&mcpEnabled, "mcp", false, "Enable MCP tool proxy (discovers servers from ToolHive)")
+	cmd.Flags().StringVar(&mcpGroup, "mcp-group", "default", "ToolHive group to discover MCP servers from")
+	cmd.Flags().Uint16Var(&mcpPort, "mcp-port", 4483, "Port for MCP proxy on VM gateway")
+	cmd.Flags().StringVar(&mcpConfig, "mcp-config", "", "Path to custom vmcp config YAML")
 
 	// Add list subcommand.
 	cmd.AddCommand(listCmd())
@@ -159,6 +174,10 @@ type runFlags struct {
 	logFile       string
 	egressProfile string
 	allowHosts    []string
+	mcpEnabled    bool
+	mcpGroup      string
+	mcpPort       uint16
+	mcpConfig     string
 }
 
 func run(parentCtx context.Context, agentName string, flags runFlags) error {
@@ -283,6 +302,36 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		EnvProvider:   agent.NewOSEnvProvider(os.Environ),
 		Logger:        logger,
 		Observer:      observer,
+	}
+
+	// Wire MCP proxy when enabled (CLI flag or config).
+	mcpEnabled := flags.mcpEnabled
+	if !mcpEnabled && cfg != nil && cfg.MCP.Enabled {
+		mcpEnabled = true
+	}
+	if mcpEnabled {
+		mcpGroup := flags.mcpGroup
+		mcpPort := flags.mcpPort
+		mcpConfigPath := flags.mcpConfig
+		if cfg != nil {
+			if mcpGroup == "default" && cfg.MCP.Group != "" {
+				mcpGroup = cfg.MCP.Group
+			}
+			if mcpPort == 4483 && cfg.MCP.Port != 0 {
+				mcpPort = cfg.MCP.Port
+			}
+			if mcpConfigPath == "" && cfg.MCP.ConfigPath != "" {
+				mcpConfigPath = cfg.MCP.ConfigPath
+			}
+		}
+		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpConfigPath, logger, logFile)
+		deps.MCPProvider = mcpProvider
+		defer func() { _ = mcpProvider.Close() }()
+		// Ensure config reflects MCP enabled state for the application layer.
+		cfg.MCP.Enabled = true
+		cfg.MCP.Group = mcpGroup
+		cfg.MCP.Port = mcpPort
+		cfg.MCP.ConfigPath = mcpConfigPath
 	}
 
 	// Wire snapshot isolation dependencies only when review is enabled.

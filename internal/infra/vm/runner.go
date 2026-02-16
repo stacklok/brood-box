@@ -13,8 +13,11 @@ import (
 	"path/filepath"
 
 	"github.com/stacklok/propolis"
+	"github.com/stacklok/propolis/net/hosted"
+	"github.com/stacklok/propolis/net/topology"
 	propolisssh "github.com/stacklok/propolis/ssh"
 
+	"github.com/stacklok/sandbox-agent/internal/domain/agent"
 	domvm "github.com/stacklok/sandbox-agent/internal/domain/vm"
 )
 
@@ -103,6 +106,25 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		}),
 	}
 
+	// Register hosted services on a custom network provider so they are
+	// reachable from the guest at http://192.168.127.1:<port>/.
+	// This must happen before the egress policy is set because propolis
+	// will auto-create a hosted.Provider if netProvider is nil.
+	if len(cfg.HostServices) > 0 {
+		provider := hosted.NewProvider()
+		for _, svc := range cfg.HostServices {
+			provider.AddService(hosted.Service{
+				Port:    svc.Port,
+				Handler: svc.Handler,
+			})
+		}
+		opts = append(opts, propolis.WithNetProvider(provider))
+
+		r.logger.Info("registered hosted services",
+			"count", len(cfg.HostServices),
+		)
+	}
+
 	// Add egress policy if specified.
 	if cfg.EgressPolicy != nil {
 		hosts := make([]propolis.EgressHost, len(cfg.EgressPolicy.AllowedHosts))
@@ -116,6 +138,13 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		opts = append(opts, propolis.WithEgressPolicy(propolis.EgressPolicy{
 			AllowedHosts: hosts,
 		}))
+	}
+
+	// Add MCP config injection hook if host services and agent format are set.
+	if len(cfg.HostServices) > 0 && cfg.MCPConfigFormat != "" && cfg.MCPConfigFormat != agent.MCPConfigFormatNone {
+		opts = append(opts, propolis.WithRootFSHook(
+			InjectMCPConfig(cfg.MCPConfigFormat, topology.GatewayIP, cfg.HostServices[0].Port),
+		))
 	}
 
 	// Add runner path if specified.

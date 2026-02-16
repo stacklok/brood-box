@@ -24,8 +24,27 @@ type Config struct {
 	// Network configures egress networking.
 	Network NetworkConfig `yaml:"network"`
 
+	// MCP configures the in-process MCP proxy.
+	MCP MCPConfig `yaml:"mcp"`
+
 	// Agents maps agent names to configuration overrides.
 	Agents map[string]AgentOverride `yaml:"agents"`
+}
+
+// MCPConfig configures the in-process MCP proxy.
+type MCPConfig struct {
+	// Enabled controls whether the MCP proxy is active. Default: false.
+	Enabled bool `yaml:"enabled"`
+
+	// Group is the ToolHive group to discover servers from. Default: "default".
+	Group string `yaml:"group,omitempty"`
+
+	// Port is the TCP port on the gateway IP. Default: 4483.
+	Port uint16 `yaml:"port,omitempty"`
+
+	// ConfigPath is an optional path to a vmcp config YAML for advanced
+	// customization (tool filtering, conflict resolution, composite workflows).
+	ConfigPath string `yaml:"config,omitempty"`
 }
 
 // ReviewConfig configures workspace snapshot isolation and review behavior.
@@ -86,6 +105,9 @@ type AgentOverride struct {
 
 	// AllowHosts are additional egress hosts for this agent.
 	AllowHosts []EgressHostConfig `yaml:"allow_hosts,omitempty"`
+
+	// MCP overrides the global MCP proxy settings for this agent.
+	MCP *MCPConfig `yaml:"mcp,omitempty"`
 }
 
 // MergeConfigs merges a local (per-workspace) config into a global config.
