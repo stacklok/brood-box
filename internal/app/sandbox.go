@@ -9,10 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 	"time"
-
-	"golang.org/x/term"
 
 	"github.com/stacklok/sandbox-agent/internal/domain/agent"
 	"github.com/stacklok/sandbox-agent/internal/domain/config"
@@ -20,8 +17,21 @@ import (
 	"github.com/stacklok/sandbox-agent/internal/domain/snapshot"
 	domvm "github.com/stacklok/sandbox-agent/internal/domain/vm"
 	"github.com/stacklok/sandbox-agent/internal/domain/workspace"
-	"github.com/stacklok/sandbox-agent/internal/infra/exclude"
 )
+
+// SnapshotOpts groups snapshot isolation options.
+type SnapshotOpts struct {
+	// Enabled controls whether snapshot isolation is active.
+	Enabled bool
+
+	// SnapshotMatcher excludes files from the workspace snapshot clone.
+	// Nil defaults to snapshot.NopMatcher.
+	SnapshotMatcher snapshot.Matcher
+
+	// DiffMatcher excludes files from the diff computation.
+	// Nil defaults to snapshot.NopMatcher.
+	DiffMatcher snapshot.Matcher
+}
 
 // RunOpts holds runtime options for a sandbox execution.
 type RunOpts struct {
@@ -40,35 +50,25 @@ type RunOpts struct {
 	// ImageOverride overrides the agent's OCI image reference.
 	ImageOverride string
 
-	// ReviewEnabled controls whether snapshot isolation is active.
-	ReviewEnabled bool
-
-	// ExcludePatterns are additional gitignore-style patterns to exclude.
-	ExcludePatterns []string
+	// Snapshot holds snapshot isolation options.
+	Snapshot SnapshotOpts
 }
 
 // SandboxDeps holds all dependencies for SandboxRunner.
 type SandboxDeps struct {
-	Registry    agent.Registry
-	VMRunner    domvm.VMRunner
-	Terminal    session.TerminalSession
-	Config      *config.Config
-	EnvProvider agent.EnvProvider
-	Logger      *slog.Logger
+	Registry      agent.Registry
+	VMRunner      domvm.VMRunner
+	SessionRunner session.TerminalSession
+	Terminal      session.Terminal
+	Config        *config.Config
+	EnvProvider   agent.EnvProvider
+	Logger        *slog.Logger
 
 	// Snapshot isolation dependencies (nil = disabled).
 	WorkspaceCloner workspace.WorkspaceCloner
 	Reviewer        snapshot.Reviewer
 	Flusher         snapshot.Flusher
 	Differ          snapshot.Differ
-
-	// Stdin, Stdout, Stderr are the terminal file descriptors for the
-	// interactive SSH session. These must be real *os.File values (not
-	// arbitrary io.Reader/Writer) because the PTY layer needs file
-	// descriptors for term.MakeRaw and term.IsTerminal.
-	Stdin  *os.File
-	Stdout *os.File
-	Stderr *os.File
 }
 
 // SandboxRunner orchestrates the full sandbox VM lifecycle:
@@ -76,7 +76,8 @@ type SandboxDeps struct {
 type SandboxRunner struct {
 	registry        agent.Registry
 	vmRunner        domvm.VMRunner
-	terminal        session.TerminalSession
+	sessionRunner   session.TerminalSession
+	terminal        session.Terminal
 	config          *config.Config
 	envProvider     agent.EnvProvider
 	logger          *slog.Logger
@@ -84,9 +85,6 @@ type SandboxRunner struct {
 	reviewer        snapshot.Reviewer
 	flusher         snapshot.Flusher
 	differ          snapshot.Differ
-	stdin           *os.File
-	stdout          *os.File
-	stderr          *os.File
 }
 
 // NewSandboxRunner creates a new SandboxRunner with the given dependencies.
@@ -94,6 +92,7 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 	return &SandboxRunner{
 		registry:        deps.Registry,
 		vmRunner:        deps.VMRunner,
+		sessionRunner:   deps.SessionRunner,
 		terminal:        deps.Terminal,
 		config:          deps.Config,
 		envProvider:     deps.EnvProvider,
@@ -102,9 +101,6 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 		reviewer:        deps.Reviewer,
 		flusher:         deps.Flusher,
 		differ:          deps.Differ,
-		stdin:           deps.Stdin,
-		stdout:          deps.Stdout,
-		stderr:          deps.Stderr,
 	}
 }
 
@@ -162,27 +158,19 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 	// 4. Set up workspace path (possibly with snapshot isolation).
 	workspacePath := opts.Workspace
 	var snap *workspace.Snapshot
-	var diffMatcher snapshot.Matcher
 
-	if opts.ReviewEnabled && s.workspaceCloner != nil {
+	snapshotMatcher := opts.Snapshot.SnapshotMatcher
+	if snapshotMatcher == nil {
+		snapshotMatcher = snapshot.NopMatcher
+	}
+
+	diffMatcher := opts.Snapshot.DiffMatcher
+	if diffMatcher == nil {
+		diffMatcher = snapshot.NopMatcher
+	}
+
+	if opts.Snapshot.Enabled && s.workspaceCloner != nil {
 		s.logger.Info("creating workspace snapshot for review isolation")
-
-		excludeCfg, err := exclude.LoadExcludeConfig(workspacePath, opts.ExcludePatterns, s.logger)
-		if err != nil {
-			return fmt.Errorf("loading exclude config: %w", err)
-		}
-
-		// Snapshot matcher: excludes secrets and performance dirs from the clone.
-		snapshotMatcher := exclude.NewMatcherFromConfig(excludeCfg)
-
-		// Load .gitignore patterns separately — gitignored files stay in the
-		// snapshot (the agent may need them) but are excluded from the diff
-		// so changes to build artifacts don't appear in review.
-		gitignorePatterns, err := exclude.LoadGitignorePatterns(workspacePath, s.logger)
-		if err != nil {
-			s.logger.Warn("failed to load .gitignore patterns", "error", err)
-		}
-		diffMatcher = exclude.NewDiffMatcher(excludeCfg, gitignorePatterns)
 
 		snap, err = s.workspaceCloner.CreateSnapshot(ctx, workspacePath, snapshotMatcher)
 		if err != nil {
@@ -221,14 +209,12 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 
 	// 6. Run interactive terminal session.
 	sessionOpts := session.SessionOpts{
-		Host:    "127.0.0.1",
-		Port:    sandboxVM.SSHPort(),
-		User:    "sandbox",
-		KeyPath: sandboxVM.SSHKeyPath(),
-		Command: ag.Command,
-		Stdin:   s.stdin,
-		Stdout:  s.stdout,
-		Stderr:  s.stderr,
+		Host:     "127.0.0.1",
+		Port:     sandboxVM.SSHPort(),
+		User:     "sandbox",
+		KeyPath:  sandboxVM.SSHKeyPath(),
+		Command:  ag.Command,
+		Terminal: s.terminal,
 	}
 
 	s.logger.Info("connecting to sandbox VM",
@@ -240,20 +226,14 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 	// it after. The SSH session puts stdin in raw mode; its internal defer
 	// may race with the stdin-reading goroutine, leaving the terminal in
 	// a broken state.
-	var savedTermState *term.State
-	if s.stdin != nil && term.IsTerminal(int(s.stdin.Fd())) {
-		savedTermState, _ = term.GetState(int(s.stdin.Fd()))
-	}
-
-	termErr := s.terminal.Run(ctx, sessionOpts)
+	restore, _ := s.terminal.MakeRaw()
+	termErr := s.sessionRunner.Run(ctx, sessionOpts)
 
 	// Force-restore terminal to cooked mode for the interactive review.
 	// This must happen before any stdin reads (review prompts, etc.).
-	if savedTermState != nil {
-		if err := term.Restore(int(s.stdin.Fd()), savedTermState); err != nil {
-			s.logger.Warn("failed to restore terminal state", "error", err)
-		}
-	}
+	// The restore func is idempotent (via sync.Once), so it's safe even
+	// though the SSH session's defer also calls it.
+	restore()
 
 	// 7. Stop VM EXPLICITLY before diff/review.
 	// This prevents the agent from modifying snapshot files between diff and flush.

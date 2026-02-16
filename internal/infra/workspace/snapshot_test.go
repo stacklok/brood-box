@@ -201,7 +201,12 @@ func TestSnapshot_Cleanup(t *testing.T) {
 	snapDir := filepath.Join(tmpDir, "snap")
 	require.NoError(t, os.MkdirAll(snapDir, 0o755))
 
-	snap := &domws.Snapshot{SnapshotPath: snapDir}
+	snap := &domws.Snapshot{
+		SnapshotPath: snapDir,
+		Cleanup: func() error {
+			return os.RemoveAll(snapDir)
+		},
+	}
 	require.NoError(t, snap.Cleanup())
 
 	_, err := os.Stat(snapDir)

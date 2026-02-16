@@ -6,7 +6,6 @@ package session
 
 import (
 	"context"
-	"os"
 )
 
 // SessionOpts configures an interactive terminal session.
@@ -27,14 +26,8 @@ type SessionOpts struct {
 	// It will be wrapped: . /etc/sandbox-env && cd /workspace && exec <cmd>
 	Command []string
 
-	// Stdin is the input stream (typically os.Stdin).
-	Stdin *os.File
-
-	// Stdout is the output stream (typically os.Stdout).
-	Stdout *os.File
-
-	// Stderr is the error stream (typically os.Stderr).
-	Stderr *os.File
+	// Terminal provides I/O streams and PTY control for the session.
+	Terminal Terminal
 }
 
 // TerminalSession manages interactive PTY sessions over SSH.

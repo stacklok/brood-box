@@ -7,17 +7,12 @@ package ssh
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"os"
-	"os/signal"
 	"strings"
-	"sync"
-	"syscall"
 
 	"golang.org/x/crypto/ssh"
-	"golang.org/x/term"
 
 	"github.com/stacklok/sandbox-agent/internal/domain/session"
 )
@@ -73,26 +68,24 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 	}
 	defer func() { _ = client.Close() }()
 
-	session, err := client.NewSession()
+	sshSession, err := client.NewSession()
 	if err != nil {
 		return fmt.Errorf("creating SSH session: %w", err)
 	}
-	defer func() { _ = session.Close() }()
+	defer func() { _ = sshSession.Close() }()
 
 	// Set terminal to raw mode if it's a real terminal.
-	if term.IsTerminal(int(opts.Stdin.Fd())) {
-		oldState, err := term.MakeRaw(int(opts.Stdin.Fd()))
+	if opts.Terminal.IsInteractive() {
+		restore, err := opts.Terminal.MakeRaw()
 		if err != nil {
 			return fmt.Errorf("setting raw terminal: %w", err)
 		}
-		defer func() {
-			_ = term.Restore(int(opts.Stdin.Fd()), oldState)
-		}()
+		defer restore() // safety net for panics
 
 		// Get terminal size and request PTY.
-		width, height, err := term.GetSize(int(opts.Stdin.Fd()))
+		size, err := opts.Terminal.Size()
 		if err != nil {
-			width, height = 80, 24
+			size = session.TermSize{Width: 80, Height: 24}
 		}
 
 		modes := ssh.TerminalModes{
@@ -101,31 +94,36 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 			ssh.TTY_OP_OSPEED: 14400,
 		}
 
-		if err := session.RequestPty("xterm-256color", height, width, modes); err != nil {
+		if err := sshSession.RequestPty("xterm-256color", size.Height, size.Width, modes); err != nil {
 			return fmt.Errorf("requesting PTY: %w", err)
 		}
 
 		// Handle terminal resize signals.
-		s.handleResize(ctx, opts.Stdin, session)
+		resizeCh := opts.Terminal.NotifyResize(ctx)
+		go func() {
+			for newSize := range resizeCh {
+				_ = sshSession.WindowChange(newSize.Height, newSize.Width)
+			}
+		}()
 	}
 
 	// Wire up I/O.
-	session.Stdin = opts.Stdin
-	session.Stdout = opts.Stdout
-	session.Stderr = opts.Stderr
+	sshSession.Stdin = opts.Terminal.Stdin()
+	sshSession.Stdout = opts.Terminal.Stdout()
+	sshSession.Stderr = opts.Terminal.Stderr()
 
 	// Build the command string.
 	cmd := buildCommand(opts.Command)
 	s.logger.Info("running command in VM", "command", cmd)
 
-	if err := session.Start(cmd); err != nil {
+	if err := sshSession.Start(cmd); err != nil {
 		return fmt.Errorf("starting remote command: %w", err)
 	}
 
 	// Wait for the command to finish, respecting context cancellation.
 	done := make(chan error, 1)
 	go func() {
-		done <- session.Wait()
+		done <- sshSession.Wait()
 	}()
 
 	select {
@@ -138,32 +136,9 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 		}
 		return nil
 	case <-ctx.Done():
-		_ = session.Signal(ssh.SIGTERM)
+		_ = sshSession.Signal(ssh.SIGTERM)
 		return ctx.Err()
 	}
-}
-
-// handleResize watches for SIGWINCH and forwards window size changes.
-func (s *InteractiveSession) handleResize(ctx context.Context, stdin *os.File, session *ssh.Session) {
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGWINCH)
-
-	var once sync.Once
-	go func() {
-		defer once.Do(func() { signal.Stop(sigCh) })
-		for {
-			select {
-			case <-sigCh:
-				width, height, err := term.GetSize(int(stdin.Fd()))
-				if err != nil {
-					continue
-				}
-				_ = session.WindowChange(height, width)
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 }
 
 // buildCommand constructs the shell command to run in the VM.
@@ -177,9 +152,3 @@ func buildCommand(command []string) string {
 	parts = append(parts, "exec "+strings.Join(command, " "))
 	return strings.Join(parts, " && ")
 }
-
-// Ensure io interfaces are satisfied (compile-time check).
-var (
-	_ io.Reader = (*os.File)(nil)
-	_ io.Writer = (*os.File)(nil)
-)

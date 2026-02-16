@@ -130,9 +130,13 @@ func (c *FSWorkspaceCloner) CreateSnapshot(ctx context.Context, workspacePath st
 	}
 
 	success = true
+	snapshotDir := tmpDir
 	return &domws.Snapshot{
 		OriginalPath: absWorkspace,
-		SnapshotPath: tmpDir,
+		SnapshotPath: snapshotDir,
+		Cleanup: func() error {
+			return os.RemoveAll(snapshotDir)
+		},
 	}, nil
 }
 

@@ -8,3 +8,10 @@ type Matcher interface {
 	// Match returns true if the given relative path should be excluded.
 	Match(relPath string) bool
 }
+
+// NopMatcher is a Matcher that excludes nothing.
+var NopMatcher Matcher = nopMatcher{}
+
+type nopMatcher struct{}
+
+func (nopMatcher) Match(string) bool { return false }

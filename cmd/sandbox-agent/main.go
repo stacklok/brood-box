@@ -19,11 +19,14 @@ import (
 	"github.com/stacklok/sandbox-agent/internal/app"
 	"github.com/stacklok/sandbox-agent/internal/domain/agent"
 	domainconfig "github.com/stacklok/sandbox-agent/internal/domain/config"
+	"github.com/stacklok/sandbox-agent/internal/domain/snapshot"
 	infraagent "github.com/stacklok/sandbox-agent/internal/infra/agent"
 	infraconfig "github.com/stacklok/sandbox-agent/internal/infra/config"
 	"github.com/stacklok/sandbox-agent/internal/infra/diff"
+	"github.com/stacklok/sandbox-agent/internal/infra/exclude"
 	"github.com/stacklok/sandbox-agent/internal/infra/review"
 	infrassh "github.com/stacklok/sandbox-agent/internal/infra/ssh"
+	infraterminal "github.com/stacklok/sandbox-agent/internal/infra/terminal"
 	infravm "github.com/stacklok/sandbox-agent/internal/infra/vm"
 	infraws "github.com/stacklok/sandbox-agent/internal/infra/workspace"
 	"github.com/stacklok/sandbox-agent/internal/version"
@@ -216,17 +219,31 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 	excludePatterns = append(excludePatterns, flags.excludes...)
 
+	// Build exclude matchers (moved from app layer to composition root).
+	var snapshotMatcher, diffMatcher snapshot.Matcher
+	if reviewEnabled {
+		excludeCfg, err := exclude.LoadExcludeConfig(ws, excludePatterns, logger)
+		if err != nil {
+			return fmt.Errorf("loading exclude config: %w", err)
+		}
+		snapshotMatcher = exclude.NewMatcherFromConfig(excludeCfg)
+
+		gitignorePatterns, err := exclude.LoadGitignorePatterns(ws, logger)
+		if err != nil {
+			logger.Warn("failed to load .gitignore patterns", "error", err)
+		}
+		diffMatcher = exclude.NewDiffMatcher(excludeCfg, gitignorePatterns)
+	}
+
 	// Wire dependencies.
 	deps := app.SandboxDeps{
-		Registry:    registry,
-		VMRunner:    infravm.NewPropolisRunner("", logger),
-		Terminal:    infrassh.NewInteractiveSession(logger),
-		Config:      cfg,
-		EnvProvider: agent.NewOSEnvProvider(os.Environ),
-		Logger:      logger,
-		Stdin:       os.Stdin,
-		Stdout:      os.Stdout,
-		Stderr:      os.Stderr,
+		Registry:      registry,
+		VMRunner:      infravm.NewPropolisRunner("", logger),
+		SessionRunner: infrassh.NewInteractiveSession(logger),
+		Terminal:      infraterminal.NewOSTerminal(os.Stdin, os.Stdout, os.Stderr),
+		Config:        cfg,
+		EnvProvider:   agent.NewOSEnvProvider(os.Environ),
+		Logger:        logger,
 	}
 
 	// Wire snapshot isolation dependencies only when review is enabled.
@@ -242,13 +259,16 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	runner := app.NewSandboxRunner(deps)
 
 	err = runner.Run(ctx, agentName, app.RunOpts{
-		CPUs:            flags.cpus,
-		Memory:          flags.memory,
-		Workspace:       ws,
-		SSHPort:         flags.sshPort,
-		ImageOverride:   flags.image,
-		ReviewEnabled:   reviewEnabled,
-		ExcludePatterns: excludePatterns,
+		CPUs:          flags.cpus,
+		Memory:        flags.memory,
+		Workspace:     ws,
+		SSHPort:       flags.sshPort,
+		ImageOverride: flags.image,
+		Snapshot: app.SnapshotOpts{
+			Enabled:         reviewEnabled,
+			SnapshotMatcher: snapshotMatcher,
+			DiffMatcher:     diffMatcher,
+		},
 	})
 
 	if err != nil {

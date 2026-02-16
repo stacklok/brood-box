@@ -7,7 +7,6 @@ package workspace
 
 import (
 	"context"
-	"os"
 
 	"github.com/stacklok/sandbox-agent/internal/domain/snapshot"
 )
@@ -19,14 +18,10 @@ type Snapshot struct {
 
 	// SnapshotPath is the COW clone directory.
 	SnapshotPath string
-}
 
-// Cleanup removes the snapshot directory.
-func (s *Snapshot) Cleanup() error {
-	if s.SnapshotPath == "" {
-		return nil
-	}
-	return os.RemoveAll(s.SnapshotPath)
+	// Cleanup removes the snapshot directory. Set by the WorkspaceCloner
+	// implementation. Safe to call multiple times.
+	Cleanup func() error
 }
 
 // WorkspaceCloner creates workspace snapshots.

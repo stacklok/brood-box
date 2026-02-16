@@ -6,8 +6,10 @@ package app
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -52,15 +54,30 @@ func (m *mockVM) SSHPort() uint16    { return m.sshPort }
 func (m *mockVM) DataDir() string    { return m.dataDir }
 func (m *mockVM) SSHKeyPath() string { return m.sshKeyPath }
 
-// mockTerminal records the session opts it was called with.
-type mockTerminal struct {
+// mockSessionRunner records the session opts it was called with.
+type mockSessionRunner struct {
 	runOpts session.SessionOpts
 	runErr  error
 }
 
-func (m *mockTerminal) Run(_ context.Context, opts session.SessionOpts) error {
+func (m *mockSessionRunner) Run(_ context.Context, opts session.SessionOpts) error {
 	m.runOpts = opts
 	return m.runErr
+}
+
+// mockTerminal implements session.Terminal for testing.
+type mockTerminal struct{}
+
+func (m *mockTerminal) Stdin() io.Reader                { return strings.NewReader("") }
+func (m *mockTerminal) Stdout() io.Writer               { return io.Discard }
+func (m *mockTerminal) Stderr() io.Writer               { return io.Discard }
+func (m *mockTerminal) IsInteractive() bool             { return false }
+func (m *mockTerminal) Size() (session.TermSize, error) { return session.TermSize{}, nil }
+func (m *mockTerminal) MakeRaw() (func(), error)        { return func() {}, nil }
+func (m *mockTerminal) NotifyResize(_ context.Context) <-chan session.TermSize {
+	ch := make(chan session.TermSize)
+	close(ch)
+	return ch
 }
 
 // mockEnvProvider returns a fixed set of environment variables.
@@ -93,13 +110,15 @@ func (m *mockRegistry) List() []agent.Agent {
 
 // mockWorkspaceCloner records calls and returns a snapshot pointing to a temp dir.
 type mockWorkspaceCloner struct {
-	createCalled bool
-	createErr    error
-	snapshot     *workspace.Snapshot
+	createCalled  bool
+	createErr     error
+	snapshot      *workspace.Snapshot
+	receivedMatch snapshot.Matcher
 }
 
-func (m *mockWorkspaceCloner) CreateSnapshot(_ context.Context, _ string, _ snapshot.Matcher) (*workspace.Snapshot, error) {
+func (m *mockWorkspaceCloner) CreateSnapshot(_ context.Context, _ string, matcher snapshot.Matcher) (*workspace.Snapshot, error) {
 	m.createCalled = true
+	m.receivedMatch = matcher
 	if m.createErr != nil {
 		return nil, m.createErr
 	}
@@ -171,17 +190,18 @@ func TestSandboxRunner_Run(t *testing.T) {
 	}
 
 	vmRunner := &mockVMRunner{vm: mvm}
-	terminal := &mockTerminal{}
+	sessionRunner := &mockSessionRunner{}
 
 	runner := NewSandboxRunner(SandboxDeps{
 		Registry: &mockRegistry{agents: map[string]agent.Agent{
 			"test-agent": testAgent,
 		}},
-		VMRunner:    vmRunner,
-		Terminal:    terminal,
-		Config:      &config.Config{},
-		EnvProvider: &mockEnvProvider{vars: []string{"TEST_KEY=secret123", "OTHER=foo"}},
-		Logger:      testLogger(),
+		VMRunner:      vmRunner,
+		SessionRunner: sessionRunner,
+		Terminal:      &mockTerminal{},
+		Config:        &config.Config{},
+		EnvProvider:   &mockEnvProvider{vars: []string{"TEST_KEY=secret123", "OTHER=foo"}},
+		Logger:        testLogger(),
 	})
 
 	err := runner.Run(context.Background(), "test-agent", RunOpts{
@@ -200,10 +220,10 @@ func TestSandboxRunner_Run(t *testing.T) {
 	assert.Equal(t, map[string]string{"TEST_KEY": "secret123"}, vmRunner.startCfg.EnvVars)
 
 	// Verify terminal session was started.
-	assert.Equal(t, "127.0.0.1", terminal.runOpts.Host)
-	assert.Equal(t, uint16(2222), terminal.runOpts.Port)
-	assert.Equal(t, "sandbox", terminal.runOpts.User)
-	assert.Equal(t, []string{"test-cmd"}, terminal.runOpts.Command)
+	assert.Equal(t, "127.0.0.1", sessionRunner.runOpts.Host)
+	assert.Equal(t, uint16(2222), sessionRunner.runOpts.Port)
+	assert.Equal(t, "sandbox", sessionRunner.runOpts.User)
+	assert.Equal(t, []string{"test-cmd"}, sessionRunner.runOpts.Command)
 
 	// Verify VM was stopped.
 	assert.True(t, mvm.stopped)
@@ -213,12 +233,13 @@ func TestSandboxRunner_Run_AgentNotFound(t *testing.T) {
 	t.Parallel()
 
 	runner := NewSandboxRunner(SandboxDeps{
-		Registry:    &mockRegistry{agents: map[string]agent.Agent{}},
-		VMRunner:    &mockVMRunner{},
-		Terminal:    &mockTerminal{},
-		Config:      &config.Config{},
-		EnvProvider: &mockEnvProvider{},
-		Logger:      testLogger(),
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{}},
+		VMRunner:      &mockVMRunner{},
+		SessionRunner: &mockSessionRunner{},
+		Terminal:      &mockTerminal{},
+		Config:        &config.Config{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
 	})
 
 	err := runner.Run(context.Background(), "nonexistent", RunOpts{})
@@ -241,12 +262,13 @@ func TestSandboxRunner_Run_CLIOverrides(t *testing.T) {
 	vmRunner := &mockVMRunner{vm: mvm}
 
 	runner := NewSandboxRunner(SandboxDeps{
-		Registry:    &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
-		VMRunner:    vmRunner,
-		Terminal:    &mockTerminal{},
-		Config:      &config.Config{},
-		EnvProvider: &mockEnvProvider{},
-		Logger:      testLogger(),
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Terminal:      &mockTerminal{},
+		Config:        &config.Config{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
 	})
 
 	err := runner.Run(context.Background(), "test", RunOpts{
@@ -280,6 +302,7 @@ func TestSandboxRunner_Run_ReviewEnabled_UsesSnapshotPath(t *testing.T) {
 		snapshot: &workspace.Snapshot{
 			OriginalPath: workspaceDir,
 			SnapshotPath: snapshotDir,
+			Cleanup:      func() error { return nil },
 		},
 	}
 	differ := &mockDiffer{changes: nil} // No changes.
@@ -287,6 +310,7 @@ func TestSandboxRunner_Run_ReviewEnabled_UsesSnapshotPath(t *testing.T) {
 	runner := NewSandboxRunner(SandboxDeps{
 		Registry:        &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
 		VMRunner:        vmRunner,
+		SessionRunner:   &mockSessionRunner{},
 		Terminal:        &mockTerminal{},
 		Config:          &config.Config{},
 		EnvProvider:     &mockEnvProvider{},
@@ -298,8 +322,8 @@ func TestSandboxRunner_Run_ReviewEnabled_UsesSnapshotPath(t *testing.T) {
 	})
 
 	err := runner.Run(context.Background(), "test", RunOpts{
-		Workspace:     workspaceDir,
-		ReviewEnabled: true,
+		Workspace: workspaceDir,
+		Snapshot:  SnapshotOpts{Enabled: true},
 	})
 	require.NoError(t, err)
 
@@ -321,17 +345,18 @@ func TestSandboxRunner_Run_ReviewDisabled_UsesOriginalPath(t *testing.T) {
 	vmRunner := &mockVMRunner{vm: mvm}
 
 	runner := NewSandboxRunner(SandboxDeps{
-		Registry:    &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
-		VMRunner:    vmRunner,
-		Terminal:    &mockTerminal{},
-		Config:      &config.Config{},
-		EnvProvider: &mockEnvProvider{},
-		Logger:      testLogger(),
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Terminal:      &mockTerminal{},
+		Config:        &config.Config{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
 	})
 
 	err := runner.Run(context.Background(), "test", RunOpts{
-		Workspace:     "/my/workspace",
-		ReviewEnabled: false,
+		Workspace: "/my/workspace",
+		Snapshot:  SnapshotOpts{Enabled: false},
 	})
 	require.NoError(t, err)
 
@@ -361,6 +386,7 @@ func TestSandboxRunner_Run_ReviewWithChanges_FlushesAccepted(t *testing.T) {
 		snapshot: &workspace.Snapshot{
 			OriginalPath: workspaceDir,
 			SnapshotPath: snapshotDir,
+			Cleanup:      func() error { return nil },
 		},
 	}
 	differ := &mockDiffer{changes: changes}
@@ -370,6 +396,7 @@ func TestSandboxRunner_Run_ReviewWithChanges_FlushesAccepted(t *testing.T) {
 	runner := NewSandboxRunner(SandboxDeps{
 		Registry:        &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
 		VMRunner:        vmRunner,
+		SessionRunner:   &mockSessionRunner{},
 		Terminal:        &mockTerminal{},
 		Config:          &config.Config{},
 		EnvProvider:     &mockEnvProvider{},
@@ -381,8 +408,8 @@ func TestSandboxRunner_Run_ReviewWithChanges_FlushesAccepted(t *testing.T) {
 	})
 
 	err := runner.Run(context.Background(), "test", RunOpts{
-		Workspace:     workspaceDir,
-		ReviewEnabled: true,
+		Workspace: workspaceDir,
+		Snapshot:  SnapshotOpts{Enabled: true},
 	})
 	require.NoError(t, err)
 
@@ -409,6 +436,7 @@ func TestSandboxRunner_Run_ReviewEmptyDiff_SkipsReview(t *testing.T) {
 		snapshot: &workspace.Snapshot{
 			OriginalPath: workspaceDir,
 			SnapshotPath: snapshotDir,
+			Cleanup:      func() error { return nil },
 		},
 	}
 	reviewer := &mockReviewer{}
@@ -416,6 +444,7 @@ func TestSandboxRunner_Run_ReviewEmptyDiff_SkipsReview(t *testing.T) {
 	runner := NewSandboxRunner(SandboxDeps{
 		Registry:        &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
 		VMRunner:        &mockVMRunner{vm: mvm},
+		SessionRunner:   &mockSessionRunner{},
 		Terminal:        &mockTerminal{},
 		Config:          &config.Config{},
 		EnvProvider:     &mockEnvProvider{},
@@ -427,8 +456,8 @@ func TestSandboxRunner_Run_ReviewEmptyDiff_SkipsReview(t *testing.T) {
 	})
 
 	err := runner.Run(context.Background(), "test", RunOpts{
-		Workspace:     workspaceDir,
-		ReviewEnabled: true,
+		Workspace: workspaceDir,
+		Snapshot:  SnapshotOpts{Enabled: true},
 	})
 	require.NoError(t, err)
 
@@ -452,6 +481,7 @@ func TestSandboxRunner_Run_SnapshotCreationFails(t *testing.T) {
 	runner := NewSandboxRunner(SandboxDeps{
 		Registry:        &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
 		VMRunner:        &mockVMRunner{vm: &mockVM{sshPort: 8888, sshKeyPath: "/tmp/key"}},
+		SessionRunner:   &mockSessionRunner{},
 		Terminal:        &mockTerminal{},
 		Config:          &config.Config{},
 		EnvProvider:     &mockEnvProvider{},
@@ -463,8 +493,8 @@ func TestSandboxRunner_Run_SnapshotCreationFails(t *testing.T) {
 	})
 
 	err := runner.Run(context.Background(), "test", RunOpts{
-		Workspace:     t.TempDir(),
-		ReviewEnabled: true,
+		Workspace: t.TempDir(),
+		Snapshot:  SnapshotOpts{Enabled: true},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "creating workspace snapshot")
@@ -492,6 +522,7 @@ func TestSandboxRunner_Run_VMStoppedBeforeReview(t *testing.T) {
 		snapshot: &workspace.Snapshot{
 			OriginalPath: workspaceDir,
 			SnapshotPath: snapshotDir,
+			Cleanup:      func() error { return nil },
 		},
 	}
 
@@ -501,6 +532,7 @@ func TestSandboxRunner_Run_VMStoppedBeforeReview(t *testing.T) {
 	runner := NewSandboxRunner(SandboxDeps{
 		Registry:        &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
 		VMRunner:        &mockVMRunner{vm: mvm},
+		SessionRunner:   &mockSessionRunner{},
 		Terminal:        &mockTerminal{},
 		Config:          &config.Config{},
 		EnvProvider:     &mockEnvProvider{},
@@ -512,13 +544,63 @@ func TestSandboxRunner_Run_VMStoppedBeforeReview(t *testing.T) {
 	})
 
 	err := runner.Run(context.Background(), "test", RunOpts{
-		Workspace:     workspaceDir,
-		ReviewEnabled: true,
+		Workspace: workspaceDir,
+		Snapshot:  SnapshotOpts{Enabled: true},
 	})
 	require.NoError(t, err)
 
 	assert.True(t, mvm.stopped, "VM should be stopped")
 	assert.True(t, orderCheckReviewer.vmWasStoppedWhenCalled, "VM should be stopped before review")
+}
+
+func TestSandboxRunner_Run_NilMatcherDefaultsToNop(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	snapshotDir := t.TempDir()
+
+	testAgent := agent.Agent{
+		Name:    "test",
+		Image:   "img:latest",
+		Command: []string{"cmd"},
+	}
+
+	mvm := &mockVM{sshPort: 1111, sshKeyPath: "/tmp/key"}
+	cloner := &mockWorkspaceCloner{
+		snapshot: &workspace.Snapshot{
+			OriginalPath: workspaceDir,
+			SnapshotPath: snapshotDir,
+			Cleanup:      func() error { return nil },
+		},
+	}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:        &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
+		VMRunner:        &mockVMRunner{vm: mvm},
+		SessionRunner:   &mockSessionRunner{},
+		Terminal:        &mockTerminal{},
+		Config:          &config.Config{},
+		EnvProvider:     &mockEnvProvider{},
+		Logger:          testLogger(),
+		WorkspaceCloner: cloner,
+		Differ:          &mockDiffer{},
+		Reviewer:        &mockReviewer{},
+		Flusher:         &mockFlusher{},
+	})
+
+	// Pass nil matchers — they should default to NopMatcher.
+	err := runner.Run(context.Background(), "test", RunOpts{
+		Workspace: workspaceDir,
+		Snapshot: SnapshotOpts{
+			Enabled:         true,
+			SnapshotMatcher: nil,
+			DiffMatcher:     nil,
+		},
+	})
+	require.NoError(t, err)
+
+	// The cloner should have received NopMatcher (not nil).
+	assert.Equal(t, snapshot.NopMatcher, cloner.receivedMatch)
 }
 
 // orderCheckingReviewer checks if the VM was stopped when Review is called.
