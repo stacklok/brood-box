@@ -613,3 +613,334 @@ func (r *orderCheckingReviewer) Review(changes []snapshot.FileChange) (snapshot.
 	r.vmWasStoppedWhenCalled = r.vm.stopped
 	return snapshot.ReviewResult{Accepted: changes}, nil
 }
+
+// orderCheckingDiffer records whether the VM was stopped when Diff is called.
+type orderCheckingDiffer struct {
+	vm                     *mockVM
+	vmWasStoppedWhenCalled bool
+	changes                []snapshot.FileChange
+}
+
+func (d *orderCheckingDiffer) Diff(_, _ string, _ snapshot.Matcher) ([]snapshot.FileChange, error) {
+	d.vmWasStoppedWhenCalled = d.vm.stopped
+	return d.changes, nil
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle method tests
+// ---------------------------------------------------------------------------
+
+func TestSandboxRunner_Prepare_Success(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	snapshotDir := t.TempDir()
+
+	testAgent := agent.Agent{
+		Name:          "test-agent",
+		Image:         "test-image:latest",
+		Command:       []string{"test-cmd"},
+		EnvForward:    []string{"TEST_KEY"},
+		DefaultCPUs:   2,
+		DefaultMemory: 2048,
+	}
+
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+	cloner := &mockWorkspaceCloner{
+		snapshot: &workspace.Snapshot{
+			OriginalPath: workspaceDir,
+			SnapshotPath: snapshotDir,
+			Cleanup:      func() error { return nil },
+		},
+	}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry: &mockRegistry{agents: map[string]agent.Agent{
+			"test-agent": testAgent,
+		}},
+		VMRunner:        vmRunner,
+		SessionRunner:   &mockSessionRunner{},
+		Terminal:        &mockTerminal{},
+		Config:          &config.Config{},
+		EnvProvider:     &mockEnvProvider{vars: []string{"TEST_KEY=secret123"}},
+		Logger:          testLogger(),
+		WorkspaceCloner: cloner,
+		Differ:          &mockDiffer{},
+		Reviewer:        &mockReviewer{},
+		Flusher:         &mockFlusher{},
+	})
+
+	sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+		Workspace: workspaceDir,
+		Snapshot:  SnapshotOpts{Enabled: true},
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	assert.Equal(t, "test-agent", sb.Agent.Name)
+	assert.NotNil(t, sb.VM)
+	assert.Equal(t, "sandbox-test-agent", sb.VMConfig.Name)
+	assert.Equal(t, snapshotDir, sb.WorkspacePath)
+	assert.NotNil(t, sb.Snapshot)
+	assert.Equal(t, map[string]string{"TEST_KEY": "secret123"}, sb.EnvVars)
+	assert.Equal(t, snapshot.NopMatcher, sb.DiffMatcher)
+	assert.Equal(t, snapshotDir, vmRunner.startCfg.WorkspacePath)
+	assert.True(t, cloner.createCalled)
+}
+
+func TestSandboxRunner_Prepare_AgentNotFound(t *testing.T) {
+	t.Parallel()
+
+	vmRunner := &mockVMRunner{}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Terminal:      &mockTerminal{},
+		Config:        &config.Config{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+	})
+
+	_, err := runner.Prepare(context.Background(), "nonexistent", RunOpts{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "resolving agent")
+
+	// VM should never have been started.
+	assert.Equal(t, domvm.VMConfig{}, vmRunner.startCfg)
+}
+
+func TestSandboxRunner_Attach_CallsSessionRunner(t *testing.T) {
+	t.Parallel()
+
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	sessionRunner := &mockSessionRunner{}
+	terminal := &mockTerminal{}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		SessionRunner: sessionRunner,
+		Logger:        testLogger(),
+	})
+
+	sb := &Sandbox{
+		Agent: agent.Agent{Command: []string{"test-cmd"}},
+		VM:    mvm,
+	}
+
+	err := runner.Attach(context.Background(), sb, terminal)
+	require.NoError(t, err)
+
+	assert.Equal(t, "127.0.0.1", sessionRunner.runOpts.Host)
+	assert.Equal(t, uint16(2222), sessionRunner.runOpts.Port)
+	assert.Equal(t, "sandbox", sessionRunner.runOpts.User)
+	assert.Equal(t, "/tmp/key", sessionRunner.runOpts.KeyPath)
+	assert.Equal(t, []string{"test-cmd"}, sessionRunner.runOpts.Command)
+	assert.Equal(t, terminal, sessionRunner.runOpts.Terminal)
+}
+
+func TestSandboxRunner_Stop_StopsVM(t *testing.T) {
+	t.Parallel()
+
+	mvm := &mockVM{}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Logger: testLogger(),
+	})
+
+	sb := &Sandbox{VM: mvm}
+
+	err := runner.Stop(sb)
+	require.NoError(t, err)
+	assert.True(t, mvm.stopped)
+}
+
+func TestSandboxRunner_Changes_ReturnsDiff(t *testing.T) {
+	t.Parallel()
+
+	origDir := t.TempDir()
+	snapDir := t.TempDir()
+
+	differ := &mockDiffer{
+		changes: []snapshot.FileChange{
+			{RelPath: "main.go", Kind: snapshot.Modified, Hash: "abc"},
+		},
+	}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Differ: differ,
+		Logger: testLogger(),
+	})
+
+	sb := &Sandbox{
+		Snapshot: &workspace.Snapshot{
+			OriginalPath: origDir,
+			SnapshotPath: snapDir,
+			Cleanup:      func() error { return nil },
+		},
+		DiffMatcher: snapshot.NopMatcher,
+	}
+
+	changes, err := runner.Changes(sb)
+	require.NoError(t, err)
+	require.Len(t, changes, 1)
+	assert.Equal(t, "main.go", changes[0].RelPath)
+}
+
+func TestSandboxRunner_Changes_NilSnapshot_ReturnsNil(t *testing.T) {
+	t.Parallel()
+
+	differ := &mockDiffer{
+		changes: []snapshot.FileChange{
+			{RelPath: "should-not-appear.go"},
+		},
+	}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Differ: differ,
+		Logger: testLogger(),
+	})
+
+	sb := &Sandbox{Snapshot: nil}
+
+	changes, err := runner.Changes(sb)
+	assert.NoError(t, err)
+	assert.Nil(t, changes)
+}
+
+func TestSandboxRunner_Flush_AppliesAccepted(t *testing.T) {
+	t.Parallel()
+
+	origDir := t.TempDir()
+	snapDir := t.TempDir()
+
+	flusher := &mockFlusher{}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Flusher: flusher,
+		Logger:  testLogger(),
+	})
+
+	sb := &Sandbox{
+		Snapshot: &workspace.Snapshot{
+			OriginalPath: origDir,
+			SnapshotPath: snapDir,
+			Cleanup:      func() error { return nil },
+		},
+	}
+
+	accepted := []snapshot.FileChange{
+		{RelPath: "file.go", Kind: snapshot.Modified, Hash: "abc123"},
+	}
+
+	err := runner.Flush(sb, accepted)
+	require.NoError(t, err)
+	assert.True(t, flusher.flushCalled)
+	assert.Len(t, flusher.flushed, 1)
+}
+
+func TestSandboxRunner_Flush_NilSnapshot_Noop(t *testing.T) {
+	t.Parallel()
+
+	flusher := &mockFlusher{}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Flusher: flusher,
+		Logger:  testLogger(),
+	})
+
+	sb := &Sandbox{Snapshot: nil}
+
+	err := runner.Flush(sb, []snapshot.FileChange{{RelPath: "file.go"}})
+	assert.NoError(t, err)
+	assert.False(t, flusher.flushCalled)
+}
+
+func TestSandboxRunner_LifecycleEndToEnd(t *testing.T) {
+	t.Parallel()
+
+	workspaceDir := t.TempDir()
+	snapshotDir := t.TempDir()
+
+	testAgent := agent.Agent{
+		Name:          "test-agent",
+		Image:         "test-image:latest",
+		Command:       []string{"test-cmd"},
+		EnvForward:    []string{"KEY"},
+		DefaultCPUs:   2,
+		DefaultMemory: 2048,
+	}
+
+	mvm := &mockVM{sshPort: 3333, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+	sessionRunner := &mockSessionRunner{}
+	cloner := &mockWorkspaceCloner{
+		snapshot: &workspace.Snapshot{
+			OriginalPath: workspaceDir,
+			SnapshotPath: snapshotDir,
+			Cleanup:      func() error { return nil },
+		},
+	}
+	changes := []snapshot.FileChange{
+		{RelPath: "new.go", Kind: snapshot.Added, Hash: "xyz"},
+	}
+	orderDiffer := &orderCheckingDiffer{vm: mvm, changes: changes}
+	reviewer := &mockReviewer{}
+	flusher := &mockFlusher{}
+	terminal := &mockTerminal{}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry: &mockRegistry{agents: map[string]agent.Agent{
+			"test-agent": testAgent,
+		}},
+		VMRunner:        vmRunner,
+		SessionRunner:   sessionRunner,
+		Terminal:        terminal,
+		Config:          &config.Config{},
+		EnvProvider:     &mockEnvProvider{vars: []string{"KEY=val"}},
+		Logger:          testLogger(),
+		WorkspaceCloner: cloner,
+		Differ:          orderDiffer,
+		Reviewer:        reviewer,
+		Flusher:         flusher,
+	})
+
+	// 1. Prepare
+	sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+		Workspace: workspaceDir,
+		Snapshot:  SnapshotOpts{Enabled: true},
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	// 2. Attach
+	err = runner.Attach(context.Background(), sb, terminal)
+	require.NoError(t, err)
+	assert.NotZero(t, sessionRunner.runOpts.Port, "session should have been called")
+
+	// 3. Stop
+	err = runner.Stop(sb)
+	require.NoError(t, err)
+	assert.True(t, mvm.stopped)
+
+	// 4. Changes
+	gotChanges, err := runner.Changes(sb)
+	require.NoError(t, err)
+	require.Len(t, gotChanges, 1)
+	assert.True(t, orderDiffer.vmWasStoppedWhenCalled, "VM should be stopped before diff")
+
+	// 5. Review
+	result, err := reviewer.Review(gotChanges)
+	require.NoError(t, err)
+
+	// 6. Flush
+	err = runner.Flush(sb, result.Accepted)
+	require.NoError(t, err)
+	assert.True(t, flusher.flushCalled)
+	assert.Len(t, flusher.flushed, 1)
+
+	// 7. Cleanup
+	err = sb.Cleanup()
+	assert.NoError(t, err)
+}
