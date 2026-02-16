@@ -52,6 +52,9 @@ type RunOpts struct {
 
 	// Snapshot holds snapshot isolation options.
 	Snapshot SnapshotOpts
+
+	// Terminal provides I/O streams for the session. Required for Run().
+	Terminal session.Terminal
 }
 
 // SandboxDeps holds all dependencies for SandboxRunner.
@@ -59,7 +62,6 @@ type SandboxDeps struct {
 	Registry      agent.Registry
 	VMRunner      domvm.VMRunner
 	SessionRunner session.TerminalSession
-	Terminal      session.Terminal
 	Config        *config.Config
 	EnvProvider   agent.EnvProvider
 	Logger        *slog.Logger
@@ -97,7 +99,6 @@ type SandboxRunner struct {
 	registry        agent.Registry
 	vmRunner        domvm.VMRunner
 	sessionRunner   session.TerminalSession
-	terminal        session.Terminal
 	config          *config.Config
 	envProvider     agent.EnvProvider
 	logger          *slog.Logger
@@ -113,7 +114,6 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 		registry:        deps.Registry,
 		vmRunner:        deps.VMRunner,
 		sessionRunner:   deps.SessionRunner,
-		terminal:        deps.Terminal,
 		config:          deps.Config,
 		envProvider:     deps.EnvProvider,
 		logger:          deps.Logger,
@@ -310,7 +310,7 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 		}
 	}()
 
-	termErr := s.Attach(ctx, sb, s.terminal)
+	termErr := s.Attach(ctx, sb, opts.Terminal)
 
 	if stopErr := s.Stop(sb); stopErr != nil {
 		s.logger.Error("failed to stop VM", "error", stopErr)

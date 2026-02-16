@@ -243,7 +243,6 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		Registry:      registry,
 		VMRunner:      infravm.NewPropolisRunner("", logger),
 		SessionRunner: infrassh.NewInteractiveSession(logger),
-		Terminal:      terminal,
 		Config:        cfg,
 		EnvProvider:   agent.NewOSEnvProvider(os.Environ),
 		Logger:        logger,
