@@ -7,7 +7,7 @@ go 1.25.7
 
 replace github.com/stacklok/propolis => ../propolis
 
-replace github.com/stacklok/toolhive => /var/home/jaosorior/Development/stacklok/toolhive-handler-extract
+replace github.com/stacklok/toolhive => ../toolhive
 
 require (
 	github.com/charmbracelet/glamour v0.10.0
