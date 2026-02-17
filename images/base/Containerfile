@@ -22,7 +22,7 @@ RUN mkdir -p /usr/local/bin
 
 # Create non-root sandbox user for SSH sessions
 RUN adduser -D -u 1000 -h /home/sandbox -s /bin/bash sandbox && \
-    mkdir -p /home/sandbox/.ssh && \
+    mkdir -p /home/sandbox/.ssh /home/sandbox/.local/bin && \
     chmod 700 /home/sandbox/.ssh && \
-    chown sandbox:sandbox /home/sandbox/.ssh && \
+    chown -R sandbox:sandbox /home/sandbox/.ssh /home/sandbox/.local && \
     echo "/bin/bash" >> /etc/shells

@@ -156,7 +156,7 @@ func (s *Server) executeCommand(ch ssh.Channel, command string, state *sessionSt
 		fmt.Sprintf("HOME=%s", s.cfg.DefaultHome),
 		fmt.Sprintf("USER=%s", s.cfg.DefaultUser),
 		fmt.Sprintf("LOGNAME=%s", s.cfg.DefaultUser),
-		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		fmt.Sprintf("PATH=%s/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin", s.cfg.DefaultHome),
 	)
 
 	// Add TERM from pty request or session env.

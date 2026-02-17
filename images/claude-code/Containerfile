@@ -9,7 +9,8 @@ FROM ghcr.io/stacklok/apiary/base:latest
 # The installer creates a symlink at /root/.local/bin/claude pointing to the
 # versioned binary under /root/.local/share/claude/versions/. We must copy
 # the real binary (not the symlink) so it works for the non-root sandbox user.
-RUN curl -fsSL https://claude.ai/install.sh | bash && \
+RUN export PATH="$HOME/.local/bin:$PATH" && \
+    curl -fsSL https://claude.ai/install.sh | bash && \
     cp -L /root/.local/bin/claude /usr/local/bin/claude && \
     rm -rf /root/.local/share/claude /root/.local/bin/claude
 
