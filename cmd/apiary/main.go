@@ -43,8 +43,6 @@ import (
 // defaultLogFile is the log file name within the per-VM data directory.
 const defaultLogFile = "apiary.log"
 
-// maxLogSize is the maximum log file size before truncation (10 MiB).
-const maxLogSize = 10 * 1024 * 1024
 
 func main() {
 	if err := rootCmd().Execute(); err != nil {
@@ -476,7 +474,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	return nil
 }
 
-// openLogFile opens (or creates) the log file, truncating if it exceeds maxLogSize.
+// openLogFile opens (or creates) the log file, truncating it each session.
 // When no override is given, the log is placed in the per-VM data directory
 // at ~/.config/apiary/vms/<vmName>/apiary.log.
 // Returns the resolved path, the file, a closer, and any error.
@@ -494,12 +492,7 @@ func openLogFile(override, vmName string) (string, *os.File, io.Closer, error) {
 		logPath = filepath.Join(logDir, defaultLogFile)
 	}
 
-	// Truncate if oversized.
-	if info, err := os.Stat(logPath); err == nil && info.Size() > maxLogSize {
-		_ = os.Truncate(logPath, 0)
-	}
-
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
 	if err != nil {
 		return logPath, nil, nil, err
 	}
