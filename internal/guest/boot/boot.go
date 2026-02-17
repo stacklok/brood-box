@@ -20,6 +20,7 @@ import (
 	"github.com/stacklok/apiary/internal/guest/mount"
 	"github.com/stacklok/apiary/internal/guest/network"
 	"github.com/stacklok/apiary/internal/guest/sshd"
+	"github.com/stacklok/propolis/guest/harden"
 )
 
 // Run executes the full guest boot sequence and returns a shutdown function
@@ -44,19 +45,43 @@ func Run(logger *slog.Logger) (shutdown func(), err error) {
 		logger.Warn("workspace mount failed, continuing without workspace", "error", err)
 	}
 
-	// 4. Load environment file.
+	// 4. Apply kernel sysctl hardening (needs /proc mounted).
+	harden.KernelDefaults(logger)
+
+	// 5. Lock down /root/ so the sandbox user cannot read it.
+	lockdownRoot(logger)
+
+	// 6. Load environment file.
 	envVars, err := env.Load("/etc/sandbox-env")
 	if err != nil {
 		return nil, fmt.Errorf("loading environment: %w", err)
 	}
 
-	// 5. Parse authorized keys.
+	// 7. Parse authorized keys.
 	authorizedKeys, err := parseAuthorizedKeys("/home/sandbox/.ssh/authorized_keys")
 	if err != nil {
 		return nil, fmt.Errorf("parsing authorized keys: %w", err)
 	}
 
-	// 6. Start SSH server — bind synchronously so listen errors surface
+	// 8. Drop unneeded capabilities from the bounding set. Keep only
+	// what sshd needs: SETUID/SETGID for credential switching,
+	// NET_BIND_SERVICE for port 22. This must be the last privileged
+	// operation before starting the SSH server.
+	//
+	// This is fatal because PR_CAPBSET_DROP has been available since
+	// Linux 2.6.25 — failure indicates a serious problem (not root,
+	// kernel bug) and continuing with a full bounding set defeats the
+	// hardening entirely.
+	logger.Info("dropping unnecessary capabilities")
+	if err := harden.DropBoundingCaps(
+		harden.CapSetUID,
+		harden.CapSetGID,
+		harden.CapNetBindService,
+	); err != nil {
+		return nil, fmt.Errorf("dropping capabilities: %w", err)
+	}
+
+	// 9. Start SSH server — bind synchronously so listen errors surface
 	// immediately rather than being swallowed in a goroutine.
 	cfg := sshd.Config{
 		Port:           22,
@@ -88,6 +113,15 @@ func Run(logger *slog.Logger) (shutdown func(), err error) {
 	logger.Info("sandbox init ready", "ssh_port", cfg.Port)
 
 	return func() { srv.Close() }, nil
+}
+
+// lockdownRoot sets /root/ to mode 0700 so the sandbox user cannot read
+// its contents (MCP bootstrap config, debug logs, etc.).
+func lockdownRoot(logger *slog.Logger) {
+	logger.Info("locking down /root permissions")
+	if err := os.Chmod("/root", 0o700); err != nil {
+		logger.Warn("failed to chmod /root", "error", err)
+	}
 }
 
 // parseAuthorizedKeys reads an authorized_keys file and returns the parsed
