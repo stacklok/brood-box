@@ -125,6 +125,7 @@ tasks:
 
   image-base:
     desc: Build base guest image
+    run: once
     cmds:
       - podman build -t {{.IMAGE_REGISTRY}}/base:latest images/base/
 
