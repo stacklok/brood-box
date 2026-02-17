@@ -81,6 +81,17 @@ func Run(logger *slog.Logger) (shutdown func(), err error) {
 		return nil, fmt.Errorf("dropping capabilities: %w", err)
 	}
 
+	// 8b. Set no_new_privs to prevent any child process from gaining
+	// privileges through execve (setuid binaries, file capabilities).
+	// This is inherited by all descendants via fork, so every SSH
+	// session and its children are covered. Called after DropBoundingCaps
+	// because credential switching via SysProcAttr.Credential uses
+	// setresuid/setresgid syscalls (not execve), so it is unaffected.
+	logger.Info("setting no_new_privs")
+	if err := harden.SetNoNewPrivs(); err != nil {
+		return nil, fmt.Errorf("setting no_new_privs: %w", err)
+	}
+
 	// 9. Start SSH server — bind synchronously so listen errors surface
 	// immediately rather than being swallowed in a goroutine.
 	cfg := sshd.Config{
