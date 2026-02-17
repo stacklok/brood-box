@@ -303,7 +303,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	// 4. Set up MCP host services if enabled.
 	var hostServices []domvm.HostService
 	mcpCfg := s.resolveMCPConfig(cfg, agentName)
-	if mcpCfg.Enabled && s.mcpProvider != nil {
+	if mcpCfg.IsEnabled() && s.mcpProvider != nil {
 		s.observer.Start(progress.PhaseConfiguringMCP, "Discovering MCP servers...")
 		services, mcpErr := s.mcpProvider.Services(ctx)
 		if mcpErr != nil {
@@ -552,8 +552,8 @@ func (s *SandboxRunner) resolveMCPConfig(cfg *config.Config, agentName string) c
 
 	// Apply agent-specific override if present.
 	if override, ok := cfg.Agents[agentName]; ok && override.MCP != nil {
-		if override.MCP.Enabled {
-			mcpCfg.Enabled = true
+		if override.MCP.Enabled != nil {
+			mcpCfg.Enabled = override.MCP.Enabled
 		}
 		if override.MCP.Group != "" {
 			mcpCfg.Group = override.MCP.Group

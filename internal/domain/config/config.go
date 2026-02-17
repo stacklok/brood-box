@@ -66,8 +66,9 @@ func (g GitConfig) SSHAgentEnabled() bool {
 
 // MCPConfig configures the in-process MCP proxy.
 type MCPConfig struct {
-	// Enabled controls whether the MCP proxy is active. Default: true.
-	Enabled bool `yaml:"enabled"`
+	// Enabled controls whether the MCP proxy is active.
+	// When nil, defaults to true (enabled).
+	Enabled *bool `yaml:"enabled,omitempty"`
 
 	// Group is the ToolHive group to discover servers from. Default: "default".
 	Group string `yaml:"group,omitempty"`
@@ -78,6 +79,15 @@ type MCPConfig struct {
 	// ConfigPath is an optional path to a vmcp config YAML for advanced
 	// customization (tool filtering, conflict resolution, composite workflows).
 	ConfigPath string `yaml:"config,omitempty"`
+}
+
+// IsEnabled returns whether the MCP proxy is enabled.
+// Defaults to true when Enabled is nil.
+func (m MCPConfig) IsEnabled() bool {
+	if m.Enabled == nil {
+		return true
+	}
+	return *m.Enabled
 }
 
 // ReviewConfig configures workspace snapshot isolation and review behavior.

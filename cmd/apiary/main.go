@@ -43,7 +43,6 @@ import (
 // defaultLogFile is the log file name within the per-VM data directory.
 const defaultLogFile = "apiary.log"
 
-
 func main() {
 	if err := rootCmd().Execute(); err != nil {
 		// Cobra won't print the error (SilenceErrors: true), so we do.
@@ -318,7 +317,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	// Wire MCP proxy (enabled by default, --no-mcp to disable).
 	mcpEnabled := !flags.noMCP
-	if mcpEnabled && cfg != nil && !cfg.MCP.Enabled {
+	if mcpEnabled && cfg != nil && cfg.MCP.Enabled != nil && !*cfg.MCP.Enabled {
 		mcpEnabled = false
 	}
 	if mcpEnabled {
@@ -340,7 +339,8 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		deps.MCPProvider = mcpProvider
 		defer func() { _ = mcpProvider.Close() }()
 		// Ensure config reflects MCP enabled state for the application layer.
-		cfg.MCP.Enabled = true
+		enabled := true
+		cfg.MCP.Enabled = &enabled
 		cfg.MCP.Group = mcpGroup
 		cfg.MCP.Port = mcpPort
 		cfg.MCP.ConfigPath = mcpConfigPath
