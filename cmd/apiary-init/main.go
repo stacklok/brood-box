@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/stacklok/apiary/internal/guest/boot"
-	"github.com/stacklok/apiary/internal/guest/reaper"
+	"github.com/stacklok/propolis/guest/boot"
+	"github.com/stacklok/propolis/guest/reaper"
 )
 
 func main() {

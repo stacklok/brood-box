@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 
 	"github.com/stacklok/propolis"
+	"github.com/stacklok/propolis/hooks"
 	"github.com/stacklok/propolis/net/hosted"
 	"github.com/stacklok/propolis/net/topology"
 	propolisssh "github.com/stacklok/propolis/ssh"
@@ -94,9 +95,9 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		propolis.WithMemory(cfg.Memory),
 		propolis.WithPorts(propolis.PortForward{Host: sshPort, Guest: 22}),
 		propolis.WithRootFSHook(
-			InjectSSHKeys(pubKey),
+			hooks.InjectAuthorizedKeys(pubKey),
 			InjectInitBinary(),
-			InjectEnvFile(cfg.EnvVars),
+			hooks.InjectEnvFile("/etc/sandbox-env", cfg.EnvVars),
 		),
 		propolis.WithInitOverride("/apiary-init"),
 		propolis.WithPostBoot(func(ctx context.Context, _ *propolis.VM) error {
