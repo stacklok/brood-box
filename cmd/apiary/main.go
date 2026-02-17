@@ -132,7 +132,7 @@ Example:
 	cmd.Flags().Uint16Var(&sshPort, "ssh-port", 0, "Host SSH port (0 = auto-pick)")
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/apiary/config.yaml)")
 	cmd.Flags().StringVar(&image, "image", "", "Override OCI image reference")
-	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug logging (shows full slog output on stderr)")
+	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug-level logging to file (default: info level)")
 	cmd.Flags().BoolVar(&noReview, "no-review", false, "Disable workspace snapshot isolation (mount workspace directly)")
 	cmd.Flags().StringSliceVar(&excludes, "exclude", nil, "Additional exclude patterns for workspace snapshot (repeatable)")
 	cmd.Flags().StringVar(&logFile, "log-file", "", "Override log file path (default: ~/.config/apiary/vms/<vm-name>/apiary.log)")
@@ -195,10 +195,10 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Derive VM name early so logs land in the per-VM directory.
 	vmName := "sandbox-" + agentName
 
-	// Set up logging: always write to file, optionally also to stderr.
-	logFile, logCloser, err := openLogFile(flags.logFile, vmName)
+	// Set up logging: always write to file, debug mode enables DEBUG level.
+	logPath, logFile, logCloser, err := openLogFile(flags.logFile, vmName)
 	if err != nil {
-		// Non-fatal: fall back to stderr-only logging.
+		// Non-fatal: fall back to discard logging.
 		_, _ = fmt.Fprintf(os.Stderr, "Warning: could not open log file: %s\n", err)
 	}
 	if logCloser != nil {
@@ -208,9 +208,13 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	logger := setupLogger(logFile, flags.debug).With("vm", vmName)
 	slog.SetDefault(logger)
 
+	if flags.debug {
+		_, _ = fmt.Fprintf(os.Stderr, "Debug logs: %s\n", logPath)
+	}
+
 	// Set up progress observer based on mode.
 	terminal := infraterminal.NewOSTerminal(os.Stdin, os.Stdout, os.Stderr)
-	observer := chooseObserver(terminal, logger, flags.debug)
+	observer := chooseObserver(terminal)
 
 	// Resolve workspace.
 	ws := flags.workspace
@@ -475,17 +479,17 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 // openLogFile opens (or creates) the log file, truncating if it exceeds maxLogSize.
 // When no override is given, the log is placed in the per-VM data directory
 // at ~/.config/apiary/vms/<vmName>/apiary.log.
-// Returns the file, a closer, and any error.
-func openLogFile(override, vmName string) (*os.File, io.Closer, error) {
+// Returns the resolved path, the file, a closer, and any error.
+func openLogFile(override, vmName string) (string, *os.File, io.Closer, error) {
 	logPath := override
 	if logPath == "" {
 		home, err := os.UserHomeDir()
 		if err != nil {
-			return nil, nil, fmt.Errorf("getting home dir: %w", err)
+			return "", nil, nil, fmt.Errorf("getting home dir: %w", err)
 		}
 		logDir := filepath.Join(home, ".config", "apiary", "vms", vmName)
 		if err := os.MkdirAll(logDir, 0o750); err != nil {
-			return nil, nil, fmt.Errorf("creating log dir: %w", err)
+			return "", nil, nil, fmt.Errorf("creating log dir: %w", err)
 		}
 		logPath = filepath.Join(logDir, defaultLogFile)
 	}
@@ -497,42 +501,27 @@ func openLogFile(override, vmName string) (*os.File, io.Closer, error) {
 
 	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o640)
 	if err != nil {
-		return nil, nil, err
+		return logPath, nil, nil, err
 	}
-	return f, f, nil
+	return logPath, f, f, nil
 }
 
-// setupLogger creates a slog.Logger with file + optional stderr handlers.
+// setupLogger creates a slog.Logger that writes to a log file.
+// In debug mode the file captures DEBUG-level messages; otherwise only INFO and above.
 func setupLogger(logFile *os.File, debug bool) *slog.Logger {
-	var handlers []slog.Handler
-
-	// Always log to file if available.
-	if logFile != nil {
-		handlers = append(handlers, infralogging.NewFileHandler(logFile, slog.LevelDebug))
-	}
-
-	// In debug mode, also log to stderr.
-	if debug {
-		handlers = append(handlers, slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
-			Level: slog.LevelDebug,
-		}))
-	}
-
-	if len(handlers) == 0 {
-		// Fallback: discard all logs.
+	if logFile == nil {
 		return slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
-	if len(handlers) == 1 {
-		return slog.New(handlers[0])
+
+	level := slog.LevelInfo
+	if debug {
+		level = slog.LevelDebug
 	}
-	return slog.New(infralogging.NewFanoutHandler(handlers...))
+	return slog.New(infralogging.NewFileHandler(logFile, level))
 }
 
 // chooseObserver selects the appropriate progress observer for the current environment.
-func chooseObserver(terminal *infraterminal.OSTerminal, logger *slog.Logger, debug bool) progress.Observer {
-	if debug {
-		return infraprogress.NewLogObserver(logger)
-	}
+func chooseObserver(terminal *infraterminal.OSTerminal) progress.Observer {
 	if terminal.IsInteractive() {
 		return infraprogress.NewSpinnerObserver(os.Stderr)
 	}
