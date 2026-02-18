@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	domaingit "github.com/stacklok/apiary/internal/domain/git"
+	domaingit "github.com/stacklok/apiary/pkg/domain/git"
 )
 
 func TestInjectGitConfig_FullIdentityAndToken(t *testing.T) {

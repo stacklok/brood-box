@@ -8,9 +8,9 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/stacklok/apiary/internal/domain/agent"
-	"github.com/stacklok/apiary/internal/domain/egress"
-	"github.com/stacklok/apiary/internal/domain/git"
+	"github.com/stacklok/apiary/pkg/domain/agent"
+	"github.com/stacklok/apiary/pkg/domain/egress"
+	"github.com/stacklok/apiary/pkg/domain/git"
 )
 
 // VMConfig holds the parameters needed to start a sandbox VM.

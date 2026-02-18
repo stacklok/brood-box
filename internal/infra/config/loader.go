@@ -13,7 +13,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
-	domainconfig "github.com/stacklok/apiary/internal/domain/config"
+	domainconfig "github.com/stacklok/apiary/pkg/domain/config"
 )
 
 // Loader implements ConfigLoader by reading a YAML file from disk.

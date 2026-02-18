@@ -13,7 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stacklok/apiary/internal/domain/agent"
+	"github.com/stacklok/apiary/pkg/domain/agent"
 )
 
 func TestInjectMCPConfig_Dispatch(t *testing.T) {

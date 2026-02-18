@@ -7,7 +7,7 @@ package agent
 import (
 	"fmt"
 
-	"github.com/stacklok/apiary/internal/domain/egress"
+	"github.com/stacklok/apiary/pkg/domain/egress"
 )
 
 // MCPConfigFormat identifies how an agent consumes MCP server configuration.

@@ -14,8 +14,8 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/stacklok/apiary/internal/domain/snapshot"
-	domws "github.com/stacklok/apiary/internal/domain/workspace"
+	"github.com/stacklok/apiary/pkg/domain/snapshot"
+	domws "github.com/stacklok/apiary/pkg/domain/workspace"
 )
 
 // Ensure FSWorkspaceCloner implements domws.WorkspaceCloner at compile time.

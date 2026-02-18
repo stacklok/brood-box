@@ -15,13 +15,13 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stacklok/apiary/internal/domain/agent"
-	"github.com/stacklok/apiary/internal/domain/config"
-	"github.com/stacklok/apiary/internal/domain/egress"
-	"github.com/stacklok/apiary/internal/domain/session"
-	"github.com/stacklok/apiary/internal/domain/snapshot"
-	domvm "github.com/stacklok/apiary/internal/domain/vm"
-	"github.com/stacklok/apiary/internal/domain/workspace"
+	"github.com/stacklok/apiary/pkg/domain/agent"
+	"github.com/stacklok/apiary/pkg/domain/config"
+	"github.com/stacklok/apiary/pkg/domain/egress"
+	"github.com/stacklok/apiary/pkg/domain/session"
+	"github.com/stacklok/apiary/pkg/domain/snapshot"
+	domvm "github.com/stacklok/apiary/pkg/domain/vm"
+	"github.com/stacklok/apiary/pkg/domain/workspace"
 )
 
 // mockVMRunner records the config it was called with.

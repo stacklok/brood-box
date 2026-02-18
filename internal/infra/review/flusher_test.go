@@ -11,8 +11,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stacklok/apiary/internal/domain/snapshot"
 	"github.com/stacklok/apiary/internal/infra/diff"
+	"github.com/stacklok/apiary/pkg/domain/snapshot"
 )
 
 func TestFSFlusher_AddedFile(t *testing.T) {

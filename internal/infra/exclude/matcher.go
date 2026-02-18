@@ -8,7 +8,7 @@ package exclude
 import (
 	ignore "github.com/sabhiram/go-gitignore"
 
-	"github.com/stacklok/apiary/internal/domain/snapshot"
+	"github.com/stacklok/apiary/pkg/domain/snapshot"
 )
 
 // Ensure tieredMatcher implements snapshot.Matcher at compile time.

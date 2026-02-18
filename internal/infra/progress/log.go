@@ -6,7 +6,7 @@ package progress
 import (
 	"log/slog"
 
-	"github.com/stacklok/apiary/internal/domain/progress"
+	"github.com/stacklok/apiary/pkg/domain/progress"
 )
 
 // Ensure LogObserver implements progress.Observer.

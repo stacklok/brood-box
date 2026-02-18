@@ -6,8 +6,8 @@
 package config
 
 import (
-	"github.com/stacklok/apiary/internal/domain/agent"
-	"github.com/stacklok/apiary/internal/domain/egress"
+	"github.com/stacklok/apiary/pkg/domain/agent"
+	"github.com/stacklok/apiary/pkg/domain/egress"
 )
 
 // LocalConfigFile is the per-workspace config file name.

@@ -18,12 +18,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/stacklok/apiary/internal/app"
-	"github.com/stacklok/apiary/internal/domain/agent"
-	domainconfig "github.com/stacklok/apiary/internal/domain/config"
-	"github.com/stacklok/apiary/internal/domain/egress"
-	"github.com/stacklok/apiary/internal/domain/progress"
-	"github.com/stacklok/apiary/internal/domain/snapshot"
-	"github.com/stacklok/apiary/internal/domain/workspace"
 	infraagent "github.com/stacklok/apiary/internal/infra/agent"
 	infraconfig "github.com/stacklok/apiary/internal/infra/config"
 	"github.com/stacklok/apiary/internal/infra/diff"
@@ -38,6 +32,12 @@ import (
 	infravm "github.com/stacklok/apiary/internal/infra/vm"
 	infraws "github.com/stacklok/apiary/internal/infra/workspace"
 	"github.com/stacklok/apiary/internal/version"
+	"github.com/stacklok/apiary/pkg/domain/agent"
+	domainconfig "github.com/stacklok/apiary/pkg/domain/config"
+	"github.com/stacklok/apiary/pkg/domain/egress"
+	"github.com/stacklok/apiary/pkg/domain/progress"
+	"github.com/stacklok/apiary/pkg/domain/snapshot"
+	"github.com/stacklok/apiary/pkg/domain/workspace"
 )
 
 // defaultLogFile is the log file name within the per-VM data directory.

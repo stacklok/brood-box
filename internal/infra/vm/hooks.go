@@ -10,8 +10,8 @@ import (
 
 	"github.com/stacklok/propolis/image"
 
-	domainagent "github.com/stacklok/apiary/internal/domain/agent"
 	"github.com/stacklok/apiary/internal/infra/vm/initbin"
+	domainagent "github.com/stacklok/apiary/pkg/domain/agent"
 )
 
 // InjectInitBinary returns a RootFS hook that writes the embedded apiary-init

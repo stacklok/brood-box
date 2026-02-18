@@ -12,7 +12,7 @@ import (
 
 	"github.com/stacklok/propolis/image"
 
-	domaingit "github.com/stacklok/apiary/internal/domain/git"
+	domaingit "github.com/stacklok/apiary/pkg/domain/git"
 )
 
 // InjectGitConfig returns a RootFS hook that writes git configuration

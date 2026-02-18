@@ -27,7 +27,7 @@ import (
 	vmcpserver "github.com/stacklok/toolhive/pkg/vmcp/server"
 	workloadsmgr "github.com/stacklok/toolhive/pkg/workloads"
 
-	"github.com/stacklok/apiary/internal/domain/hostservice"
+	"github.com/stacklok/apiary/pkg/domain/hostservice"
 )
 
 // VMCPProvider implements hostservice.Provider using toolhive's vmcp library.

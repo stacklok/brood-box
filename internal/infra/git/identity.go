@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	domaingit "github.com/stacklok/apiary/internal/domain/git"
+	domaingit "github.com/stacklok/apiary/pkg/domain/git"
 )
 
 // Compile-time interface check.

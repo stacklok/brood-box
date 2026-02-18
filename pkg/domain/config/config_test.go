@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/stacklok/apiary/internal/domain/agent"
+	"github.com/stacklok/apiary/pkg/domain/agent"
 )
 
 func TestReviewConfig_Defaults(t *testing.T) {

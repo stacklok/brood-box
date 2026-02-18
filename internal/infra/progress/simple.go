@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/stacklok/apiary/internal/domain/progress"
+	"github.com/stacklok/apiary/pkg/domain/progress"
 )
 
 // Ensure SimpleObserver implements progress.Observer.

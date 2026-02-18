@@ -7,8 +7,8 @@ package agent
 import (
 	"sort"
 
-	domainagent "github.com/stacklok/apiary/internal/domain/agent"
-	"github.com/stacklok/apiary/internal/domain/egress"
+	domainagent "github.com/stacklok/apiary/pkg/domain/agent"
+	"github.com/stacklok/apiary/pkg/domain/egress"
 )
 
 // Common dev infrastructure hosts shared across agents at the standard profile.

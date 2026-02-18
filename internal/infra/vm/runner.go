@@ -18,8 +18,8 @@ import (
 	"github.com/stacklok/propolis/net/topology"
 	propolisssh "github.com/stacklok/propolis/ssh"
 
-	"github.com/stacklok/apiary/internal/domain/agent"
-	domvm "github.com/stacklok/apiary/internal/domain/vm"
+	"github.com/stacklok/apiary/pkg/domain/agent"
+	domvm "github.com/stacklok/apiary/pkg/domain/vm"
 )
 
 // Ensure PropolisRunner implements domvm.VMRunner at compile time.

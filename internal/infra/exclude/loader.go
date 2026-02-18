@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/stacklok/apiary/internal/domain/snapshot"
+	"github.com/stacklok/apiary/pkg/domain/snapshot"
 )
 
 // sandboxIgnoreFile is the name of the per-workspace exclude config file.

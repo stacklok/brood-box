@@ -16,7 +16,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/stacklok/apiary/internal/domain/workspace"
+	"github.com/stacklok/apiary/pkg/domain/workspace"
 )
 
 // Ensure ConfigSanitizer implements workspace.SnapshotPostProcessor at compile time.
