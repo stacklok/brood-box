@@ -314,6 +314,13 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		}
 	}
 
+	// Prevent git from hanging on interactive credential prompts inside the VM.
+	// Public repos work anonymously; private repos fail cleanly without a token.
+	if envVars == nil {
+		envVars = make(map[string]string)
+	}
+	envVars["GIT_TERMINAL_PROMPT"] = "0"
+
 	// Determine if a GitHub token is available for credential helper injection.
 	hasGitToken := opts.GitTokenEnabled && (envVars["GITHUB_TOKEN"] != "" || envVars["GH_TOKEN"] != "")
 

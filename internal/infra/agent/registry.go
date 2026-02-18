@@ -13,7 +13,7 @@ import (
 
 // Common dev infrastructure hosts shared across agents at the standard profile.
 var devInfraHosts = []egress.Host{
-	{Name: "github.com", Ports: []uint16{443}},
+	{Name: "github.com", Ports: []uint16{443, 22}},
 	{Name: "api.github.com", Ports: []uint16{443}},
 	{Name: "*.githubusercontent.com", Ports: []uint16{443}},
 	{Name: "registry.npmjs.org", Ports: []uint16{443}},

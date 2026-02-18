@@ -218,7 +218,7 @@ func TestSandboxRunner_Run(t *testing.T) {
 	assert.Equal(t, uint32(2), vmRunner.startCfg.CPUs)
 	assert.Equal(t, uint32(2048), vmRunner.startCfg.Memory)
 	assert.Equal(t, "/tmp/workspace", vmRunner.startCfg.WorkspacePath)
-	assert.Equal(t, map[string]string{"TEST_KEY": "secret123"}, vmRunner.startCfg.EnvVars)
+	assert.Equal(t, map[string]string{"TEST_KEY": "secret123", "GIT_TERMINAL_PROMPT": "0"}, vmRunner.startCfg.EnvVars)
 
 	// Verify terminal session was started.
 	assert.Equal(t, "127.0.0.1", sessionRunner.runOpts.Host)
@@ -693,7 +693,7 @@ func TestSandboxRunner_Prepare_Success(t *testing.T) {
 	assert.Equal(t, "sandbox-test-agent", sb.VMConfig.Name)
 	assert.Equal(t, snapshotDir, sb.WorkspacePath)
 	assert.NotNil(t, sb.Snapshot)
-	assert.Equal(t, map[string]string{"TEST_KEY": "secret123"}, sb.EnvVars)
+	assert.Equal(t, map[string]string{"TEST_KEY": "secret123", "GIT_TERMINAL_PROMPT": "0"}, sb.EnvVars)
 	assert.Equal(t, snapshot.NopMatcher, sb.DiffMatcher)
 	assert.Equal(t, snapshotDir, vmRunner.startCfg.WorkspacePath)
 	assert.True(t, cloner.createCalled)

@@ -15,7 +15,8 @@ RUN apk add --no-cache \
     grep \
     sed \
     gawk \
-    curl
+    curl \
+    openssh-client
 
 # Ensure /usr/local/bin exists (not present in Wolfi by default)
 RUN mkdir -p /usr/local/bin
