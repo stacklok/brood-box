@@ -1,9 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package app provides the SandboxRunner application service that
-// orchestrates the full sandbox VM lifecycle.
-package app
+package sandbox
 
 import (
 	"context"

@@ -17,7 +17,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/stacklok/apiary/internal/app"
 	infraagent "github.com/stacklok/apiary/internal/infra/agent"
 	infraconfig "github.com/stacklok/apiary/internal/infra/config"
 	"github.com/stacklok/apiary/internal/infra/diff"
@@ -38,6 +37,7 @@ import (
 	"github.com/stacklok/apiary/pkg/domain/progress"
 	"github.com/stacklok/apiary/pkg/domain/snapshot"
 	"github.com/stacklok/apiary/pkg/domain/workspace"
+	"github.com/stacklok/apiary/pkg/sandbox"
 )
 
 // defaultLogFile is the log file name within the per-VM data directory.
@@ -305,7 +305,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	// Wire dependencies.
 	var reviewer *review.InteractiveReviewer
-	deps := app.SandboxDeps{
+	deps := sandbox.SandboxDeps{
 		Registry:      registry,
 		VMRunner:      infravm.NewPropolisRunner("", logger),
 		SessionRunner: infrassh.NewInteractiveSession(logger),
@@ -388,9 +388,9 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		logger.Info("egress profile override", "profile", flags.egressProfile)
 	}
 
-	runner := app.NewSandboxRunner(deps)
+	runner := sandbox.NewSandboxRunner(deps)
 
-	opts := app.RunOpts{
+	opts := sandbox.RunOpts{
 		CPUs:            flags.cpus,
 		Memory:          flags.memory,
 		Workspace:       ws,
@@ -400,7 +400,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		AllowHosts:      parsedAllowHosts,
 		GitTokenEnabled: gitTokenEnabled,
 		SSHAgentForward: sshAgentEnabled,
-		Snapshot: app.SnapshotOpts{
+		Snapshot: sandbox.SnapshotOpts{
 			Enabled:         reviewEnabled,
 			SnapshotMatcher: snapshotMatcher,
 			DiffMatcher:     diffMatcher,
