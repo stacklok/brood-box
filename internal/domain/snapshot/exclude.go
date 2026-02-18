@@ -3,8 +3,6 @@
 
 package snapshot
 
-import "github.com/stacklok/apiary/internal/domain/config"
-
 // ExcludeConfig holds all exclude patterns organized by source.
 type ExcludeConfig struct {
 	// SecurityPatterns are non-overridable built-in patterns.
@@ -79,8 +77,9 @@ func DefaultSecurityPatterns() []string {
 		// Encryption keys
 		"age-key.txt",
 		"*.age",
-		// Apiary config (should not be modified by agents)
-		config.LocalConfigFile,
+		// Apiary config (should not be modified by agents).
+		// Duplicated from config.LocalConfigFile to avoid cross-package dependency.
+		".apiary.yaml",
 	}
 }
 
