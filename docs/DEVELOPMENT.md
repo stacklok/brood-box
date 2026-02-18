@@ -82,17 +82,17 @@ provider := &staticEnvProvider{vars: []string{"KEY=value"}}
 result := agent.ForwardEnv([]string{"KEY"}, provider)
 ```
 
-### App Layer Tests
+### Sandbox Layer Tests
 
 The `SandboxRunner` is tested with mock implementations of all interfaces.
-See `internal/app/sandbox_test.go` for the pattern:
+See `pkg/sandbox/sandbox_test.go` for the pattern:
 
 ```go
-runner := app.NewSandboxRunner(app.SandboxDeps{
+runner := sandbox.NewSandboxRunner(sandbox.SandboxDeps{
     Registry:    &mockRegistry{...},
     VMRunner:    &mockVMRunner{...},
     Terminal:    &mockTerminal{...},
-    Config:      &config.Config{...},
+    Config:      &sandbox.SandboxConfig{...},
     EnvProvider: &mockEnvProvider{...},
     Logger:      slog.New(slog.NewTextHandler(io.Discard, nil)),
     // Snapshot isolation deps (nil to disable review)
@@ -100,9 +100,6 @@ runner := app.NewSandboxRunner(app.SandboxDeps{
     Differ:          &mockDiffer{...},
     Reviewer:        &mockReviewer{...},
     Flusher:         &mockFlusher{...},
-    Stdin:           os.Stdin,
-    Stdout:          os.Stdout,
-    Stderr:          os.Stderr,
 })
 ```
 
@@ -149,9 +146,9 @@ return fmt.Errorf("starting VM: %w", err)
 
 ### Layer Boundaries
 
-- `domain/` must NOT import from `infra/` or `app/`
-- `app/` may import from `domain/` and `infra/` (for type references)
-- `infra/` may import from `domain/` (to implement interfaces)
+- `pkg/domain/` must NOT import from `internal/infra/` or `pkg/sandbox/`
+- `pkg/sandbox/` may import from `pkg/domain/` only (never from `internal/infra/`)
+- `internal/infra/` may import from `pkg/domain/` (to implement interfaces)
 - `cmd/` wires everything together
 
 ### Git Conventions

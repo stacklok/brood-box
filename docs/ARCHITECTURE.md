@@ -10,13 +10,13 @@ cmd/apiary/main.go     (composition root — wires everything)
 cmd/apiary-init/main.go      (guest PID 1 init binary)
         │
         ▼
-   app/sandbox.go              (application service — orchestrates domain + infra)
+   pkg/sandbox/               (application service — orchestrates domain)
         │
    ┌────┼─────────────────────────────────────────────┐
    ▼    ▼                ▼                ▼            ▼
-domain/agent/     domain/config/    domain/vm/    domain/session/
-domain/snapshot/  domain/workspace/
-   (pure domain — no imports from infra)
+pkg/domain/agent/ pkg/domain/config/ pkg/domain/vm/ pkg/domain/session/
+pkg/domain/snapshot/  pkg/domain/workspace/
+   (pure domain — no imports from infra, public SDK)
    │
    │    ┌────────────────┬────────────────┬──────────────┐
    ▼    ▼                ▼                ▼              ▼
@@ -29,7 +29,7 @@ guest/boot/  guest/mount/  guest/network/  guest/env/  guest/sshd/  guest/reaper
    (guest VM packages — Linux only, runs inside microVM)
 ```
 
-### Domain Layer (`internal/domain/`)
+### Domain Layer (`pkg/domain/`)
 
 Pure business logic with zero infrastructure dependencies. This layer
 defines the core types and interfaces.
@@ -54,9 +54,9 @@ defines the core types and interfaces.
 - **`snapshot/exclude.go`** -- `ExcludeConfig` with security patterns
   (non-overridable) and performance patterns (overridable).
 
-**Rule**: `domain/` NEVER imports from `infra/` or `app/`.
+**Rule**: `pkg/domain/` NEVER imports from `internal/infra/` or `pkg/sandbox/`.
 
-### Application Layer (`internal/app/`)
+### Application Layer (`pkg/sandbox/`)
 
 The `SandboxRunner` orchestrates the full lifecycle:
 
@@ -74,7 +74,9 @@ The `SandboxRunner` orchestrates the full lifecycle:
 
 All dependencies are injected via the `SandboxDeps` struct. The
 orchestrator has no direct dependency on propolis, SSH libraries, or
-the filesystem — only on interfaces.
+the filesystem — only on domain interfaces. The `SandboxConfig` type
+narrows the config surface so SDK consumers don't need the full CLI
+config schema.
 
 ### Infrastructure Layer (`internal/infra/`)
 
@@ -133,12 +135,12 @@ type EnvProvider interface {
     Environ() []string
 }
 
-// App accepts all deps via struct
+// Sandbox layer accepts all deps via struct
 type SandboxDeps struct {
     Registry    agent.Registry
     VMRunner    vm.VMRunner
     Terminal    session.TerminalSession
-    Config      *config.Config
+    Config      *sandbox.SandboxConfig
     EnvProvider agent.EnvProvider
     Logger      *slog.Logger
 
@@ -147,11 +149,6 @@ type SandboxDeps struct {
     Differ          snapshot.Differ
     Reviewer        snapshot.Reviewer
     Flusher         snapshot.Flusher
-
-    // I/O streams for PTY operations
-    Stdin  *os.File
-    Stdout *os.File
-    Stderr *os.File
 }
 
 // Infra provides implementations
@@ -160,8 +157,8 @@ type SandboxDeps struct {
 // agent.Registry implements agent.Registry
 ```
 
-This makes the app layer fully testable with mocks — see
-`internal/app/sandbox_test.go` for examples.
+This makes the sandbox layer fully testable with mocks — see
+`pkg/sandbox/sandbox_test.go` for examples.
 
 ## VM Lifecycle
 

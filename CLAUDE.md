@@ -39,16 +39,16 @@ This project follows DDD layered architecture with dependency injection **strict
 
 ### Layers
 
-**Domain** (`internal/domain/`) — Pure types and interfaces. ZERO I/O, ZERO external dependencies, ZERO side effects. Domain packages define _what_ things are and _what_ operations exist, never _how_ they are performed:
-- `internal/domain/agent/` — Agent value object, env forwarding
-- `internal/domain/config/` — Config types, merge logic
-- `internal/domain/vm/` — VMRunner, VM, VMConfig interfaces
-- `internal/domain/session/` — TerminalSession interface
-- `internal/domain/workspace/` — WorkspaceCloner interface, Snapshot type
-- `internal/domain/snapshot/` — FileChange, ExcludeConfig, Matcher, Differ, Reviewer, Flusher
+**Domain** (`pkg/domain/`) — Pure types and interfaces. ZERO I/O, ZERO external dependencies, ZERO side effects. Domain packages define _what_ things are and _what_ operations exist, never _how_ they are performed. Public so external modules can import the shared ubiquitous language:
+- `pkg/domain/agent/` — Agent value object, env forwarding
+- `pkg/domain/config/` — Config types, merge logic
+- `pkg/domain/vm/` — VMRunner, VM, VMConfig interfaces
+- `pkg/domain/session/` — TerminalSession interface
+- `pkg/domain/workspace/` — WorkspaceCloner interface, Snapshot type
+- `pkg/domain/snapshot/` — FileChange, ExcludeConfig, Matcher, Differ, Reviewer, Flusher
 
-**Application** (`internal/app/`) — Orchestration only. Depends on domain interfaces, never on infrastructure. Contains no I/O implementations:
-- `internal/app/` — SandboxRunner orchestrator (application service)
+**Application** (`pkg/sandbox/`) — Orchestration only. Depends on domain interfaces, never on infrastructure. Contains no I/O implementations. Public so library consumers can drive the same SandboxRunner API:
+- `pkg/sandbox/` — SandboxRunner orchestrator (application service), SandboxConfig SDK contract
 
 **Infrastructure** (`internal/infra/`) — Concrete implementations of domain interfaces. This is the only layer that touches I/O, external libraries, and system calls:
 - `internal/infra/vm/` — Propolis VMRunner implementation, rootfs hooks
@@ -70,9 +70,9 @@ This project follows DDD layered architecture with dependency injection **strict
 
 ### DDD Rules (non-negotiable)
 
-- **`domain/` NEVER imports from `infra/` or `app/`.** Interfaces live in domain, implementations in infra. No exceptions.
-- **`app/` NEVER imports from `infra/`.** The application layer depends only on domain interfaces; concrete implementations are injected by the composition root (`cmd/`).
-- **New interfaces go in `domain/`**, new implementations go in `infra/`**. If you need a new capability, define the interface in the appropriate domain package first, then implement it in infra.
+- **`pkg/domain/` NEVER imports from `internal/infra/` or `pkg/sandbox/`.** Interfaces live in domain, implementations in infra. No exceptions.
+- **`pkg/sandbox/` NEVER imports from `internal/infra/`.** The application layer depends only on domain interfaces; concrete implementations are injected by the composition root (`cmd/`).
+- **New interfaces go in `pkg/domain/`**, new implementations go in `internal/infra/`**. If you need a new capability, define the interface in the appropriate domain package first, then implement it in infra.
 - **No business logic in `infra/`**. Infrastructure adapts external systems to domain interfaces — it does not make business decisions.
 - **No I/O in `domain/`**. Domain types must be testable without mocks, fakes, or network access.
 
@@ -115,7 +115,7 @@ Execution order: create snapshot → start VM → terminal → stop VM → diff 
 
 - **propolis is a local replace**: `go.mod` uses `replace github.com/stacklok/propolis => ../propolis`. The propolis checkout must be at `../propolis`.
 - **CGO boundary**: apiary itself is pure Go (`CGO_ENABLED=0`). Only propolis-runner needs CGO.
-- **Domain purity**: `internal/domain/` must never import from `internal/infra/` or `internal/app/`. This is the most important architectural invariant — break it and you break the entire DDD foundation.
+- **Domain purity**: `pkg/domain/` must never import from `internal/infra/` or `pkg/sandbox/`. This is the most important architectural invariant — break it and you break the entire DDD foundation.
 - **Always use `task`**: Never run `go build`, `go test ./...`, `golangci-lint`, `go fmt`, or `goimports` directly. The Taskfile sets critical env vars and flags. Raw commands will silently produce wrong results.
 
 ## Verification
