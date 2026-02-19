@@ -71,7 +71,7 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 
 	// Set up SSH agent forwarding if requested and an agent is available.
 	if opts.SSHAgentForward {
-		if err := s.setupAgentForwarding(client); err != nil {
+		if err := s.setupAgentForwarding(ctx, client); err != nil {
 			s.logger.Debug("SSH agent forwarding not available", "error", err)
 		}
 	}
@@ -152,6 +152,8 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 		return nil
 	case <-ctx.Done():
 		_ = sshSession.Signal(ssh.SIGTERM)
+		_ = sshSession.Close()
+		_ = client.Close()
 		return ctx.Err()
 	}
 }
@@ -160,7 +162,7 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 // channel opens from the server. Each channel gets its own connection to the
 // local SSH agent to avoid concurrency issues on the agent protocol stream.
 // If SSH_AUTH_SOCK is not set or unreachable, returns an error (non-fatal).
-func (s *InteractiveSession) setupAgentForwarding(client *ssh.Client) error {
+func (s *InteractiveSession) setupAgentForwarding(ctx context.Context, client *ssh.Client) error {
 	authSock := os.Getenv("SSH_AUTH_SOCK")
 	if authSock == "" {
 		return fmt.Errorf("SSH_AUTH_SOCK not set")
@@ -179,7 +181,15 @@ func (s *InteractiveSession) setupAgentForwarding(client *ssh.Client) error {
 	// Each channel gets a dedicated connection to the local agent because the
 	// agent protocol stream is not safe for concurrent multiplexed use.
 	go func() {
-		for ch := range client.HandleChannelOpen("auth-agent@openssh.com") {
+		chans := client.HandleChannelOpen("auth-agent@openssh.com")
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case ch, ok := <-chans:
+				if !ok {
+					return
+				}
 			channel, reqs, err := ch.Accept()
 			if err != nil {
 				s.logger.Debug("failed to accept agent channel", "error", err)
@@ -201,6 +211,7 @@ func (s *InteractiveSession) setupAgentForwarding(client *ssh.Client) error {
 					s.logger.Debug("agent forwarding session ended", "error", err)
 				}
 			}()
+			}
 		}
 	}()
 
