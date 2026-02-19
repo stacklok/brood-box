@@ -43,6 +43,9 @@ func (e *ExitError) Error() string {
 // Run establishes an SSH connection, requests a PTY, and runs the command
 // interactively with full terminal forwarding.
 func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) error {
+	sessionCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
 	keyData, err := os.ReadFile(opts.KeyPath)
 	if err != nil {
 		return fmt.Errorf("reading ssh key: %w", err)
@@ -71,7 +74,7 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 
 	// Set up SSH agent forwarding if requested and an agent is available.
 	if opts.SSHAgentForward {
-		if err := s.setupAgentForwarding(ctx, client); err != nil {
+		if err := s.setupAgentForwarding(sessionCtx, client); err != nil {
 			s.logger.Debug("SSH agent forwarding not available", "error", err)
 		}
 	}
@@ -114,7 +117,7 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 		}
 
 		// Handle terminal resize signals.
-		resizeCh := opts.Terminal.NotifyResize(ctx)
+		resizeCh := opts.Terminal.NotifyResize(sessionCtx)
 		go func() {
 			for newSize := range resizeCh {
 				_ = sshSession.WindowChange(newSize.Height, newSize.Width)
@@ -150,11 +153,11 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 			return fmt.Errorf("remote command failed: %w", err)
 		}
 		return nil
-	case <-ctx.Done():
+	case <-sessionCtx.Done():
 		_ = sshSession.Signal(ssh.SIGTERM)
 		_ = sshSession.Close()
 		_ = client.Close()
-		return ctx.Err()
+		return sessionCtx.Err()
 	}
 }
 
@@ -190,27 +193,27 @@ func (s *InteractiveSession) setupAgentForwarding(ctx context.Context, client *s
 				if !ok {
 					return
 				}
-			channel, reqs, err := ch.Accept()
-			if err != nil {
-				s.logger.Debug("failed to accept agent channel", "error", err)
-				continue
-			}
-			go ssh.DiscardRequests(reqs)
-			go func() {
-				defer func() { _ = channel.Close() }()
-
-				agentConn, err := net.Dial("unix", authSock)
+				channel, reqs, err := ch.Accept()
 				if err != nil {
-					s.logger.Debug("failed to connect to SSH agent for channel", "error", err)
-					return
+					s.logger.Debug("failed to accept agent channel", "error", err)
+					continue
 				}
-				defer func() { _ = agentConn.Close() }()
+				go ssh.DiscardRequests(reqs)
+				go func() {
+					defer func() { _ = channel.Close() }()
 
-				agentClient := agent.NewClient(agentConn)
-				if err := agent.ServeAgent(agentClient, channel); err != nil {
-					s.logger.Debug("agent forwarding session ended", "error", err)
-				}
-			}()
+					agentConn, err := net.Dial("unix", authSock)
+					if err != nil {
+						s.logger.Debug("failed to connect to SSH agent for channel", "error", err)
+						return
+					}
+					defer func() { _ = agentConn.Close() }()
+
+					agentClient := agent.NewClient(agentConn)
+					if err := agent.ServeAgent(agentClient, channel); err != nil {
+						s.logger.Debug("agent forwarding session ended", "error", err)
+					}
+				}()
 			}
 		}
 	}()
