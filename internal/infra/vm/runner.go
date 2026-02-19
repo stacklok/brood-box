@@ -14,6 +14,7 @@ import (
 
 	"github.com/stacklok/propolis"
 	"github.com/stacklok/propolis/hooks"
+	"github.com/stacklok/propolis/hypervisor/libkrun"
 	"github.com/stacklok/propolis/net/hosted"
 	"github.com/stacklok/propolis/net/topology"
 	propolisssh "github.com/stacklok/propolis/ssh"
@@ -152,7 +153,9 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 
 	// Add runner path if specified.
 	if r.runnerPath != "" {
-		opts = append(opts, propolis.WithRunnerPath(r.runnerPath))
+		opts = append(opts, propolis.WithBackend(libkrun.NewBackend(
+			libkrun.WithRunnerPath(r.runnerPath),
+		)))
 	}
 
 	// Add workspace mount if specified.
