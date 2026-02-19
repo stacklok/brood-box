@@ -59,6 +59,8 @@ func main() {
 		logger.Info("shutdown complete")
 	case <-ctx.Done():
 		logger.Warn("shutdown timed out")
+		halt()
+		os.Exit(1)
 	}
 
 	halt()
