@@ -74,7 +74,7 @@ func rootCmd() *cobra.Command {
 	)
 
 	cmd := &cobra.Command{
-		Use:   "apiary <agent-name>",
+		Use:   "apiary <agent-name> [flags] [-- <agent-args...>]",
 		Short: "Run coding agents in hardware-isolated sandbox VMs",
 		Long: `apiary boots a microVM, mounts your workspace, forwards secrets,
 and drops into an interactive terminal session with a coding agent.
@@ -94,10 +94,15 @@ Example:
   apiary claude-code --egress-profile locked
   apiary claude-code --allow-host "custom-api.example.com:443"
   apiary claude-code --no-mcp
-  apiary claude-code --mcp-group "coding-tools"`,
-		Args:    cobra.ExactArgs(1),
+  apiary claude-code --mcp-group "coding-tools"
+  apiary claude-code -- --help`,
+		Args:    cobra.MinimumNArgs(1),
 		Version: fmt.Sprintf("%s (%s)", version.Version, version.Commit),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			commandArgs := []string{}
+			if len(args) > 1 {
+				commandArgs = args[1:]
+			}
 			return run(cmd.Context(), args[0], runFlags{
 				cpus:          cpus,
 				memory:        memory,
@@ -117,6 +122,7 @@ Example:
 				mcpConfig:     mcpConfig,
 				noGitToken:    noGitToken,
 				noGitSSHAgent: noGitSSHAgent,
+				commandArgs:   commandArgs,
 			})
 		},
 		SilenceUsage:  true,
@@ -182,6 +188,7 @@ type runFlags struct {
 	mcpConfig     string
 	noGitToken    bool
 	noGitSSHAgent bool
+	commandArgs   []string
 }
 
 func run(parentCtx context.Context, agentName string, flags runFlags) error {
@@ -408,6 +415,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		AllowHosts:      parsedAllowHosts,
 		GitTokenEnabled: gitTokenEnabled,
 		SSHAgentForward: sshAgentEnabled,
+		CommandArgs:     flags.commandArgs,
 		Snapshot: sandbox.SnapshotOpts{
 			Enabled:         reviewEnabled,
 			SnapshotMatcher: snapshotMatcher,

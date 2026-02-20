@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
+	domainagent "github.com/stacklok/apiary/pkg/domain/agent"
 	"github.com/stacklok/apiary/pkg/domain/session"
 )
 
@@ -243,6 +244,10 @@ func buildCommand(command []string) string {
 	parts = append(parts, ". /etc/profile 2>/dev/null || true")
 	parts = append(parts, ". /etc/sandbox-env 2>/dev/null || true")
 	parts = append(parts, "cd /workspace")
-	parts = append(parts, "exec "+strings.Join(command, " "))
+	escaped := make([]string, len(command))
+	for i, arg := range command {
+		escaped[i] = domainagent.ShellEscape(arg)
+	}
+	parts = append(parts, "exec "+strings.Join(escaped, " "))
 	return strings.Join(parts, " && ")
 }

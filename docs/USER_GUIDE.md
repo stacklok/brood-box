@@ -49,7 +49,7 @@ apiary list
 ## CLI Reference
 
 ```
-apiary <agent-name> [flags]
+apiary <agent-name> [flags] [-- <agent-args...>]
 ```
 
 ### Flags
@@ -65,6 +65,12 @@ apiary <agent-name> [flags]
 | `--no-review` | `false` | Disable snapshot isolation, mount workspace directly |
 | `--exclude` | (none) | Additional gitignore-style exclude patterns (repeatable) |
 | `--debug` | `false` | Enable debug logging |
+
+Pass agent-specific arguments after `--` so they are not parsed by apiary:
+
+```bash
+apiary claude-code -- --help
+```
 
 ### Subcommands
 

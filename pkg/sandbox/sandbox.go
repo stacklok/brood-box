@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/stacklok/apiary/pkg/domain/agent"
@@ -57,6 +58,13 @@ type RunOpts struct {
 
 	// AllowHosts are additional egress hosts from CLI flags.
 	AllowHosts []egress.Host
+
+	// CommandArgs appends arguments to the agent's command.
+	// Ignored when CommandOverride is set.
+	CommandArgs []string
+
+	// CommandOverride replaces the agent's command entirely when set.
+	CommandOverride []string
 
 	// Snapshot holds snapshot isolation options.
 	Snapshot SnapshotOpts
@@ -126,6 +134,7 @@ type Sandbox struct {
 	WorkspacePath   string
 	DiffMatcher     snapshot.Matcher
 	EnvVars         map[string]string
+	ResolvedCommand []string
 	SSHAgentForward bool
 }
 
@@ -224,6 +233,12 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 
 	ag = config.Merge(ag, override, cfg.Defaults)
 
+	command, err := resolveCommand(ag.Command, opts.CommandOverride, opts.CommandArgs)
+	if err != nil {
+		s.observer.Fail("Invalid command")
+		return nil, fmt.Errorf("resolving command: %w", err)
+	}
+
 	s.observer.Complete(fmt.Sprintf("Resolved agent %s (%d CPUs, %d MiB)",
 		ag.Name, ag.DefaultCPUs, ag.DefaultMemory))
 	s.logger.Debug("resolved agent",
@@ -232,6 +247,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		"cpus", ag.DefaultCPUs,
 		"memory", ag.DefaultMemory,
 	)
+	s.logger.Debug("resolved command", "command", command)
 
 	// Resolve egress policy.
 	effectiveProfile := ag.DefaultEgressProfile
@@ -428,6 +444,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		WorkspacePath:   workspacePath,
 		DiffMatcher:     diffMatcher,
 		EnvVars:         envVars,
+		ResolvedCommand: command,
 		SSHAgentForward: opts.SSHAgentForward,
 	}, nil
 }
@@ -436,12 +453,16 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 // It blocks until the remote command exits or the context is cancelled.
 // The terminal parameter provides I/O streams and PTY control for this session.
 func (s *SandboxRunner) Attach(ctx context.Context, sb *Sandbox, terminal session.Terminal) error {
+	command := sb.ResolvedCommand
+	if len(command) == 0 {
+		command = sb.Agent.Command
+	}
 	sessionOpts := session.SessionOpts{
 		Host:            "127.0.0.1",
 		Port:            sb.VM.SSHPort(),
 		User:            "sandbox",
 		KeyPath:         sb.VM.SSHKeyPath(),
-		Command:         sb.Agent.Command,
+		Command:         command,
 		Terminal:        terminal,
 		SSHAgentForward: sb.SSHAgentForward,
 	}
@@ -567,6 +588,27 @@ func mergeEnvPatterns(base, extra []string) []string {
 		}
 	}
 	return merged
+}
+
+func resolveCommand(base, override, args []string) ([]string, error) {
+	var command []string
+	if len(override) > 0 {
+		command = append([]string{}, override...)
+	} else {
+		command = append([]string{}, base...)
+	}
+	if len(args) > 0 {
+		command = append(command, args...)
+	}
+	if len(command) == 0 {
+		return nil, fmt.Errorf("command cannot be empty")
+	}
+	for _, arg := range command {
+		if strings.ContainsRune(arg, '\x00') {
+			return nil, fmt.Errorf("command contains NUL byte")
+		}
+	}
+	return command, nil
 }
 
 // resolveMCPConfig returns the effective MCP configuration by merging

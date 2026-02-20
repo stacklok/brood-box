@@ -104,6 +104,9 @@ apiary claude-code --no-mcp
 # Use a specific ToolHive group for MCP servers
 apiary claude-code --mcp-group "coding-tools"
 
+# Pass agent-specific arguments (after --)
+apiary claude-code -- --help
+
 # List available agents
 apiary list
 ```

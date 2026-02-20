@@ -286,6 +286,117 @@ func TestSandboxRunner_Run_CLIOverrides(t *testing.T) {
 	assert.Equal(t, uint32(8192), vmRunner.startCfg.Memory)
 }
 
+func TestSandboxRunner_Run_CommandResolution(t *testing.T) {
+	t.Parallel()
+
+	baseCommand := []string{"cmd"}
+
+	testAgent := agent.Agent{
+		Name:    "test",
+		Image:   "img:latest",
+		Command: baseCommand,
+	}
+
+	newRunner := func() (*SandboxRunner, *mockSessionRunner) {
+		sessionRunner := &mockSessionRunner{}
+		runner := NewSandboxRunner(SandboxDeps{
+			Registry:      &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
+			VMRunner:      &mockVMRunner{vm: &mockVM{sshPort: 7777, sshKeyPath: "/tmp/key"}},
+			SessionRunner: sessionRunner,
+			Config:        &SandboxConfig{},
+			EnvProvider:   &mockEnvProvider{},
+			Logger:        testLogger(),
+		})
+		return runner, sessionRunner
+	}
+
+	tests := []struct {
+		name            string
+		overrideCommand []string
+		commandArgs     []string
+		expected        []string
+		expectErr       bool
+	}{
+		{
+			name:        "append args",
+			commandArgs: []string{"--flag", "value"},
+			expected:    []string{"cmd", "--flag", "value"},
+		},
+		{
+			name:            "override command",
+			overrideCommand: []string{"other", "--mode"},
+			expected:        []string{"other", "--mode"},
+		},
+		{
+			name:            "override with args",
+			overrideCommand: []string{"other"},
+			commandArgs:     []string{"--fast"},
+			expected:        []string{"other", "--fast"},
+		},
+		{
+			name:        "reject nul",
+			commandArgs: []string{"bad\x00arg"},
+			expectErr:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			runner, sessionRunner := newRunner()
+
+			err := runner.Run(context.Background(), "test", RunOpts{
+				Terminal:        &mockTerminal{},
+				CommandArgs:     tt.commandArgs,
+				CommandOverride: tt.overrideCommand,
+				EgressProfile:   string(egress.ProfilePermissive),
+			})
+
+			if tt.expectErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tt.expected, sessionRunner.runOpts.Command)
+		})
+	}
+}
+
+func TestSandboxRunner_Run_CommandArgs_DoesNotMutateBase(t *testing.T) {
+	t.Parallel()
+
+	baseCommand := make([]string, 1, 2)
+	baseCommand[0] = "cmd"
+
+	testAgent := agent.Agent{
+		Name:    "test",
+		Image:   "img:latest",
+		Command: baseCommand,
+	}
+
+	sessionRunner := &mockSessionRunner{}
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
+		VMRunner:      &mockVMRunner{vm: &mockVM{sshPort: 8888, sshKeyPath: "/tmp/key"}},
+		SessionRunner: sessionRunner,
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+	})
+
+	err := runner.Run(context.Background(), "test", RunOpts{
+		Terminal:      &mockTerminal{},
+		CommandArgs:   []string{"--flag"},
+		EgressProfile: string(egress.ProfilePermissive),
+	})
+	require.NoError(t, err)
+
+	// Ensure the original command backing array wasn't modified.
+	extra := baseCommand[:2]
+	assert.Equal(t, "", extra[1])
+}
+
 func TestSandboxRunner_Run_ReviewEnabled_UsesSnapshotPath(t *testing.T) {
 	t.Parallel()
 
