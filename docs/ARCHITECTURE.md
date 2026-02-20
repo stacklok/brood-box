@@ -11,6 +11,7 @@ cmd/apiary-init/main.go      (guest PID 1 init binary)
         │
         ▼
    pkg/sandbox/               (application service — orchestrates domain)
+   pkg/runtime/               (public factory — wires default infra)
         │
    ┌────┼─────────────────────────────────────────────┐
    ▼    ▼                ▼                ▼            ▼
@@ -19,7 +20,7 @@ pkg/domain/snapshot/  pkg/domain/workspace/
    (pure domain — no imports from infra, public SDK)
    │
    │    ┌────────────────┬────────────────┬──────────────┐
-   ▼    ▼                ▼                ▼              ▼
+    ▼    ▼                ▼                ▼              ▼
 infra/vm/         infra/ssh/        infra/config/   infra/agent/
 (propolis)        (PTY terminal)    (YAML loader)   (built-in registry)
 infra/exclude/    infra/workspace/  infra/diff/     infra/review/
@@ -119,6 +120,15 @@ Wires all concrete implementations together:
 - Injects everything into `SandboxRunner`
 - Cobra CLI with positional agent name arg and flags
 - Signal handling (SIGINT/SIGTERM) via `signal.NotifyContext`
+
+### Runtime Factory (`pkg/runtime/`)
+
+Public helper package that wires apiary's default infrastructure for SDK
+consumers (for example, orchestration systems). This keeps `internal/infra/`
+private while providing a supported path to construct `SandboxRunner` with
+the standard VM runner, session implementation, differ, flusher, and workspace
+cloner. It also provides helpers to build snapshot/diff matchers from
+workspace ignore files.
 
 ## Dependency Injection
 
