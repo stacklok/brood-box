@@ -15,8 +15,9 @@ cmd/apiary-init/main.go      (guest PID 1 init binary)
         │
    ┌────┼─────────────────────────────────────────────┐
    ▼    ▼                ▼                ▼            ▼
-pkg/domain/agent/ pkg/domain/config/ pkg/domain/vm/ pkg/domain/session/
-pkg/domain/snapshot/  pkg/domain/workspace/
+pkg/domain/agent/   pkg/domain/config/  pkg/domain/vm/   pkg/domain/session/
+pkg/domain/snapshot/ pkg/domain/workspace/ pkg/domain/egress/
+pkg/domain/git/     pkg/domain/hostservice/ pkg/domain/progress/
    (pure domain — no imports from infra, public SDK)
    │
    │    ┌────────────────┬────────────────┬──────────────┐
@@ -25,6 +26,10 @@ infra/vm/         infra/ssh/        infra/config/   infra/agent/
 (propolis)        (PTY terminal)    (YAML loader)   (built-in registry)
 infra/exclude/    infra/workspace/  infra/diff/     infra/review/
 (pattern match)   (COW cloning)     (SHA-256 diff)  (reviewer+flusher)
+infra/git/        infra/mcp/        infra/terminal/ infra/progress/
+(identity+sanitize)(MCP proxy)      (OS terminal)   (spinner+log)
+infra/logging/
+(slog file handler)
 
 guest/boot/  guest/mount/  guest/network/  guest/env/  guest/sshd/  guest/reaper/
    (guest VM packages — Linux only, runs inside microVM)
@@ -55,6 +60,20 @@ defines the core types and interfaces.
   `Differ`, `Reviewer`, `Flusher`.
 - **`snapshot/exclude.go`** -- `ExcludeConfig` with security patterns
   (non-overridable) and performance patterns (overridable).
+- **`egress/egress.go`** -- DNS-aware egress firewall policies.
+  `ProfileName` (`permissive`, `standard`, `locked`), `Host` (name,
+  ports, protocol), `Policy` (allowed hosts). `Resolve()` maps a
+  profile + agent hosts to a concrete policy. `Merge()` appends extra
+  hosts. `Stricter()` compares profiles.
+- **`git/git.go`** -- `Identity` (Name, Email) and `IdentityProvider`
+  interface for resolving the host git user.
+- **`hostservice/hostservice.go`** -- `Service` (Name, Port, Handler)
+  and `Provider` interface for host-side HTTP services exposed to the
+  guest (used by MCP proxy).
+- **`progress/progress.go`** -- `Phase` enum (ResolvingAgent,
+  CreatingSnapshot, StartingVM, Connecting, ShuttingDown,
+  ComputingDiff, FlushingChanges, ConfiguringMCP, Cleaning) and
+  `Observer` interface (`Start`, `Complete`, `Warn`, `Fail`).
 
 **Rule**: `pkg/domain/` NEVER imports from `internal/infra/` or `pkg/sandbox/`.
 
@@ -87,9 +106,10 @@ Concrete implementations of domain interfaces and system integration.
 - **`vm/runner.go`** -- `PropolisRunner` implements `VMRunner` using
   `propolis.Run()` with options for ports, virtio-fs, rootfs hooks,
   init override, and post-boot SSH readiness check.
-- **`vm/hooks.go`** -- Three `RootFSHook` factories: `InjectSSHKeys`,
-  `InjectInitBinary`, `InjectEnvFile`. These modify the extracted rootfs
-  before the VM boots.
+- **`vm/hooks.go`** -- `RootFSHook` factories: `InjectInitBinary`
+  (writes the compiled Go init binary) and `InjectMCPConfig` (writes
+  agent-specific MCP config files). SSH keys, env files, and git
+  config are injected by the runner directly via propolis options.
 - **`ssh/terminal.go`** -- `InteractiveSession` implements PTY-forwarded
   SSH sessions with raw terminal mode, SIGWINCH handling, and context
   cancellation support.
@@ -111,6 +131,19 @@ Concrete implementations of domain interfaces and system integration.
 - **`review/`** -- Interactive per-file terminal reviewer and filesystem
   flusher with hash re-verification between diff and flush (TOCTOU
   protection).
+- **`git/`** -- `HostIdentityProvider` resolves git user.name/email
+  from the host. `ConfigSanitizer` strips sensitive values from
+  `.git/config` in snapshots.
+- **`mcp/`** -- `VMCPProvider` integrates toolhive's vmcp library to
+  discover MCP backends from ToolHive groups and expose an aggregated
+  MCP proxy as an HTTP host service.
+- **`terminal/`** -- `OSTerminal` wraps real terminal I/O with raw
+  mode, SIGWINCH, and dimension queries.
+- **`progress/`** -- `SpinnerObserver` (animated spinner for
+  interactive terminals), `SimpleObserver` (line-based for
+  non-interactive), `LogObserver` (structured slog output).
+- **`logging/`** -- `FileHandler` is a custom slog handler that writes
+  to a log file with timestamp formatting.
 
 ### Composition Root (`cmd/apiary/main.go`)
 
@@ -187,9 +220,12 @@ apiary claude-code
         │
         ▼
    Run rootfs hooks:
-     1. InjectSSHKeys    → /home/sandbox/.ssh/authorized_keys
-     2. InjectInitBinary → /apiary-init (compiled Go binary)
-     3. InjectEnvFile    → /etc/sandbox-env
+     1. InjectInitBinary → /apiary-init (compiled Go binary)
+     2. InjectMCPConfig  → agent-specific MCP config (if MCP enabled)
+   Propolis options inject:
+     - SSH keys          → /home/sandbox/.ssh/authorized_keys
+     - Env file          → /etc/sandbox-env
+     - Git config        → /home/sandbox/.gitconfig
         │
         ▼
    Write .krun_config.json (init override → /apiary-init)

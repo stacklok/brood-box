@@ -40,6 +40,8 @@ ls -la /dev/kvm
 | `codex` | `ghcr.io/stacklok/apiary/codex:latest` | `codex` | `OPENAI_API_KEY`, `CODEX_*` |
 | `opencode` | `ghcr.io/stacklok/apiary/opencode:latest` | `opencode` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_*` |
 
+All agents default to the `standard` egress profile.
+
 List agents:
 
 ```bash
@@ -64,7 +66,16 @@ apiary <agent-name> [flags] [-- <agent-args...>]
 | `--image` | Agent default | Override the OCI image reference |
 | `--no-review` | `false` | Disable snapshot isolation, mount workspace directly |
 | `--exclude` | (none) | Additional gitignore-style exclude patterns (repeatable) |
-| `--debug` | `false` | Enable debug logging |
+| `--egress-profile` | Agent default (`standard`) | Egress restriction level: `permissive`, `standard`, `locked` |
+| `--allow-host` | (none) | Additional allowed egress host, format: `hostname[:port]` (repeatable) |
+| `--no-mcp` | `false` | Disable MCP tool proxy |
+| `--mcp-group` | `default` | ToolHive group to discover MCP servers from |
+| `--mcp-port` | `4483` | Port for MCP proxy on VM gateway |
+| `--mcp-config` | (none) | Path to custom vmcp config YAML |
+| `--no-git-token` | `false` | Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM |
+| `--no-git-ssh-agent` | `false` | Disable SSH agent forwarding into the VM |
+| `--log-file` | `~/.config/apiary/vms/<vm>/apiary.log` | Override log file path |
+| `--debug` | `false` | Enable debug-level logging to file |
 
 Pass agent-specific arguments after `--` so they are not parsed by apiary:
 
@@ -77,7 +88,6 @@ apiary claude-code -- --help
 | Command | Description |
 |---------|-------------|
 | `list` | List all available agents |
-| `completion` | Generate shell completion scripts |
 
 ## What Happens When You Run It
 
@@ -118,6 +128,32 @@ override built-in agents, or define custom agents.
 defaults:
   cpus: 4
   memory: 4096
+  egress_profile: "standard"
+
+# Workspace snapshot review settings
+review:
+  enabled: true
+  exclude_patterns:
+    - "*.log"
+    - "build/"
+
+# Egress networking
+network:
+  allow_hosts:
+    - name: "internal-api.example.com"
+      ports: [443]
+
+# MCP tool proxy (discovers servers from ToolHive)
+mcp:
+  enabled: true
+  group: "default"
+  port: 4483
+  config: "/path/to/vmcp-config.yaml"  # optional advanced config
+
+# Git identity and auth forwarding
+git:
+  forward_token: true       # Forward GITHUB_TOKEN/GH_TOKEN (default: true)
+  forward_ssh_agent: true   # Forward SSH agent for git+ssh (default: true)
 
 # Per-agent overrides and custom agents
 agents:
@@ -240,6 +276,71 @@ review:
 
 Note: `review.enabled` is **ignored** in per-workspace config for security
 (use `--no-review` explicitly).
+
+## Egress Firewall
+
+Each agent comes with DNS-aware egress policies. Three profiles are available:
+
+| Profile | What it allows |
+|---|---|
+| `permissive` | All outbound traffic, no restrictions |
+| `standard` (default) | LLM provider + common dev infrastructure (GitHub, npm, PyPI, Go proxy, Docker Hub, GHCR, Sentry) |
+| `locked` | LLM provider only (e.g. `api.anthropic.com` for Claude Code) |
+
+```bash
+# Lock egress to the LLM provider only
+apiary claude-code --egress-profile locked
+
+# Add specific hosts beyond the profile
+apiary claude-code --allow-host "my-registry.example.com:443"
+```
+
+Additional hosts can also be configured globally or per-workspace:
+
+```yaml
+# In config.yaml
+network:
+  allow_hosts:
+    - name: "internal-api.example.com"
+      ports: [443]
+```
+
+## MCP Tool Proxy
+
+When [ToolHive](https://github.com/stacklok/toolhive) is running, apiary
+automatically discovers MCP servers and proxies them into the VM so the
+agent can use external tools.
+
+```bash
+# Disable MCP proxy
+apiary claude-code --no-mcp
+
+# Use a specific ToolHive group
+apiary claude-code --mcp-group "coding-tools"
+
+# Override the proxy port
+apiary claude-code --mcp-port 5000
+```
+
+MCP config is injected into the guest in the agent-specific format
+(Claude Code, Codex, and OpenCode each use different config formats).
+
+## Git Integration
+
+By default, apiary forwards your git identity (user.name and user.email),
+GITHUB_TOKEN/GH_TOKEN, and SSH agent into the VM so git operations work
+seamlessly.
+
+```bash
+# Disable token forwarding
+apiary claude-code --no-git-token
+
+# Disable SSH agent forwarding
+apiary claude-code --no-git-ssh-agent
+```
+
+When snapshot isolation is enabled, the `.git/config` is sanitized to
+remove sensitive values (credentials, tokens) before copying.
 
 ## Signals and Cleanup
 
