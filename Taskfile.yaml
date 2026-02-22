@@ -83,12 +83,12 @@ tasks:
   lint:
     desc: Run linter
     cmds:
-      - golangci-lint run ./...
+      - golangci-lint run --allow-parallel-runners ./...
 
   lint-fix:
     desc: Run linter and fix issues
     cmds:
-      - golangci-lint run --fix ./...
+      - golangci-lint run --allow-parallel-runners --fix ./...
 
   fmt:
     desc: Format code
