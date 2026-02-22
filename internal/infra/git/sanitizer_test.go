@@ -333,3 +333,164 @@ func TestProcess_NoGitConfig_NoOp(t *testing.T) {
 	_, err = os.Stat(filepath.Join(snapshotDir, ".git", "config"))
 	assert.True(t, os.IsNotExist(err))
 }
+
+func TestContainsCredentials(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		input    string
+		expected bool
+	}{
+		{
+			name: "URL with user:token detects credential",
+			input: strings.Join([]string{
+				`[remote "origin"]`,
+				"\turl = https://user:token@github.com/org/repo.git",
+			}, "\n"),
+			expected: true,
+		},
+		{
+			name: "credential section header detected",
+			input: strings.Join([]string{
+				"[credential]",
+				"\thelper = store",
+			}, "\n"),
+			expected: true,
+		},
+		{
+			name: "credential subsection header detected",
+			input: strings.Join([]string{
+				`[credential "https://github.com"]`,
+				"\thelper = osxkeychain",
+			}, "\n"),
+			expected: true,
+		},
+		{
+			name: "pushurl with deploy:token detects credential",
+			input: strings.Join([]string{
+				`[remote "origin"]`,
+				"\tpushurl = https://deploy:token@github.com/org/repo.git",
+			}, "\n"),
+			expected: true,
+		},
+		{
+			name: "SCP-style SSH remote is not a credential",
+			input: strings.Join([]string{
+				`[remote "origin"]`,
+				"\turl = git@github.com:org/repo.git",
+			}, "\n"),
+			expected: false,
+		},
+		{
+			name: "HTTPS without credentials is clean",
+			input: strings.Join([]string{
+				`[remote "origin"]`,
+				"\turl = https://github.com/org/repo.git",
+			}, "\n"),
+			expected: false,
+		},
+		{
+			name: "ssh scheme URL with username only is not a credential",
+			input: strings.Join([]string{
+				`[remote "origin"]`,
+				"\turl = ssh://git@github.com/org/repo.git",
+			}, "\n"),
+			expected: false,
+		},
+		{
+			name: "credentials in comment are ignored",
+			input: strings.Join([]string{
+				"[core]",
+				"\t# url = https://user:token@github.com/org/repo.git",
+				"\tbare = false",
+			}, "\n"),
+			expected: false,
+		},
+		{
+			name: "url section with insteadOf credential detected",
+			input: strings.Join([]string{
+				`[url "https://user:token@github.com/"]`,
+				"\tinsteadOf = https://github.com/",
+			}, "\n"),
+			expected: true,
+		},
+		{
+			name: "url section without credentials is clean",
+			input: strings.Join([]string{
+				`[url "https://github.com/"]`,
+				"\tinsteadOf = git://github.com/",
+			}, "\n"),
+			expected: false,
+		},
+		{
+			name: "malformed URL with credentials detected via heuristic",
+			input: strings.Join([]string{
+				`[remote "origin"]`,
+				"\turl = http{s://user:pass@github.com/org/repo.git",
+			}, "\n"),
+			expected: true,
+		},
+		{
+			name:     "credentials detected with Windows line endings",
+			input:    "[remote \"origin\"]\r\n\turl = https://user:token@github.com/org/repo.git\r\n",
+			expected: true,
+		},
+		{
+			name:     "empty input returns false",
+			input:    "",
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := containsCredentials(tt.input)
+			assert.Equal(t, tt.expected, result)
+		})
+	}
+}
+
+func TestContainsCredentials_FileHandling(t *testing.T) {
+	t.Parallel()
+
+	t.Run("nonexistent file returns false nil", func(t *testing.T) {
+		t.Parallel()
+		hasCreds, err := ContainsCredentials(filepath.Join(t.TempDir(), "nonexistent"))
+		require.NoError(t, err)
+		assert.False(t, hasCreds)
+	})
+
+	t.Run("file with credentials returns true", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config")
+		content := strings.Join([]string{
+			`[remote "origin"]`,
+			"\turl = https://user:token@github.com/org/repo.git",
+		}, "\n")
+		require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+
+		hasCreds, err := ContainsCredentials(configPath)
+		require.NoError(t, err)
+		assert.True(t, hasCreds)
+	})
+
+	t.Run("clean file returns false", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		configPath := filepath.Join(dir, "config")
+		content := strings.Join([]string{
+			"[core]",
+			"\tbare = false",
+			`[remote "origin"]`,
+			"\turl = https://github.com/org/repo.git",
+		}, "\n")
+		require.NoError(t, os.WriteFile(configPath, []byte(content), 0o644))
+
+		hasCreds, err := ContainsCredentials(configPath)
+		require.NoError(t, err)
+		assert.False(t, hasCreds)
+	})
+}

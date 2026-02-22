@@ -295,6 +295,18 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		reviewEnabled = false
 	}
 
+	// Warn if review is disabled and git config contains credentials.
+	if !reviewEnabled {
+		gitConfigPath := filepath.Join(ws, ".git", "config")
+		if hasCreds, credErr := infragit.ContainsCredentials(gitConfigPath); credErr != nil {
+			logger.Warn("failed to check git config for credentials", "error", credErr)
+		} else if hasCreds {
+			_, _ = fmt.Fprintf(os.Stderr, "\nSecurity: .git/config contains credentials that will be exposed inside the VM.\n")
+			_, _ = fmt.Fprintf(os.Stderr, "  Snapshot isolation is disabled, so git credential sanitization is skipped.\n")
+			_, _ = fmt.Fprintf(os.Stderr, "  Consider enabling review mode to enable credential sanitization.\n\n")
+		}
+	}
+
 	// Merge exclude patterns from config and CLI.
 	var excludePatterns []string
 	if cfg != nil {
