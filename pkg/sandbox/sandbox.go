@@ -265,7 +265,12 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	var extraHosts []egress.Host
 	extraHosts = append(extraHosts, cfg.ExtraEgressHosts...)
 	if override.AllowHosts != nil {
-		extraHosts = append(extraHosts, config.ToEgressHosts(override.AllowHosts)...)
+		overrideHosts, ohErr := config.ToEgressHosts(override.AllowHosts)
+		if ohErr != nil {
+			s.observer.Fail("Invalid agent egress host in config")
+			return nil, fmt.Errorf("agent %q config %w", agentName, ohErr)
+		}
+		extraHosts = append(extraHosts, overrideHosts...)
 	}
 	extraHosts = append(extraHosts, opts.AllowHosts...)
 

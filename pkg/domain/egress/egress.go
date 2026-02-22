@@ -7,6 +7,7 @@ package egress
 
 import (
 	"fmt"
+	"net"
 	"strconv"
 	"strings"
 )
@@ -105,13 +106,31 @@ func ParseHostFlag(s string) (Host, error) {
 		return Host{}, fmt.Errorf("empty host flag")
 	}
 
+	// Reject bracketed IPv6 early (before Cut splits on ':').
+	if strings.HasPrefix(s, "[") {
+		return Host{}, errIPNotAllowed(s)
+	}
+
+	// Detect bare (unbracketted) IPv6 before splitting on ':'.
+	// IPv6 addresses contain multiple colons; a valid hostname:port has at most one.
+	if strings.Count(s, ":") > 1 {
+		return Host{}, errIPNotAllowed(s)
+	}
+
 	host, portStr, hasPort := strings.Cut(s, ":")
 	if host == "" {
 		return Host{}, fmt.Errorf("empty hostname in %q", s)
 	}
 
-	h := Host{Name: host}
-	if hasPort && portStr != "" {
+	// Reject trailing colon with no port (e.g. "example.com:") as malformed.
+	if hasPort && portStr == "" {
+		return Host{}, fmt.Errorf("missing port after ':' in %q", s)
+	}
+
+	// Canonicalize to lowercase — DNS is case-insensitive (RFC 4343)
+	// and propolis lowercases at matching time, so we normalize early.
+	h := Host{Name: strings.ToLower(host)}
+	if hasPort {
 		port, err := strconv.ParseUint(portStr, 10, 16)
 		if err != nil {
 			return Host{}, fmt.Errorf("invalid port in %q: %w", s, err)
@@ -122,7 +141,90 @@ func ParseHostFlag(s string) (Host, error) {
 		h.Ports = []uint16{uint16(port)}
 	}
 
+	if err := validateHostname(h.Name); err != nil {
+		return Host{}, err
+	}
+
 	return h, nil
+}
+
+// ValidateHost validates and canonicalizes a Host struct's Name field.
+// It lowercases the name (DNS is case-insensitive per RFC 4343) and
+// runs all hostname validation rules. The Host is modified in place.
+func ValidateHost(h *Host) error {
+	h.Name = strings.ToLower(h.Name)
+	return validateHostname(h.Name)
+}
+
+// errIPNotAllowed returns a standardised error for IP address inputs.
+func errIPNotAllowed(input string) error {
+	return fmt.Errorf("IP address %q is not allowed: the egress firewall is DNS-based and requires hostnames", input)
+}
+
+// validateHostname checks that name is a valid DNS hostname suitable for
+// the DNS-based egress firewall. It rejects IP addresses, bare wildcards,
+// mid-label wildcards, trailing dots, and labels that violate RFC 1123.
+func validateHostname(name string) error {
+	if name == "*" {
+		return fmt.Errorf("bare wildcard is not allowed; use *.example.com")
+	}
+
+	// Reject trailing dots (FQDN notation).
+	if strings.HasSuffix(name, ".") {
+		return fmt.Errorf("trailing dot not allowed in %q", name)
+	}
+
+	// Reject IP addresses (v4, v6, and IPv4-mapped IPv6).
+	candidate := name
+	// Strip brackets for IPv6 like [::1].
+	if strings.HasPrefix(candidate, "[") && strings.HasSuffix(candidate, "]") {
+		candidate = candidate[1 : len(candidate)-1]
+	}
+	if net.ParseIP(candidate) != nil {
+		return errIPNotAllowed(name)
+	}
+
+	// Total length check (RFC 1035: max 253 characters).
+	if len(name) > 253 {
+		return fmt.Errorf("hostname exceeds 253 characters (%d)", len(name))
+	}
+
+	labels := strings.Split(name, ".")
+	for i, label := range labels {
+		// Wildcard handling: only valid as the entire leftmost label.
+		if strings.Contains(label, "*") {
+			if i != 0 || label != "*" {
+				return fmt.Errorf("wildcard must be the entire leftmost label, got %q", label)
+			}
+			continue // skip RFC 1123 checks for the "*" label
+		}
+
+		if len(label) == 0 {
+			return fmt.Errorf("empty label in hostname %q", name)
+		}
+		if len(label) > 63 {
+			return fmt.Errorf("label %q exceeds 63 characters", label)
+		}
+		if label[0] == '-' {
+			return fmt.Errorf("label %q must not start with a hyphen", label)
+		}
+		if label[len(label)-1] == '-' {
+			return fmt.Errorf("label %q must not end with a hyphen", label)
+		}
+		for _, c := range label {
+			if !isLabelChar(c) {
+				return fmt.Errorf("label %q contains invalid character %q", label, c)
+			}
+		}
+	}
+
+	return nil
+}
+
+// isLabelChar returns true if c is valid in a DNS label: [a-zA-Z0-9_-].
+// Underscores are allowed for SRV/DMARC compatibility.
+func isLabelChar(c rune) bool {
+	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_'
 }
 
 // Stricter returns the stricter of two profiles.

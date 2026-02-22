@@ -144,7 +144,7 @@ Example:
 	cmd.Flags().StringSliceVar(&excludes, "exclude", nil, "Additional exclude patterns for workspace snapshot (repeatable)")
 	cmd.Flags().StringVar(&logFile, "log-file", "", "Override log file path (default: ~/.config/apiary/vms/<vm-name>/apiary.log)")
 	cmd.Flags().StringVar(&egressProfile, "egress-profile", "", "Egress restriction level: permissive, standard, locked (default: agent's built-in default)")
-	cmd.Flags().StringSliceVar(&allowHosts, "allow-host", nil, "Additional allowed egress host, format: hostname[:port] (repeatable)")
+	cmd.Flags().StringSliceVar(&allowHosts, "allow-host", nil, "Additional allowed egress DNS hostname[:port] — no IP addresses (repeatable)")
 	cmd.Flags().BoolVar(&noMCP, "no-mcp", false, "Disable MCP tool proxy (enabled by default, discovers servers from ToolHive)")
 	cmd.Flags().StringVar(&mcpGroup, "mcp-group", "default", "ToolHive group to discover MCP servers from")
 	cmd.Flags().Uint16Var(&mcpPort, "mcp-port", 4483, "Port for MCP proxy on VM gateway")
@@ -318,11 +318,17 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		diffMatcher = exclude.NewDiffMatcher(excludeCfg, gitignorePatterns)
 	}
 
+	// Validate and convert config-file egress hosts.
+	configEgressHosts, egressErr := domainconfig.ToEgressHosts(cfg.Network.AllowHosts)
+	if egressErr != nil {
+		return fmt.Errorf("config network.%w", egressErr)
+	}
+
 	// Build SandboxConfig from the loaded config.
 	sandboxCfg := &sandbox.SandboxConfig{
 		Defaults:         cfg.Defaults,
 		AgentOverrides:   cfg.Agents,
-		ExtraEgressHosts: domainconfig.ToEgressHosts(cfg.Network.AllowHosts),
+		ExtraEgressHosts: configEgressHosts,
 		MCP:              cfg.MCP,
 	}
 
@@ -402,7 +408,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	for _, h := range flags.allowHosts {
 		parsed, parseErr := egress.ParseHostFlag(h)
 		if parseErr != nil {
-			return fmt.Errorf("invalid --allow-host %q: %w", h, parseErr)
+			return fmt.Errorf("--allow-host %q: %w", h, parseErr)
 		}
 		parsedAllowHosts = append(parsedAllowHosts, parsed)
 	}

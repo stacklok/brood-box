@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/stacklok/apiary/pkg/domain/agent"
 )
@@ -508,7 +509,9 @@ func TestToEgressHosts(t *testing.T) {
 
 	t.Run("nil input returns nil", func(t *testing.T) {
 		t.Parallel()
-		assert.Nil(t, ToEgressHosts(nil))
+		got, err := ToEgressHosts(nil)
+		require.NoError(t, err)
+		assert.Nil(t, got)
 	})
 
 	t.Run("converts config to domain hosts", func(t *testing.T) {
@@ -517,13 +520,47 @@ func TestToEgressHosts(t *testing.T) {
 			{Name: "api.example.com", Ports: []uint16{443}, Protocol: 6},
 			{Name: "*.docker.io"},
 		}
-		got := ToEgressHosts(configs)
+		got, err := ToEgressHosts(configs)
+		require.NoError(t, err)
 		assert.Len(t, got, 2)
 		assert.Equal(t, "api.example.com", got[0].Name)
 		assert.Equal(t, []uint16{443}, got[0].Ports)
 		assert.Equal(t, uint8(6), got[0].Protocol)
 		assert.Equal(t, "*.docker.io", got[1].Name)
 		assert.Nil(t, got[1].Ports)
+	})
+
+	t.Run("lowercases hostnames", func(t *testing.T) {
+		t.Parallel()
+		configs := []EgressHostConfig{
+			{Name: "API.GitHub.COM"},
+		}
+		got, err := ToEgressHosts(configs)
+		require.NoError(t, err)
+		assert.Equal(t, "api.github.com", got[0].Name)
+	})
+
+	t.Run("rejects IP address in config", func(t *testing.T) {
+		t.Parallel()
+		configs := []EgressHostConfig{
+			{Name: "api.example.com"},
+			{Name: "1.2.3.4"},
+		}
+		_, err := ToEgressHosts(configs)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "allow_hosts[1]")
+		assert.Contains(t, err.Error(), "IP address")
+	})
+
+	t.Run("rejects bare wildcard in config", func(t *testing.T) {
+		t.Parallel()
+		configs := []EgressHostConfig{
+			{Name: "*"},
+		}
+		_, err := ToEgressHosts(configs)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "allow_hosts[0]")
+		assert.Contains(t, err.Error(), "bare wildcard")
 	})
 }
 

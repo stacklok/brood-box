@@ -6,6 +6,8 @@
 package config
 
 import (
+	"fmt"
+
 	"github.com/stacklok/apiary/pkg/domain/agent"
 	"github.com/stacklok/apiary/pkg/domain/egress"
 )
@@ -303,9 +305,11 @@ func mergeGitConfig(global, local GitConfig) GitConfig {
 }
 
 // ToEgressHosts converts config host entries to domain egress hosts.
-func ToEgressHosts(configs []EgressHostConfig) []egress.Host {
+// Each hostname is validated and canonicalized (lowercased). Returns an
+// error on the first invalid hostname, identifying it by position.
+func ToEgressHosts(configs []EgressHostConfig) ([]egress.Host, error) {
 	if len(configs) == 0 {
-		return nil
+		return nil, nil
 	}
 	hosts := make([]egress.Host, len(configs))
 	for i, c := range configs {
@@ -314,6 +318,9 @@ func ToEgressHosts(configs []EgressHostConfig) []egress.Host {
 			Ports:    c.Ports,
 			Protocol: c.Protocol,
 		}
+		if err := egress.ValidateHost(&hosts[i]); err != nil {
+			return nil, fmt.Errorf("allow_hosts[%d] %q: %w", i, c.Name, err)
+		}
 	}
-	return hosts
+	return hosts, nil
 }

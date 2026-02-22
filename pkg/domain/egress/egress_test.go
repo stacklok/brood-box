@@ -4,6 +4,7 @@
 package egress
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -190,6 +191,7 @@ func TestParseHostFlag(t *testing.T) {
 		wantHost Host
 		wantErr  string
 	}{
+		// --- Valid inputs ---
 		{
 			name:     "hostname only",
 			input:    "api.github.com",
@@ -201,15 +203,51 @@ func TestParseHostFlag(t *testing.T) {
 			wantHost: Host{Name: "api.github.com", Ports: []uint16{443}},
 		},
 		{
-			name:     "wildcard hostname",
+			name:     "wildcard hostname with port",
 			input:    "*.docker.io:443",
 			wantHost: Host{Name: "*.docker.io", Ports: []uint16{443}},
+		},
+		{
+			name:     "wildcard hostname no port",
+			input:    "*.docker.io",
+			wantHost: Host{Name: "*.docker.io"},
 		},
 		{
 			name:     "trimmed whitespace",
 			input:    "  example.com:8080  ",
 			wantHost: Host{Name: "example.com", Ports: []uint16{8080}},
 		},
+		{
+			name:     "underscore label (SRV/DMARC)",
+			input:    "_dmarc.example.com",
+			wantHost: Host{Name: "_dmarc.example.com"},
+		},
+		{
+			name:     "hyphenated label",
+			input:    "registry-1.docker.io",
+			wantHost: Host{Name: "registry-1.docker.io"},
+		},
+		{
+			name:     "mixed case canonicalized to lowercase",
+			input:    "API.GitHub.COM:443",
+			wantHost: Host{Name: "api.github.com", Ports: []uint16{443}},
+		},
+		{
+			name:     "single-label hostname",
+			input:    "localhost",
+			wantHost: Host{Name: "localhost"},
+		},
+		{
+			name:     "label exactly 63 chars",
+			input:    strings.Repeat("a", 63) + ".com",
+			wantHost: Host{Name: strings.Repeat("a", 63) + ".com"},
+		},
+		{
+			name:     "hostname exactly 253 chars",
+			input:    strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 57) + ".com",
+			wantHost: Host{Name: strings.Repeat("a", 63) + "." + strings.Repeat("b", 63) + "." + strings.Repeat("c", 63) + "." + strings.Repeat("d", 57) + ".com"},
+		},
+		// --- Empty / malformed inputs ---
 		{
 			name:    "empty string",
 			input:   "",
@@ -219,6 +257,11 @@ func TestParseHostFlag(t *testing.T) {
 			name:    "empty hostname with port",
 			input:   ":443",
 			wantErr: "empty hostname",
+		},
+		{
+			name:    "trailing colon no port",
+			input:   "example.com:",
+			wantErr: "missing port after ':'",
 		},
 		{
 			name:    "invalid port",
@@ -235,6 +278,94 @@ func TestParseHostFlag(t *testing.T) {
 			input:   "example.com:99999",
 			wantErr: "invalid port",
 		},
+		// --- IP address rejection ---
+		{
+			name:    "IPv4 address",
+			input:   "1.2.3.4",
+			wantErr: "IP address",
+		},
+		{
+			name:    "IPv4 address with port",
+			input:   "1.2.3.4:443",
+			wantErr: "IP address",
+		},
+		{
+			name:    "IPv4 loopback",
+			input:   "127.0.0.1",
+			wantErr: "IP address",
+		},
+		{
+			name:    "IPv4 all-zeros",
+			input:   "0.0.0.0",
+			wantErr: "IP address",
+		},
+		{
+			name:    "bracketed IPv6",
+			input:   "[::1]",
+			wantErr: "IP address",
+		},
+		{
+			name:    "bare IPv6 loopback",
+			input:   "::1",
+			wantErr: "IP address",
+		},
+		{
+			name:    "bare IPv6 link-local",
+			input:   "fe80::1",
+			wantErr: "IP address",
+		},
+		{
+			name:    "IPv4-mapped IPv6",
+			input:   "::ffff:1.2.3.4",
+			wantErr: "IP address",
+		},
+		// --- Wildcard rules ---
+		{
+			name:    "bare wildcard",
+			input:   "*",
+			wantErr: "bare wildcard",
+		},
+		{
+			name:    "mid-label wildcard",
+			input:   "a*.com",
+			wantErr: "wildcard must be the entire leftmost label",
+		},
+		{
+			name:    "wildcard not leftmost",
+			input:   "foo.*.com",
+			wantErr: "wildcard must be the entire leftmost label",
+		},
+		// --- DNS format rules ---
+		{
+			name:    "trailing dot",
+			input:   "example.com.",
+			wantErr: "trailing dot",
+		},
+		{
+			name:    "label starts with hyphen",
+			input:   "-start.com",
+			wantErr: "must not start with a hyphen",
+		},
+		{
+			name:    "label ends with hyphen",
+			input:   "end-.com",
+			wantErr: "must not end with a hyphen",
+		},
+		{
+			name:    "consecutive dots (empty label)",
+			input:   "foo..bar",
+			wantErr: "empty label",
+		},
+		{
+			name:    "label exceeds 63 chars",
+			input:   strings.Repeat("a", 64) + ".com",
+			wantErr: "exceeds 63 characters",
+		},
+		{
+			name:    "hostname exceeds 253 chars",
+			input:   strings.Repeat("a", 64) + "." + strings.Repeat("b", 64) + "." + strings.Repeat("c", 64) + "." + strings.Repeat("d", 63),
+			wantErr: "exceeds 253 characters",
+		},
 	}
 
 	for _, tt := range tests {
@@ -248,6 +379,98 @@ func TestParseHostFlag(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantHost, got)
+		})
+	}
+}
+
+func TestValidateHost(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		host     Host
+		wantName string // expected Name after canonicalization (empty = same as input)
+		wantErr  string
+	}{
+		// Valid hostnames that may come from config files.
+		{
+			name: "valid hostname",
+			host: Host{Name: "api.github.com"},
+		},
+		{
+			name: "valid wildcard",
+			host: Host{Name: "*.docker.io"},
+		},
+		{
+			name: "underscore label",
+			host: Host{Name: "_dmarc.example.com"},
+		},
+		{
+			name: "single-label hostname",
+			host: Host{Name: "localhost"},
+		},
+		{
+			name:     "uppercase canonicalized to lowercase",
+			host:     Host{Name: "API.GitHub.COM"},
+			wantName: "api.github.com",
+		},
+		{
+			name:     "mixed case wildcard canonicalized",
+			host:     Host{Name: "*.Docker.IO"},
+			wantName: "*.docker.io",
+		},
+		// Invalid hostnames that config files might contain.
+		{
+			name:    "IPv4 address rejected",
+			host:    Host{Name: "10.0.0.1"},
+			wantErr: "IP address",
+		},
+		{
+			name:    "IPv4-mapped IPv6 rejected",
+			host:    Host{Name: "::ffff:127.0.0.1"},
+			wantErr: "IP address",
+		},
+		{
+			name:    "bare wildcard rejected",
+			host:    Host{Name: "*"},
+			wantErr: "bare wildcard",
+		},
+		{
+			name:    "trailing dot rejected",
+			host:    Host{Name: "example.com."},
+			wantErr: "trailing dot",
+		},
+		{
+			name:    "empty label rejected",
+			host:    Host{Name: "foo..bar"},
+			wantErr: "empty label",
+		},
+		{
+			name:    "label starts with hyphen rejected",
+			host:    Host{Name: "-bad.example.com"},
+			wantErr: "must not start with a hyphen",
+		},
+		{
+			name:    "wildcard not leftmost rejected",
+			host:    Host{Name: "foo.*.com"},
+			wantErr: "wildcard must be the entire leftmost label",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := tt.host // copy so parallel tests don't share
+			err := ValidateHost(&h)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			if tt.wantName != "" {
+				assert.Equal(t, tt.wantName, h.Name)
+			}
 		})
 	}
 }

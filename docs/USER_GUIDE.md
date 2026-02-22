@@ -67,7 +67,7 @@ apiary <agent-name> [flags] [-- <agent-args...>]
 | `--no-review` | `false` | Disable snapshot isolation, mount workspace directly |
 | `--exclude` | (none) | Additional gitignore-style exclude patterns (repeatable) |
 | `--egress-profile` | Agent default (`standard`) | Egress restriction level: `permissive`, `standard`, `locked` |
-| `--allow-host` | (none) | Additional allowed egress host, format: `hostname[:port]` (repeatable) |
+| `--allow-host` | (none) | Additional allowed egress DNS hostname[:port] — no IP addresses (repeatable) |
 | `--no-mcp` | `false` | Disable MCP tool proxy |
 | `--mcp-group` | `default` | ToolHive group to discover MCP servers from |
 | `--mcp-port` | `4483` | Port for MCP proxy on VM gateway |
@@ -291,9 +291,14 @@ Each agent comes with DNS-aware egress policies. Three profiles are available:
 # Lock egress to the LLM provider only
 apiary claude-code --egress-profile locked
 
-# Add specific hosts beyond the profile
+# Add specific hosts beyond the profile (DNS hostnames only, no IP addresses)
 apiary claude-code --allow-host "my-registry.example.com:443"
 ```
+
+The egress firewall is DNS-based: it intercepts DNS queries to enforce allow-lists.
+Only hostnames are accepted — IP addresses are rejected because they bypass DNS
+resolution and would silently never match. Wildcards must be the entire leftmost
+label only (e.g. `*.example.com`).
 
 Additional hosts can also be configured globally or per-workspace:
 

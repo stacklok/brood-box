@@ -95,7 +95,7 @@ apiary claude-code --exclude "*.log" --exclude "tmp/"
 # Lock down egress to LLM provider only
 apiary claude-code --egress-profile locked
 
-# Allow additional egress hosts
+# Allow additional egress hosts (DNS hostnames only, no IP addresses)
 apiary claude-code --allow-host "internal-api.example.com:443"
 
 # Disable MCP proxy
@@ -199,7 +199,7 @@ apiary claude-code --egress-profile locked
 # Or open it up
 apiary claude-code --egress-profile permissive
 
-# Add specific hosts to standard profile
+# Add specific hosts to standard profile (DNS hostnames only, no IP addresses)
 apiary claude-code --allow-host "my-registry.example.com:443"
 ```
 
