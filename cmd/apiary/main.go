@@ -10,10 +10,14 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
+	"strings"
 	"syscall"
+	"unicode"
 
 	"github.com/spf13/cobra"
 
@@ -253,20 +257,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	if err != nil {
 		logger.Warn("failed to load local config, ignoring", "error", err)
 	}
-	if localCfg != nil && localCfg.Review.Enabled != nil {
-		logger.Warn("review.enabled in local config is ignored for security — use --no-review or global config")
-	}
-	if localCfg != nil && localCfg.Defaults.EgressProfile != "" {
-		effectiveGlobal := egress.ProfileName(cfg.Defaults.EgressProfile)
-		if effectiveGlobal == "" {
-			effectiveGlobal = egress.ProfileStandard
-		}
-		localProfile := egress.ProfileName(localCfg.Defaults.EgressProfile)
-		if localProfile.IsValid() && egress.Stricter(effectiveGlobal, localProfile) == effectiveGlobal {
-			logger.Warn("egress_profile in local config cannot widen — keeping effective profile",
-				"effective", effectiveGlobal, "local", localProfile)
-		}
-	}
+	warnLocalConfigOverrides(os.Stderr, localCfg, cfg)
 	cfg = domainconfig.MergeConfigs(cfg, localCfg)
 
 	if cfg.Agents != nil {
@@ -552,4 +543,147 @@ func chooseObserver(terminal *infraterminal.OSTerminal) progress.Observer {
 		return infraprogress.NewSpinnerObserver(os.Stderr)
 	}
 	return infraprogress.NewSimpleObserver(os.Stderr)
+}
+
+// warnLocalConfigOverrides prints warnings to w for each security-sensitive
+// field set in the local per-workspace config. This makes supply-chain-style
+// overrides visible to the user without blocking execution.
+//
+// globalCfg is used for context (e.g. comparing egress profile strictness)
+// but is never modified. Both configs are inspected before merge.
+func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Config) {
+	if localCfg == nil {
+		return
+	}
+
+	var warnings []string
+
+	// Review.Enabled — always ignored for security, warn if set.
+	if localCfg.Review.Enabled != nil {
+		warnings = append(warnings, "review.enabled is ignored for security — use --no-review or global config")
+	}
+
+	// Review.ExcludePatterns — can hide changes from diff review.
+	if len(localCfg.Review.ExcludePatterns) > 0 {
+		warnings = append(warnings, fmt.Sprintf("adds review exclude patterns: %s",
+			strings.Join(sanitizeAll(localCfg.Review.ExcludePatterns), ", ")))
+	}
+
+	// Defaults.EgressProfile — local can only tighten.
+	if localCfg.Defaults.EgressProfile != "" {
+		effectiveGlobal := egress.ProfileName(globalCfg.Defaults.EgressProfile)
+		if effectiveGlobal == "" {
+			effectiveGlobal = egress.ProfileStandard
+		}
+		localProfile := egress.ProfileName(localCfg.Defaults.EgressProfile)
+		if localProfile.IsValid() && egress.Stricter(effectiveGlobal, localProfile) == effectiveGlobal {
+			warnings = append(warnings, fmt.Sprintf("default egress profile %q cannot widen %q — ignored",
+				sanitizeValue(string(localProfile)), sanitizeValue(string(effectiveGlobal))))
+		} else {
+			warnings = append(warnings, fmt.Sprintf("sets default egress profile: %s",
+				sanitizeValue(localCfg.Defaults.EgressProfile)))
+		}
+	}
+
+	// Defaults.CPUs / Memory — resource overrides.
+	if localCfg.Defaults.CPUs > 0 {
+		warnings = append(warnings, fmt.Sprintf("sets default CPUs: %d", localCfg.Defaults.CPUs))
+	}
+	if localCfg.Defaults.Memory > 0 {
+		warnings = append(warnings, fmt.Sprintf("sets default memory: %d MiB", localCfg.Defaults.Memory))
+	}
+
+	// Network.AllowHosts — extra egress destinations.
+	if len(localCfg.Network.AllowHosts) > 0 {
+		names := make([]string, len(localCfg.Network.AllowHosts))
+		for i, h := range localCfg.Network.AllowHosts {
+			names[i] = sanitizeValue(h.Name)
+		}
+		warnings = append(warnings, fmt.Sprintf("adds egress hosts: %s", strings.Join(names, ", ")))
+	}
+
+	// Git — tighten-only but still worth surfacing.
+	if localCfg.Git.ForwardToken != nil {
+		warnings = append(warnings, fmt.Sprintf("sets git token forwarding: %t", *localCfg.Git.ForwardToken))
+	}
+	if localCfg.Git.ForwardSSHAgent != nil {
+		warnings = append(warnings, fmt.Sprintf("sets git SSH agent forwarding: %t", *localCfg.Git.ForwardSSHAgent))
+	}
+
+	// Per-agent overrides — sorted for deterministic output.
+	for _, name := range slices.Sorted(maps.Keys(localCfg.Agents)) {
+		safeName := sanitizeValue(name)
+		override := localCfg.Agents[name]
+		if override.Image != "" {
+			warnings = append(warnings, fmt.Sprintf("overrides %s image: %s", safeName, sanitizeValue(override.Image)))
+		}
+		if len(override.Command) > 0 {
+			warnings = append(warnings, fmt.Sprintf("overrides %s command", safeName))
+		}
+		if len(override.EnvForward) > 0 {
+			warnings = append(warnings, fmt.Sprintf("overrides %s env forwarding", safeName))
+		}
+		if len(override.AllowHosts) > 0 {
+			names := make([]string, len(override.AllowHosts))
+			for i, h := range override.AllowHosts {
+				names[i] = sanitizeValue(h.Name)
+			}
+			warnings = append(warnings, fmt.Sprintf("adds %s egress hosts: %s", safeName, strings.Join(names, ", ")))
+		}
+		if override.EgressProfile != "" {
+			warnings = append(warnings, fmt.Sprintf("sets %s egress profile: %s", safeName, sanitizeValue(override.EgressProfile)))
+		}
+		if override.CPUs > 0 {
+			warnings = append(warnings, fmt.Sprintf("sets %s CPUs: %d", safeName, override.CPUs))
+		}
+		if override.Memory > 0 {
+			warnings = append(warnings, fmt.Sprintf("sets %s memory: %d MiB", safeName, override.Memory))
+		}
+		if override.MCP != nil {
+			if override.MCP.Enabled != nil {
+				warnings = append(warnings, fmt.Sprintf("sets %s MCP enabled: %t", safeName, *override.MCP.Enabled))
+			}
+			if override.MCP.Group != "" {
+				warnings = append(warnings, fmt.Sprintf("sets %s MCP group: %s", safeName, sanitizeValue(override.MCP.Group)))
+			}
+			if override.MCP.Port != 0 {
+				warnings = append(warnings, fmt.Sprintf("sets %s MCP port: %d", safeName, override.MCP.Port))
+			}
+			if override.MCP.ConfigPath != "" {
+				warnings = append(warnings, fmt.Sprintf("sets %s MCP config path: %s", safeName, sanitizeValue(override.MCP.ConfigPath)))
+			}
+		}
+	}
+
+	if len(warnings) == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(w, "\n")
+	_, _ = fmt.Fprintf(w, "Security: .apiary.yaml in this workspace modifies sandbox settings:\n")
+	for _, msg := range warnings {
+		_, _ = fmt.Fprintf(w, "  - %s\n", msg)
+	}
+	_, _ = fmt.Fprintf(w, "Review .apiary.yaml before proceeding if this is unexpected.\n")
+	_, _ = fmt.Fprintf(w, "\n")
+}
+
+// sanitizeValue strips control characters (including ANSI escape sequences)
+// from a string before it is printed to the terminal.
+func sanitizeValue(s string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, s)
+}
+
+// sanitizeAll applies sanitizeValue to every element in a slice.
+func sanitizeAll(ss []string) []string {
+	out := make([]string, len(ss))
+	for i, s := range ss {
+		out[i] = sanitizeValue(s)
+	}
+	return out
 }
