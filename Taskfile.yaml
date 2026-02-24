@@ -11,7 +11,7 @@ vars:
   COMMIT:
     sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
   PROPOLIS_VERSION:
-    sh: go list -m -f '{{.Version}}' github.com/stacklok/propolis
+    sh: go list -m github.com/stacklok/propolis | awk '{print $2}'
   HOST_ARCH:
     sh: uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'
   HOST_OS:
