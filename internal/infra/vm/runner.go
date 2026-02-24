@@ -31,16 +31,32 @@ var _ domvm.VMRunner = (*PropolisRunner)(nil)
 // PropolisRunner implements VMRunner using the propolis library.
 type PropolisRunner struct {
 	runnerPath string
+	libDir     string
 	logger     *slog.Logger
 }
 
+// RunnerOption configures a PropolisRunner.
+type RunnerOption func(*PropolisRunner)
+
+// WithRunnerPath sets an explicit path to the propolis-runner binary.
+func WithRunnerPath(p string) RunnerOption {
+	return func(r *PropolisRunner) { r.runnerPath = p }
+}
+
+// WithLibDir sets the directory containing bundled shared libraries
+// (e.g. Homebrew libkrun). Propolis passes this as DYLD_LIBRARY_PATH
+// or LD_LIBRARY_PATH to the runner subprocess.
+func WithLibDir(d string) RunnerOption {
+	return func(r *PropolisRunner) { r.libDir = d }
+}
+
 // NewPropolisRunner creates a VMRunner backed by propolis.
-// runnerPath is the path to the propolis-runner binary.
-func NewPropolisRunner(runnerPath string, logger *slog.Logger) *PropolisRunner {
-	return &PropolisRunner{
-		runnerPath: runnerPath,
-		logger:     logger,
+func NewPropolisRunner(logger *slog.Logger, opts ...RunnerOption) *PropolisRunner {
+	r := &PropolisRunner{logger: logger}
+	for _, o := range opts {
+		o(r)
 	}
+	return r
 }
 
 // Start boots a microVM using propolis.
@@ -166,11 +182,16 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		))
 	}
 
-	// Add runner path if specified.
+	// Add backend options if runner path or lib dir are specified.
+	var backendOpts []libkrun.Option
 	if r.runnerPath != "" {
-		opts = append(opts, propolis.WithBackend(libkrun.NewBackend(
-			libkrun.WithRunnerPath(r.runnerPath),
-		)))
+		backendOpts = append(backendOpts, libkrun.WithRunnerPath(r.runnerPath))
+	}
+	if r.libDir != "" {
+		backendOpts = append(backendOpts, libkrun.WithLibDir(r.libDir))
+	}
+	if len(backendOpts) > 0 {
+		opts = append(opts, propolis.WithBackend(libkrun.NewBackend(backendOpts...)))
 	}
 
 	// Add workspace mount if specified.

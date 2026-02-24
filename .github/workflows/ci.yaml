@@ -17,8 +17,11 @@ env:
 
 jobs:
   test:
-    name: Test
-    runs-on: ubuntu-latest
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-15]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -43,8 +46,11 @@ jobs:
         run: task test
 
   lint:
-    name: Lint
-    runs-on: ubuntu-latest
+    name: Lint (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-15]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -74,8 +80,11 @@ jobs:
         run: task lint
 
   build:
-    name: Build
-    runs-on: ubuntu-latest
+    name: Build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-15]
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6

@@ -12,7 +12,8 @@ Module: `github.com/stacklok/apiary`
 ```bash
 task build             # Build apiary (pure Go, no CGO)
 task build-init        # Cross-compile apiary-init for guest VM
-task build-dev         # Build apiary + propolis-runner (requires libkrun-devel)
+task build-dev         # Build apiary + propolis-runner (Linux, requires libkrun-devel)
+task build-dev-darwin  # Build apiary + propolis-runner (macOS, requires Homebrew libkrun)
 task test              # go test -v -race ./...
 task test-coverage     # Run tests with coverage report
 task lint              # golangci-lint run ./...
@@ -113,10 +114,11 @@ Execution order: create snapshot → start VM → terminal → stop VM → diff 
 
 ## Things That Will Bite You
 
-- **propolis is a local replace**: `go.mod` uses `replace github.com/stacklok/propolis => ../propolis`. The propolis checkout must be at `../propolis`.
+- **propolis is a tagged dependency**: `go.mod` depends on `github.com/stacklok/propolis` as a versioned module. `build-dev` and `build-dev-darwin` build propolis-runner from the module cache — no local checkout needed.
 - **CGO boundary**: apiary itself is pure Go (`CGO_ENABLED=0`). Only propolis-runner needs CGO.
 - **Domain purity**: `pkg/domain/` must never import from `internal/infra/` or `pkg/sandbox/`. This is the most important architectural invariant — break it and you break the entire DDD foundation.
 - **Always use `task`**: Never run `go build`, `go test ./...`, `golangci-lint`, `go fmt`, or `goimports` directly. The Taskfile sets critical env vars and flags. Raw commands will silently produce wrong results.
+- **macOS entitlements**: `propolis-runner` must be code-signed with `assets/entitlements.plist` on macOS (Hypervisor.framework requirement). `task build-dev-darwin` handles this automatically. On macOS, install libkrun via `brew tap slp/krun && brew install libkrun libkrunfw`.
 
 ## Verification
 

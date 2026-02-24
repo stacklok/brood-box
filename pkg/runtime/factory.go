@@ -32,6 +32,10 @@ type DefaultSandboxDepsOpts struct {
 	// RunnerPath overrides the propolis runner path (empty uses default lookup).
 	RunnerPath string
 
+	// LibDir sets the directory containing bundled shared libraries
+	// (e.g. Homebrew libkrun on macOS).
+	LibDir string
+
 	// Config provides optional sandbox config overrides.
 	Config *sandbox.SandboxConfig
 
@@ -66,9 +70,17 @@ func NewDefaultSandboxDeps(opts DefaultSandboxDepsOpts) sandbox.SandboxDeps {
 		gitIdentityProvider = infragit.NewHostIdentityProvider("")
 	}
 
+	var runnerOpts []infravm.RunnerOption
+	if opts.RunnerPath != "" {
+		runnerOpts = append(runnerOpts, infravm.WithRunnerPath(opts.RunnerPath))
+	}
+	if opts.LibDir != "" {
+		runnerOpts = append(runnerOpts, infravm.WithLibDir(opts.LibDir))
+	}
+
 	return sandbox.SandboxDeps{
 		Registry:      infraagent.NewRegistry(),
-		VMRunner:      infravm.NewPropolisRunner(opts.RunnerPath, logger),
+		VMRunner:      infravm.NewPropolisRunner(logger, runnerOpts...),
 		SessionRunner: infrassh.NewInteractiveSession(logger),
 		Config:        cfg,
 		EnvProvider:   domainagent.NewOSEnvProvider(os.Environ),

@@ -348,7 +348,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	var reviewer *review.InteractiveReviewer
 	deps := sandbox.SandboxDeps{
 		Registry:      registry,
-		VMRunner:      infravm.NewPropolisRunner("", logger),
+		VMRunner:      infravm.NewPropolisRunner(logger),
 		SessionRunner: infrassh.NewInteractiveSession(logger),
 		Config:        sandboxCfg,
 		EnvProvider:   agent.NewOSEnvProvider(os.Environ),

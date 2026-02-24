@@ -66,7 +66,16 @@ tasks:
     cmds:
       - task: build
       - mkdir -p bin
-      - cd ../propolis && CGO_ENABLED=1 go build -o "$OLDPWD/bin/propolis-runner" ./runner/cmd/propolis-runner
+      - CGO_ENABLED=1 go build -o bin/propolis-runner github.com/stacklok/propolis/runner/cmd/propolis-runner
+
+  build-dev-darwin:
+    desc: Build apiary + propolis-runner on macOS (requires Homebrew libkrun)
+    platforms: [darwin]
+    cmds:
+      - task: build
+      - mkdir -p bin
+      - CGO_ENABLED=1 go build -o bin/propolis-runner github.com/stacklok/propolis/runner/cmd/propolis-runner
+      - codesign --entitlements assets/entitlements.plist --force -s - bin/propolis-runner
 
   test:
     desc: Run unit tests
