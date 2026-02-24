@@ -33,6 +33,7 @@ import (
 	infrassh "github.com/stacklok/apiary/internal/infra/ssh"
 	infraterminal "github.com/stacklok/apiary/internal/infra/terminal"
 	infravm "github.com/stacklok/apiary/internal/infra/vm"
+	infraruntime "github.com/stacklok/apiary/internal/infra/vm/runtimebin"
 	infraws "github.com/stacklok/apiary/internal/infra/workspace"
 	"github.com/stacklok/apiary/internal/version"
 	"github.com/stacklok/apiary/pkg/domain/agent"
@@ -344,11 +345,26 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		MCP:              cfg.MCP,
 	}
 
+	// Wire VM runner options (embedded runtime when available).
+	var vmRunnerOpts []infravm.RunnerOption
+	if infraruntime.Available() {
+		cacheDir, cdErr := runtimeCacheDir()
+		if cdErr != nil {
+			return fmt.Errorf("resolving runtime cache directory: %w", cdErr)
+		}
+		vmRunnerOpts = append(vmRunnerOpts,
+			infravm.WithRuntimeSource(infraruntime.RuntimeSource()),
+			infravm.WithFirmwareSource(infraruntime.FirmwareSource()),
+			infravm.WithCacheDir(cacheDir),
+		)
+		logger.Info("using embedded propolis runtime", "version", infraruntime.Version)
+	}
+
 	// Wire dependencies.
 	var reviewer *review.InteractiveReviewer
 	deps := sandbox.SandboxDeps{
 		Registry:      registry,
-		VMRunner:      infravm.NewPropolisRunner(logger),
+		VMRunner:      infravm.NewPropolisRunner(logger, vmRunnerOpts...),
 		SessionRunner: infrassh.NewInteractiveSession(logger),
 		Config:        sandboxCfg,
 		EnvProvider:   agent.NewOSEnvProvider(os.Environ),
@@ -724,4 +740,18 @@ func sanitizeAll(ss []string) []string {
 		out[i] = sanitizeValue(s)
 	}
 	return out
+}
+
+// runtimeCacheDir returns the directory used for extracting embedded runtime
+// binaries. Follows XDG_CACHE_HOME, defaulting to ~/.cache/apiary/runtime/.
+func runtimeCacheDir() (string, error) {
+	cacheBase := os.Getenv("XDG_CACHE_HOME")
+	if cacheBase == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("determining home directory: %w", err)
+		}
+		cacheBase = filepath.Join(home, ".cache")
+	}
+	return filepath.Join(cacheBase, "apiary", "runtime"), nil
 }

@@ -15,6 +15,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/stacklok/propolis"
+	"github.com/stacklok/propolis/extract"
 	"github.com/stacklok/propolis/hooks"
 	"github.com/stacklok/propolis/hypervisor/libkrun"
 	"github.com/stacklok/propolis/net/hosted"
@@ -30,9 +31,12 @@ var _ domvm.VMRunner = (*PropolisRunner)(nil)
 
 // PropolisRunner implements VMRunner using the propolis library.
 type PropolisRunner struct {
-	runnerPath string
-	libDir     string
-	logger     *slog.Logger
+	runnerPath     string
+	libDir         string
+	runtimeSource  extract.Source
+	firmwareSource extract.Source
+	cacheDir       string
+	logger         *slog.Logger
 }
 
 // RunnerOption configures a PropolisRunner.
@@ -48,6 +52,22 @@ func WithRunnerPath(p string) RunnerOption {
 // or LD_LIBRARY_PATH to the runner subprocess.
 func WithLibDir(d string) RunnerOption {
 	return func(r *PropolisRunner) { r.libDir = d }
+}
+
+// WithRuntimeSource sets an extract.Source providing propolis-runner and libkrun.
+// Mutually exclusive with WithRunnerPath and WithLibDir.
+func WithRuntimeSource(src extract.Source) RunnerOption {
+	return func(r *PropolisRunner) { r.runtimeSource = src }
+}
+
+// WithFirmwareSource sets an extract.Source providing libkrunfw.
+func WithFirmwareSource(src extract.Source) RunnerOption {
+	return func(r *PropolisRunner) { r.firmwareSource = src }
+}
+
+// WithCacheDir sets the cache directory for bundle-based extract.Sources.
+func WithCacheDir(dir string) RunnerOption {
+	return func(r *PropolisRunner) { r.cacheDir = dir }
 }
 
 // NewPropolisRunner creates a VMRunner backed by propolis.
@@ -182,13 +202,22 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		))
 	}
 
-	// Add backend options if runner path or lib dir are specified.
+	// Add backend options if runner path, lib dir, or embedded sources are specified.
 	var backendOpts []libkrun.Option
 	if r.runnerPath != "" {
 		backendOpts = append(backendOpts, libkrun.WithRunnerPath(r.runnerPath))
 	}
 	if r.libDir != "" {
 		backendOpts = append(backendOpts, libkrun.WithLibDir(r.libDir))
+	}
+	if r.runtimeSource != nil {
+		backendOpts = append(backendOpts, libkrun.WithRuntime(r.runtimeSource))
+	}
+	if r.firmwareSource != nil {
+		backendOpts = append(backendOpts, libkrun.WithFirmware(r.firmwareSource))
+	}
+	if r.cacheDir != "" {
+		backendOpts = append(backendOpts, libkrun.WithCacheDir(r.cacheDir))
 	}
 	if len(backendOpts) > 0 {
 		opts = append(opts, propolis.WithBackend(libkrun.NewBackend(backendOpts...)))

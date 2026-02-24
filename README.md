@@ -41,10 +41,10 @@ VM. When the agent exits, you review the diff and accept or reject each file.
 
 ### Prerequisites
 
-- Linux with KVM support (`/dev/kvm` must be accessible)
+- Linux with KVM support (`/dev/kvm` must be accessible), or macOS with Hypervisor.framework (Apple Silicon)
 - [Go 1.25.7+](https://go.dev/dl/)
 - [Task](https://taskfile.dev/) (task runner)
-- [libkrun-devel](https://github.com/containers/libkrun) installed
+- [GitHub CLI (`gh`)](https://cli.github.com/) (for downloading pre-built runtime artifacts)
 - An API key for your agent (e.g. `ANTHROPIC_API_KEY` for Claude Code)
 
 ### Build
@@ -53,8 +53,9 @@ VM. When the agent exits, you review the diff and accept or reject each file.
 task build-dev
 ```
 
-This compiles the `apiary` binary (pure Go, no CGO) and the `propolis-runner`
-binary (requires libkrun-devel). Both land in `bin/`.
+This downloads pre-built propolis runtime artifacts and embeds them into a
+self-contained `apiary` binary (pure Go, no CGO). No system `libkrun-devel`
+needed. The binary lands in `bin/`.
 
 ### Run
 
@@ -286,11 +287,14 @@ Apiary's isolation is built on several layers:
 ## Building from Source
 
 ```bash
-# Build everything (apiary + propolis-runner)
+# Build self-contained apiary (downloads + embeds propolis runtime)
 task build-dev
 
-# Build apiary only (pure Go, no CGO)
+# Build apiary only (pure Go, no CGO, needs propolis-runner on PATH)
 task build
+
+# Build apiary + propolis-runner from system libkrun (requires libkrun-devel)
+task build-dev-system
 
 # Build guest init binary
 task build-init

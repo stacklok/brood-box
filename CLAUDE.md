@@ -10,25 +10,29 @@ Module: `github.com/stacklok/apiary`
 **IMPORTANT**: ALWAYS use `task <target>` for building, testing, linting, formatting, and running. NEVER invoke `go build`, `go test`, `golangci-lint`, `go fmt`, `goimports`, or `podman build` directly — the Taskfile wraps these with the correct flags, ldflags, env vars, and dependency ordering. Running raw commands will produce incorrect builds or miss steps.
 
 ```bash
-task build             # Build apiary (pure Go, no CGO)
-task build-init        # Cross-compile apiary-init for guest VM
-task build-dev         # Build apiary + propolis-runner (Linux, requires libkrun-devel)
-task build-dev-darwin  # Build apiary + propolis-runner (macOS, requires Homebrew libkrun)
-task test              # go test -v -race ./...
-task test-coverage     # Run tests with coverage report
-task lint              # golangci-lint run ./...
-task lint-fix          # Auto-fix lint issues
-task fmt               # go fmt + goimports
-task tidy              # go mod tidy
-task verify            # fmt + lint + test
-task run               # Build and run
-task clean             # Remove bin/ and coverage files
-task image-base        # Build base guest image
-task image-claude-code # Build claude-code guest image
-task image-codex       # Build codex guest image
-task image-opencode    # Build opencode guest image
-task image-all         # Build all guest images
-task image-push        # Push all images to GHCR
+task build                  # Build apiary (pure Go, no CGO)
+task build-init             # Cross-compile apiary-init for guest VM
+task build-dev              # Build self-contained apiary with embedded propolis runtime (Linux, requires gh CLI)
+task build-dev-darwin       # Build self-contained apiary with embedded propolis runtime (macOS, requires gh CLI)
+task build-dev-system       # Build apiary + propolis-runner from system libkrun (Linux, requires libkrun-devel)
+task build-dev-system-darwin # Build apiary + propolis-runner from system libkrun (macOS, requires Homebrew libkrun)
+task fetch-runtime          # Download pre-built propolis runtime from GitHub Release
+task fetch-firmware         # Download pre-built propolis firmware from GitHub Release
+task test                   # go test -v -race ./...
+task test-coverage          # Run tests with coverage report
+task lint                   # golangci-lint run ./...
+task lint-fix               # Auto-fix lint issues
+task fmt                    # go fmt + goimports
+task tidy                   # go mod tidy
+task verify                 # fmt + lint + test
+task run                    # Build and run
+task clean                  # Remove bin/ and coverage files
+task image-base             # Build base guest image
+task image-claude-code      # Build claude-code guest image
+task image-codex            # Build codex guest image
+task image-opencode         # Build opencode guest image
+task image-all              # Build all guest images
+task image-push             # Push all images to GHCR
 ```
 
 The only exception is running a single test, where raw `go test` is acceptable:
@@ -114,8 +118,9 @@ Execution order: create snapshot → start VM → terminal → stop VM → diff 
 
 ## Things That Will Bite You
 
-- **propolis is a tagged dependency**: `go.mod` depends on `github.com/stacklok/propolis` as a versioned module. `build-dev` and `build-dev-darwin` build propolis-runner from the module cache — no local checkout needed.
-- **CGO boundary**: apiary itself is pure Go (`CGO_ENABLED=0`). Only propolis-runner needs CGO.
+- **propolis is a tagged dependency**: `go.mod` depends on `github.com/stacklok/propolis` as a versioned module. `build-dev` downloads pre-built propolis runtime artifacts and embeds them — no local checkout or system libkrun needed. Use `build-dev-system` to build propolis-runner from source (requires `libkrun-devel`).
+- **CGO boundary**: apiary itself is pure Go (`CGO_ENABLED=0`). The embedded propolis-runner was pre-built with CGO elsewhere — no CGO needed at apiary build time.
+- **`gh` CLI dependency**: `task fetch-runtime` and `task fetch-firmware` require the GitHub CLI (`gh`) to download release artifacts.
 - **Domain purity**: `pkg/domain/` must never import from `internal/infra/` or `pkg/sandbox/`. This is the most important architectural invariant — break it and you break the entire DDD foundation.
 - **Always use `task`**: Never run `go build`, `go test ./...`, `golangci-lint`, `go fmt`, or `goimports` directly. The Taskfile sets critical env vars and flags. Raw commands will silently produce wrong results.
 - **macOS entitlements**: `propolis-runner` must be code-signed with `assets/entitlements.plist` on macOS (Hypervisor.framework requirement). `task build-dev-darwin` handles this automatically. On macOS, install libkrun via `brew tap slp/krun && brew install libkrun libkrunfw`.

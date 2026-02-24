@@ -20,10 +20,11 @@ apiary opencode --workspace /path/to/project
 
 ## Prerequisites
 
-- **Linux** with KVM support (`/dev/kvm` must be accessible)
-- **libkrun-devel** installed (for building propolis-runner)
+- **Linux** with KVM support (`/dev/kvm` must be accessible), or **macOS** with Hypervisor.framework (Apple Silicon)
 
-Verify KVM access:
+Release binaries are self-contained and do not require `libkrun-devel` or any system libraries.
+
+Verify KVM access (Linux):
 
 ```bash
 ls -la /dev/kvm

@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/stacklok/propolis/extract"
+
 	infraagent "github.com/stacklok/apiary/internal/infra/agent"
 	infradiff "github.com/stacklok/apiary/internal/infra/diff"
 	infragit "github.com/stacklok/apiary/internal/infra/git"
@@ -50,6 +52,15 @@ type DefaultSandboxDepsOpts struct {
 
 	// SnapshotPostProcessors run after snapshot creation but before VM start.
 	SnapshotPostProcessors []domainworkspace.SnapshotPostProcessor
+
+	// RuntimeSource provides embedded propolis-runner and libkrun (optional).
+	RuntimeSource extract.Source
+
+	// FirmwareSource provides embedded libkrunfw (optional).
+	FirmwareSource extract.Source
+
+	// CacheDir is the directory used by bundle-based Sources for extraction.
+	CacheDir string
 }
 
 // NewDefaultSandboxDeps wires apiary's standard infrastructure dependencies.
@@ -76,6 +87,15 @@ func NewDefaultSandboxDeps(opts DefaultSandboxDepsOpts) sandbox.SandboxDeps {
 	}
 	if opts.LibDir != "" {
 		runnerOpts = append(runnerOpts, infravm.WithLibDir(opts.LibDir))
+	}
+	if opts.RuntimeSource != nil {
+		runnerOpts = append(runnerOpts, infravm.WithRuntimeSource(opts.RuntimeSource))
+	}
+	if opts.FirmwareSource != nil {
+		runnerOpts = append(runnerOpts, infravm.WithFirmwareSource(opts.FirmwareSource))
+	}
+	if opts.CacheDir != "" {
+		runnerOpts = append(runnerOpts, infravm.WithCacheDir(opts.CacheDir))
 	}
 
 	return sandbox.SandboxDeps{

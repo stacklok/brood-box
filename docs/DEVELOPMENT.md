@@ -6,10 +6,13 @@
 - [Task](https://taskfile.dev/) (task runner)
 - [golangci-lint](https://golangci-lint.run/)
 - [goimports](https://pkg.go.dev/golang.org/x/tools/cmd/goimports)
+- [GitHub CLI (`gh`)](https://cli.github.com/) (for `task build-dev` to download pre-built runtime artifacts)
 
-For building the propolis-runner (needed for actual VM execution):
-- Linux with KVM support
-- `libkrun-devel` package installed
+For running VMs:
+- Linux with KVM support, or macOS with Hypervisor.framework (Apple Silicon)
+
+For building propolis-runner from source (optional, `task build-dev-system`):
+- `libkrun-devel` package installed (Linux) or Homebrew libkrun (macOS)
 
 ## Getting Started
 
@@ -30,7 +33,12 @@ task verify
 |---------|-------------|
 | `task build` | Build `bin/apiary` (pure Go, `CGO_ENABLED=0`) |
 | `task build-init` | Cross-compile `apiary-init` for guest VM (Linux only) |
-| `task build-dev` | Build apiary + `bin/propolis-runner` (requires libkrun-devel) |
+| `task build-dev` | Build self-contained apiary with embedded propolis runtime (requires `gh` CLI) |
+| `task build-dev-darwin` | Same as `build-dev` for macOS |
+| `task build-dev-system` | Build apiary + `bin/propolis-runner` from system libkrun (requires libkrun-devel) |
+| `task build-dev-system-darwin` | Same as `build-dev-system` for macOS (requires Homebrew libkrun) |
+| `task fetch-runtime` | Download pre-built propolis runtime from GitHub Release |
+| `task fetch-firmware` | Download pre-built propolis firmware from GitHub Release |
 | `task test` | Run tests with race detector |
 | `task test-coverage` | Run tests with coverage report |
 | `task lint` | Run golangci-lint |

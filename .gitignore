@@ -2,6 +2,13 @@
 bin/
 .task/
 internal/infra/vm/initbin/apiary-init
+internal/infra/vm/runtimebin/propolis-runner
+internal/infra/vm/runtimebin/libkrun.so.1
+internal/infra/vm/runtimebin/libkrunfw.so.5
+internal/infra/vm/runtimebin/libkrun.dylib
+internal/infra/vm/runtimebin/libkrunfw.dylib
+internal/infra/vm/runtimebin/VERSION
+internal/infra/vm/runtimebin/LICENSE-GPL
 
 # Test coverage
 coverage.out

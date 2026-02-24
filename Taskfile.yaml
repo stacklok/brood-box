@@ -10,18 +10,30 @@ vars:
     sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
   COMMIT:
     sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
+  PROPOLIS_VERSION:
+    sh: go list -m -f '{{.Version}}' github.com/stacklok/propolis
+  HOST_ARCH:
+    sh: uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/'
+  HOST_OS:
+    sh: uname -s | tr '[:upper:]' '[:lower:]'
   LDFLAGS: >-
     -X github.com/stacklok/apiary/internal/version.Version={{.VERSION}}
     -X github.com/stacklok/apiary/internal/version.Commit={{.COMMIT}}
+  LDFLAGS_EMBED: >-
+    -X github.com/stacklok/apiary/internal/version.Version={{.VERSION}}
+    -X github.com/stacklok/apiary/internal/version.Commit={{.COMMIT}}
+    -X github.com/stacklok/apiary/internal/infra/vm/runtimebin.Version={{.PROPOLIS_VERSION}}
 
 # Quick reference:
-#   task build         → Build apiary (pure Go, no CGO)
-#   task build-dev     → Build apiary + propolis-runner
-#   task test          → Run tests with race detector
-#   task lint          → Run linter
-#   task verify        → fmt + lint + test
-#   task image-all     → Build all OCI guest images
-#   task image-push    → Push all images to GHCR
+#   task build           → Build apiary (pure Go, no CGO)
+#   task build-dev       → Build self-contained apiary with embedded propolis runtime
+#   task fetch-runtime   → Download pre-built propolis runtime from GitHub Release
+#   task fetch-firmware  → Download pre-built propolis firmware from GitHub Release
+#   task test            → Run tests with race detector
+#   task lint            → Run linter
+#   task verify          → fmt + lint + test
+#   task image-all       → Build all OCI guest images
+#   task image-push      → Push all images to GHCR
 
 tasks:
   default:
@@ -61,21 +73,73 @@ tasks:
       - bin/{{.BINARY_NAME}}
 
   build-dev:
-    desc: Build apiary + propolis-runner (requires libkrun-devel)
+    desc: Build self-contained apiary with embedded propolis runtime
+    platforms: [linux]
+    deps: [build-init, fetch-runtime, fetch-firmware]
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - mkdir -p bin
+      - go build -tags embed_runtime -ldflags "{{.LDFLAGS_EMBED}}" -o bin/{{.BINARY_NAME}} ./cmd/apiary
+
+  build-dev-darwin:
+    desc: Build self-contained apiary with embedded propolis runtime (macOS)
+    platforms: [darwin]
+    deps: [build-init, fetch-runtime, fetch-firmware]
+    env:
+      CGO_ENABLED: "0"
+    cmds:
+      - mkdir -p bin
+      - go build -tags embed_runtime -ldflags "{{.LDFLAGS_EMBED}}" -o bin/{{.BINARY_NAME}} ./cmd/apiary
+
+  build-dev-system:
+    desc: Build apiary + propolis-runner from system libkrun (requires libkrun-devel)
     platforms: [linux]
     cmds:
       - task: build
       - mkdir -p bin
       - CGO_ENABLED=1 go build -o bin/propolis-runner github.com/stacklok/propolis/runner/cmd/propolis-runner
 
-  build-dev-darwin:
-    desc: Build apiary + propolis-runner on macOS (requires Homebrew libkrun)
+  build-dev-system-darwin:
+    desc: Build apiary + propolis-runner from system libkrun (macOS, requires Homebrew libkrun)
     platforms: [darwin]
     cmds:
       - task: build
       - mkdir -p bin
       - CGO_ENABLED=1 go build -o bin/propolis-runner github.com/stacklok/propolis/runner/cmd/propolis-runner
       - codesign --entitlements assets/entitlements.plist --force -s - bin/propolis-runner
+
+  fetch-runtime:
+    desc: Download pre-built propolis runtime from GitHub Release
+    status:
+      - test -f internal/infra/vm/runtimebin/propolis-runner
+    cmds:
+      - mkdir -p internal/infra/vm/runtimebin
+      - >-
+        gh release download {{.PROPOLIS_VERSION}}
+        --repo stacklok/propolis
+        --pattern "propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz"
+        --dir internal/infra/vm/runtimebin/ --clobber
+      - >-
+        tar -xzf internal/infra/vm/runtimebin/propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz
+        -C internal/infra/vm/runtimebin/ --strip-components=1
+      - rm -f internal/infra/vm/runtimebin/propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz
+
+  fetch-firmware:
+    desc: Download pre-built propolis firmware from GitHub Release
+    status:
+      - test -f internal/infra/vm/runtimebin/libkrunfw.*
+    cmds:
+      - mkdir -p internal/infra/vm/runtimebin
+      - >-
+        gh release download {{.PROPOLIS_VERSION}}
+        --repo stacklok/propolis
+        --pattern "propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz"
+        --dir internal/infra/vm/runtimebin/ --clobber
+      - >-
+        tar -xzf internal/infra/vm/runtimebin/propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz
+        -C internal/infra/vm/runtimebin/ --strip-components=1
+      - rm -f internal/infra/vm/runtimebin/propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz
 
   test:
     desc: Run unit tests
@@ -129,6 +193,10 @@ tasks:
       - rm -rf bin/
       - rm -f coverage.out coverage.html
       - rm -f internal/infra/vm/initbin/apiary-init
+      - rm -f internal/infra/vm/runtimebin/propolis-runner
+      - rm -f internal/infra/vm/runtimebin/libkrun.so.1 internal/infra/vm/runtimebin/libkrun.dylib
+      - rm -f internal/infra/vm/runtimebin/libkrunfw.so.5 internal/infra/vm/runtimebin/libkrunfw.dylib
+      - rm -f internal/infra/vm/runtimebin/VERSION internal/infra/vm/runtimebin/LICENSE-GPL
 
   # --- OCI guest images ---
 
