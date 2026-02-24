@@ -6,6 +6,8 @@ package session
 
 import (
 	"context"
+
+	"golang.org/x/crypto/ssh"
 )
 
 // SessionOpts configures an interactive terminal session.
@@ -31,6 +33,11 @@ type SessionOpts struct {
 
 	// SSHAgentForward enables SSH agent forwarding for this session.
 	SSHAgentForward bool
+
+	// HostPublicKey is the expected SSH host public key for the server.
+	// When non-nil, the client uses ssh.FixedHostKey for verification.
+	// When nil, the client falls back to accepting any host key.
+	HostPublicKey ssh.PublicKey
 }
 
 // TerminalSession manages interactive PTY sessions over SSH.

@@ -8,6 +8,8 @@ import (
 	"context"
 	"net/http"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/stacklok/apiary/pkg/domain/agent"
 	"github.com/stacklok/apiary/pkg/domain/egress"
 	"github.com/stacklok/apiary/pkg/domain/git"
@@ -89,4 +91,9 @@ type VM interface {
 
 	// SSHKeyPath returns the path to the ephemeral SSH private key.
 	SSHKeyPath() string
+
+	// SSHHostKey returns the expected SSH host public key for this VM.
+	// Returns nil when host key pinning is not available, in which case
+	// the client should fall back to accepting any host key.
+	SSHHostKey() ssh.PublicKey
 }

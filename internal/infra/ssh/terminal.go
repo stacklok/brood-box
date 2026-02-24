@@ -57,13 +57,20 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 		return fmt.Errorf("parsing ssh key: %w", err)
 	}
 
+	var hostKeyCallback ssh.HostKeyCallback
+	if opts.HostPublicKey != nil {
+		hostKeyCallback = ssh.FixedHostKey(opts.HostPublicKey)
+	} else {
+		//nolint:gosec // Backward compat when host key not available.
+		hostKeyCallback = ssh.InsecureIgnoreHostKey()
+	}
+
 	config := &ssh.ClientConfig{
 		User: opts.User,
 		Auth: []ssh.AuthMethod{
 			ssh.PublicKeys(signer),
 		},
-		//nolint:gosec // We trust VMs we just created.
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: hostKeyCallback,
 	}
 
 	addr := net.JoinHostPort(opts.Host, fmt.Sprintf("%d", opts.Port))

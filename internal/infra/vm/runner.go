@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"golang.org/x/crypto/ssh"
+
 	"github.com/stacklok/propolis"
 	"github.com/stacklok/propolis/hooks"
 	"github.com/stacklok/propolis/hypervisor/libkrun"
@@ -66,12 +68,21 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 
 	privKeyPath, pubKeyPath, err := propolisssh.GenerateKeyPair(keyDir)
 	if err != nil {
+		_ = os.RemoveAll(keyDir)
 		return nil, fmt.Errorf("generating ssh key pair: %w", err)
 	}
 
 	pubKey, err := propolisssh.GetPublicKeyContent(pubKeyPath)
 	if err != nil {
+		_ = os.RemoveAll(keyDir)
 		return nil, fmt.Errorf("reading public key: %w", err)
+	}
+
+	// Generate host key pair for host key pinning.
+	hostKeyPEM, hostPubKey, err := propolisssh.GenerateHostKeyPair()
+	if err != nil {
+		_ = os.RemoveAll(keyDir)
+		return nil, fmt.Errorf("generating host key pair: %w", err)
 	}
 
 	// Resolve SSH port. When 0, pick a free ephemeral port up front so
@@ -82,6 +93,7 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 	if sshPort == 0 {
 		picked, pickErr := pickFreePort()
 		if pickErr != nil {
+			_ = os.RemoveAll(keyDir)
 			return nil, fmt.Errorf("picking ephemeral SSH port: %w", pickErr)
 		}
 		sshPort = picked
@@ -98,6 +110,7 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		propolis.WithPorts(propolis.PortForward{Host: sshPort, Guest: 22}),
 		propolis.WithRootFSHook(
 			hooks.InjectAuthorizedKeys(pubKey),
+			hooks.InjectFile("/etc/ssh/ssh_host_ecdsa_key", hostKeyPEM, 0o600),
 			InjectInitBinary(),
 			hooks.InjectEnvFile("/etc/sandbox-env", cfg.EnvVars),
 			InjectGitConfig(cfg.GitIdentity, cfg.HasGitToken, os.Chown),
@@ -105,7 +118,9 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		propolis.WithInitOverride("/apiary-init"),
 		propolis.WithPostBoot(func(ctx context.Context, _ *propolis.VM) error {
 			r.logger.Info("waiting for SSH", "port", sshPort)
-			client := propolisssh.NewClient("127.0.0.1", sshPort, "sandbox", privKeyPath)
+			client := propolisssh.NewClient("127.0.0.1", sshPort, "sandbox", privKeyPath,
+				propolisssh.WithHostKey(hostPubKey),
+			)
 			return client.WaitForReady(ctx)
 		}),
 	}
@@ -183,6 +198,7 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		sshPort:    sshPort,
 		sshKeyPath: privKeyPath,
 		sshKeyDir:  keyDir,
+		sshHostKey: hostPubKey,
 		logger:     r.logger,
 	}, nil
 }
@@ -193,6 +209,7 @@ type propolisVM struct {
 	sshPort    uint16
 	sshKeyPath string
 	sshKeyDir  string
+	sshHostKey ssh.PublicKey
 	logger     *slog.Logger
 }
 
@@ -217,6 +234,10 @@ func (v *propolisVM) DataDir() string {
 
 func (v *propolisVM) SSHKeyPath() string {
 	return v.sshKeyPath
+}
+
+func (v *propolisVM) SSHHostKey() ssh.PublicKey {
+	return v.sshHostKey
 }
 
 // vmDataDir returns a per-VM data directory under ~/.config/apiary/vms/<name>/data.

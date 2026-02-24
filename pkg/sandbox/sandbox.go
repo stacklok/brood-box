@@ -470,6 +470,7 @@ func (s *SandboxRunner) Attach(ctx context.Context, sb *Sandbox, terminal sessio
 		Command:         command,
 		Terminal:        terminal,
 		SSHAgentForward: sb.SSHAgentForward,
+		HostPublicKey:   sb.VM.SSHHostKey(),
 	}
 
 	s.logger.Debug("connecting to sandbox VM",

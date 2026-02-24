@@ -5,6 +5,9 @@ package sandbox
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/stacklok/apiary/pkg/domain/agent"
 	"github.com/stacklok/apiary/pkg/domain/egress"
@@ -43,6 +47,7 @@ type mockVM struct {
 	sshPort    uint16
 	dataDir    string
 	sshKeyPath string
+	sshHostKey ssh.PublicKey
 }
 
 func (m *mockVM) Stop(_ context.Context) error {
@@ -50,9 +55,10 @@ func (m *mockVM) Stop(_ context.Context) error {
 	return nil
 }
 
-func (m *mockVM) SSHPort() uint16    { return m.sshPort }
-func (m *mockVM) DataDir() string    { return m.dataDir }
-func (m *mockVM) SSHKeyPath() string { return m.sshKeyPath }
+func (m *mockVM) SSHPort() uint16           { return m.sshPort }
+func (m *mockVM) DataDir() string           { return m.dataDir }
+func (m *mockVM) SSHKeyPath() string        { return m.sshKeyPath }
+func (m *mockVM) SSHHostKey() ssh.PublicKey { return m.sshHostKey }
 
 // mockSessionRunner records the session opts it was called with.
 type mockSessionRunner struct {
@@ -858,6 +864,36 @@ func TestSandboxRunner_Attach_CallsSessionRunner(t *testing.T) {
 	assert.Equal(t, "/tmp/key", sessionRunner.runOpts.KeyPath)
 	assert.Equal(t, []string{"test-cmd"}, sessionRunner.runOpts.Command)
 	assert.Equal(t, terminal, sessionRunner.runOpts.Terminal)
+	assert.Nil(t, sessionRunner.runOpts.HostPublicKey, "nil host key should be forwarded as nil")
+}
+
+func TestSandboxRunner_Attach_PlumbsHostKey(t *testing.T) {
+	t.Parallel()
+
+	// Generate a real ECDSA key so we have a non-nil ssh.PublicKey.
+	ecKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	hostPub, err := ssh.NewPublicKey(&ecKey.PublicKey)
+	require.NoError(t, err)
+
+	mvm := &mockVM{sshPort: 3333, sshKeyPath: "/tmp/key", sshHostKey: hostPub}
+	sessionRunner := &mockSessionRunner{}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		SessionRunner: sessionRunner,
+		Logger:        testLogger(),
+	})
+
+	sb := &Sandbox{
+		Agent: agent.Agent{Command: []string{"cmd"}},
+		VM:    mvm,
+	}
+
+	err = runner.Attach(context.Background(), sb, &mockTerminal{})
+	require.NoError(t, err)
+
+	require.NotNil(t, sessionRunner.runOpts.HostPublicKey, "host key should be plumbed to session opts")
+	assert.Equal(t, hostPub.Marshal(), sessionRunner.runOpts.HostPublicKey.Marshal())
 }
 
 func TestSandboxRunner_Stop_StopsVM(t *testing.T) {
