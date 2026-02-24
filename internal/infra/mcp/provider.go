@@ -15,8 +15,10 @@ import (
 	"go.uber.org/zap/zapcore"
 
 	"github.com/stacklok/toolhive-core/env"
+	"github.com/stacklok/toolhive-core/logging"
 	thvauth "github.com/stacklok/toolhive/pkg/auth"
 	"github.com/stacklok/toolhive/pkg/groups"
+	thvlogger "github.com/stacklok/toolhive/pkg/logger"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	"github.com/stacklok/toolhive/pkg/vmcp/aggregator"
 	vmcpauthfactory "github.com/stacklok/toolhive/pkg/vmcp/auth/factory"
@@ -205,16 +207,23 @@ func (r *statusRecorder) WriteHeader(code int) {
 	r.ResponseWriter.WriteHeader(code)
 }
 
-// initToolhiveLogger configures the zap global logger used by toolhive
-// internals to write to the given writer (typically the log file).
-// If w is nil a no-op logger is installed.
+// initToolhiveLogger redirects both the zap global logger and the toolhive
+// slog singleton to the given writer (typically the apiary log file) so that
+// vmcp diagnostics don't pollute stdout/stderr during the terminal session.
+// If w is nil, no-op loggers are installed for both.
 func initToolhiveLogger(w io.Writer) {
 	if w == nil {
 		zap.ReplaceGlobals(zap.NewNop())
+		thvlogger.Set(slog.New(slog.NewJSONHandler(io.Discard, nil)))
 		return
 	}
 
+	// Redirect zap (legacy toolhive code paths).
 	enc := zapcore.NewJSONEncoder(zap.NewProductionEncoderConfig())
 	core := zapcore.NewCore(enc, zapcore.AddSync(w), zap.DebugLevel)
 	zap.ReplaceGlobals(zap.New(core))
+
+	// Redirect the toolhive slog singleton — this is the primary logger used
+	// by vmcp internals (aggregator, discovery, server, etc.).
+	thvlogger.Set(logging.New(logging.WithOutput(w)))
 }
