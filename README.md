@@ -45,7 +45,6 @@ VM. When the agent exits, you review the diff and accept or reject each file.
 - [Go 1.25.7+](https://go.dev/dl/)
 - [Task](https://taskfile.dev/) (task runner)
 - [libkrun-devel](https://github.com/containers/libkrun) installed
-- [propolis](https://github.com/stacklok/propolis) checked out at `../propolis` relative to apiary
 - An API key for your agent (e.g. `ANTHROPIC_API_KEY` for Claude Code)
 
 ### Build

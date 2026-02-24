@@ -6,7 +6,6 @@
 - [Task](https://taskfile.dev/) (task runner)
 - [golangci-lint](https://golangci-lint.run/)
 - [goimports](https://pkg.go.dev/golang.org/x/tools/cmd/goimports)
-- [propolis](https://github.com/stacklok/propolis) checked out at `../propolis`
 
 For building the propolis-runner (needed for actual VM execution):
 - Linux with KVM support
@@ -15,13 +14,10 @@ For building the propolis-runner (needed for actual VM execution):
 ## Getting Started
 
 ```bash
-# Clone alongside propolis
-cd ~/Development/stacklok
-git clone https://github.com/stacklok/propolis.git
 git clone https://github.com/stacklok/apiary.git
+cd apiary
 
 # Install dependencies
-cd apiary
 task tidy
 
 # Run the full verification pipeline

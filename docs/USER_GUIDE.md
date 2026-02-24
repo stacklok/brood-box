@@ -22,7 +22,6 @@ apiary opencode --workspace /path/to/project
 
 - **Linux** with KVM support (`/dev/kvm` must be accessible)
 - **libkrun-devel** installed (for building propolis-runner)
-- **propolis** checked out at `../propolis` relative to apiary
 
 Verify KVM access:
 
