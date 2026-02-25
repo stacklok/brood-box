@@ -58,6 +58,24 @@ func (n Name) String() string {
 	return string(n)
 }
 
+// DisplayName returns a human-friendly name for terminal output.
+func (n Name) DisplayName() string {
+	switch n {
+	case Go:
+		return "Go"
+	case Python:
+		return "Python"
+	case Node:
+		return "Node.js"
+	case Rust:
+		return "Rust"
+	case Generic:
+		return "generic"
+	default:
+		return string(n)
+	}
+}
+
 // ValidNames returns all accepted --flavour flag values for CLI help text.
 // Includes CLI sentinels (Auto, None) which are not valid domain flavour
 // names — use IsValid() to check domain validity.

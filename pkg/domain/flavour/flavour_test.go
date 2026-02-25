@@ -34,6 +34,31 @@ func TestName_IsValid(t *testing.T) {
 	}
 }
 
+func TestName_DisplayName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    Name
+		display string
+	}{
+		{Go, "Go"},
+		{Python, "Python"},
+		{Node, "Node.js"},
+		{Rust, "Rust"},
+		{Generic, "generic"},
+		{"unknown", "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.name), func(t *testing.T) {
+			t.Parallel()
+			if got := tt.name.DisplayName(); got != tt.display {
+				t.Errorf("Name(%q).DisplayName() = %q, want %q", tt.name, got, tt.display)
+			}
+		})
+	}
+}
+
 func TestValidNames(t *testing.T) {
 	t.Parallel()
 

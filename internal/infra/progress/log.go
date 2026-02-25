@@ -33,6 +33,11 @@ func (l *LogObserver) Complete(msg string) {
 	l.logger.Info(msg)
 }
 
+// Info logs an informational message.
+func (l *LogObserver) Info(msg string) {
+	l.logger.Info(msg)
+}
+
 // Warn logs a non-fatal warning.
 func (l *LogObserver) Warn(msg string) {
 	l.logger.Warn(msg)

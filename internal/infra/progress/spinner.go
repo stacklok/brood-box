@@ -29,6 +29,7 @@ type SpinnerObserver struct {
 	wg   sync.WaitGroup
 
 	successStyle lipgloss.Style
+	infoStyle    lipgloss.Style
 	warnStyle    lipgloss.Style
 	failStyle    lipgloss.Style
 	spinStyle    lipgloss.Style
@@ -39,6 +40,7 @@ func NewSpinnerObserver(w io.Writer) *SpinnerObserver {
 	return &SpinnerObserver{
 		out:          w,
 		successStyle: lipgloss.NewStyle().Foreground(lipgloss.Color("2")), // green
+		infoStyle:    lipgloss.NewStyle().Foreground(lipgloss.Color("6")), // cyan
 		warnStyle:    lipgloss.NewStyle().Foreground(lipgloss.Color("3")), // yellow
 		failStyle:    lipgloss.NewStyle().Foreground(lipgloss.Color("1")), // red
 		spinStyle:    lipgloss.NewStyle().Foreground(lipgloss.Color("4")), // blue
@@ -62,6 +64,12 @@ func (s *SpinnerObserver) Start(_ progress.Phase, msg string) {
 func (s *SpinnerObserver) Complete(msg string) {
 	s.stopSpinner()
 	s.printLine(s.successStyle.Render("✓"), msg)
+}
+
+// Info stops the spinner and prints an informational line.
+func (s *SpinnerObserver) Info(msg string) {
+	s.stopSpinner()
+	s.printLine(s.infoStyle.Render("ℹ"), msg)
 }
 
 // Warn stops the spinner and prints a warning line.

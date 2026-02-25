@@ -34,6 +34,11 @@ func (s *SimpleObserver) Complete(msg string) {
 	_, _ = fmt.Fprintf(s.out, "   done: %s\n", msg)
 }
 
+// Info prints an informational message.
+func (s *SimpleObserver) Info(msg string) {
+	_, _ = fmt.Fprintf(s.out, "   info: %s\n", msg)
+}
+
 // Warn prints a warning message.
 func (s *SimpleObserver) Warn(msg string) {
 	_, _ = fmt.Fprintf(s.out, "   warn: %s\n", msg)

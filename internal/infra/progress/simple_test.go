@@ -34,6 +34,17 @@ func TestSimpleObserver_Complete(t *testing.T) {
 	assert.Equal(t, "   done: VM started\n", buf.String())
 }
 
+func TestSimpleObserver_Info(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	obs := NewSimpleObserver(&buf)
+
+	obs.Info("Detected Go project")
+
+	assert.Equal(t, "   info: Detected Go project\n", buf.String())
+}
+
 func TestSimpleObserver_Warn(t *testing.T) {
 	t.Parallel()
 

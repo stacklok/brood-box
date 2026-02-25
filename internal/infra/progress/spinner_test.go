@@ -25,6 +25,18 @@ func TestSpinnerObserver_Complete(t *testing.T) {
 	assert.Contains(t, buf.String(), "All done")
 }
 
+func TestSpinnerObserver_Info(t *testing.T) {
+	t.Parallel()
+
+	var buf bytes.Buffer
+	obs := NewSpinnerObserver(&buf)
+
+	obs.Info("Detected Go project")
+
+	assert.Contains(t, buf.String(), "ℹ")
+	assert.Contains(t, buf.String(), "Detected Go project")
+}
+
 func TestSpinnerObserver_Warn(t *testing.T) {
 	t.Parallel()
 

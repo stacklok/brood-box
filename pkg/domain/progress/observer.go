@@ -39,6 +39,10 @@ type Observer interface {
 	// Complete marks the current phase as successfully finished.
 	Complete(msg string)
 
+	// Info emits an informational message (e.g. detected configuration).
+	// Stops any active spinner but does not imply phase completion.
+	Info(msg string)
+
 	// Warn emits a non-fatal warning for the current phase.
 	Warn(msg string)
 
@@ -51,6 +55,7 @@ type nopObserver struct{}
 
 func (nopObserver) Start(Phase, string) {}
 func (nopObserver) Complete(string)     {}
+func (nopObserver) Info(string)         {}
 func (nopObserver) Warn(string)         {}
 func (nopObserver) Fail(string)         {}
 

@@ -652,13 +652,16 @@ func (s *SandboxRunner) resolveFlavour(ctx context.Context, agentImage, flavourO
 	}
 
 	var detected flavour.Name
+	var source string // "detected" or "override"
 
 	if flavourOverride != "" && flavourOverride != flavour.Auto {
 		// Manual override — use directly if valid.
 		f := flavour.Name(flavourOverride)
 		if f.IsValid() {
 			detected = f
+			source = "override"
 		} else {
+			s.observer.Warn(fmt.Sprintf("Unknown flavour %q, falling back to auto-detection", flavourOverride))
 			s.logger.Warn("unknown flavour override, using auto-detection", "flavour", flavourOverride)
 		}
 	}
@@ -671,6 +674,7 @@ func (s *SandboxRunner) resolveFlavour(ctx context.Context, agentImage, flavourO
 			return agentImage
 		}
 		detected = det.Primary
+		source = "detected"
 		if len(det.Secondary) > 0 {
 			s.logger.Debug("secondary flavours detected", "secondary", det.Secondary)
 		}
@@ -682,6 +686,15 @@ func (s *SandboxRunner) resolveFlavour(ctx context.Context, agentImage, flavourO
 
 	resolved := s.imageResolver.Resolve(agentImage, detected)
 	s.logger.Info("resolved flavoured image", "flavour", detected, "image", resolved)
+
+	// Show flavour selection to the user.
+	switch source {
+	case "detected":
+		s.observer.Info(fmt.Sprintf("Detected %s project", detected.DisplayName()))
+	case "override":
+		s.observer.Info(fmt.Sprintf("Using %s toolchain (--flavour)", detected.DisplayName()))
+	}
+
 	return resolved
 }
 
