@@ -3,9 +3,7 @@
 
 # Claude Code guest image for Brood Box.
 # Installs the Claude Code native binary (Bun-based) on top of the base image.
-# Use BASE_IMAGE to select a flavoured base (e.g., base-go, base-python).
-ARG BASE_IMAGE=ghcr.io/stacklok/brood-box/base:latest
-FROM ${BASE_IMAGE}
+FROM ghcr.io/stacklok/brood-box/base:latest
 
 # Install Claude Code native binary.
 # The installer creates a symlink at /root/.local/bin/claude pointing to the

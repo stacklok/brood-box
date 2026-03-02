@@ -3,9 +3,7 @@
 
 # OpenCode guest image for Brood Box.
 # Installs the OpenCode binary (anomalyco/opencode, Bun-based, musl variant).
-# Use BASE_IMAGE to select a flavoured base (e.g., base-go, base-python).
-ARG BASE_IMAGE=ghcr.io/stacklok/brood-box/base:latest
-FROM ${BASE_IMAGE}
+FROM ghcr.io/stacklok/brood-box/base:latest
 
 # Install OpenCode binary from GitHub Releases (glibc variant, matches Wolfi)
 ARG TARGETARCH

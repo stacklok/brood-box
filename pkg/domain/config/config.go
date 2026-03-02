@@ -121,10 +121,6 @@ type DefaultsConfig struct {
 
 	// EgressProfile is the default egress restriction level.
 	EgressProfile string `yaml:"egress_profile,omitempty"`
-
-	// Flavour is the default workspace toolchain flavour.
-	// "auto" (default) = auto-detect, "none" = bare image, or a specific flavour name.
-	Flavour string `yaml:"flavour,omitempty"`
 }
 
 // NetworkConfig configures egress networking.
@@ -165,9 +161,6 @@ type AgentOverride struct {
 
 	// MCP overrides the global MCP proxy settings for this agent.
 	MCP *MCPConfig `yaml:"mcp,omitempty"`
-
-	// Flavour overrides the workspace toolchain flavour for this agent.
-	Flavour string `yaml:"flavour,omitempty"`
 }
 
 // clampResources caps CPU and memory values to the configured maximums.
@@ -188,7 +181,6 @@ func clampResources(cpus, memory uint32) (uint32, uint32) {
 //   - Review.Enabled: local value is IGNORED (security constraint).
 //   - Review.ExcludePatterns: additive (global + local).
 //   - Defaults.EgressProfile: local can only tighten (not widen).
-//   - Defaults.Flavour: local overrides global (informational, warned by CLI).
 //   - Network.AllowHosts: additive (global + local).
 //   - Agents map: local extends/overrides global per key.
 //
@@ -224,14 +216,6 @@ func MergeConfigs(global, local *Config) *Config {
 			effectiveGlobal,
 			egress.ProfileName(local.Defaults.EgressProfile),
 		))
-	}
-
-	// Flavour: local overrides global when non-empty.
-	// Unlike egress profiles, flavour has no security ordering —
-	// local config can freely select any flavour. The CLI warns
-	// about this override via warnLocalConfigOverrides.
-	if local.Defaults.Flavour != "" {
-		result.Defaults.Flavour = local.Defaults.Flavour
 	}
 
 	// Review.Enabled: local value is IGNORED (global preserved).

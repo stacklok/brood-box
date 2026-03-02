@@ -197,18 +197,6 @@ func TestMergeConfigs(t *testing.T) {
 			},
 		},
 		{
-			name:   "local flavour overrides global",
-			global: &Config{Defaults: DefaultsConfig{Flavour: "auto"}},
-			local:  &Config{Defaults: DefaultsConfig{Flavour: "go"}},
-			want:   &Config{Defaults: DefaultsConfig{Flavour: "go"}},
-		},
-		{
-			name:   "empty local flavour preserves global",
-			global: &Config{Defaults: DefaultsConfig{Flavour: "python"}},
-			local:  &Config{},
-			want:   &Config{Defaults: DefaultsConfig{Flavour: "python"}},
-		},
-		{
 			name: "network allow_hosts are additive",
 			global: &Config{
 				Network: NetworkConfig{

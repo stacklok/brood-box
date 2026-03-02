@@ -174,25 +174,6 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 			global:   defaultGlobal,
 			expected: wrapWarnings("sets git SSH agent forwarding: true"),
 		},
-		// --- Flavour ---
-		{
-			name: "defaults flavour override",
-			local: &domainconfig.Config{
-				Defaults: domainconfig.DefaultsConfig{Flavour: "go"},
-			},
-			global:   defaultGlobal,
-			expected: wrapWarnings("sets default flavour: go (changes pulled image)"),
-		},
-		{
-			name: "agent flavour override",
-			local: &domainconfig.Config{
-				Agents: map[string]domainconfig.AgentOverride{
-					"myagent": {Flavour: "python"},
-				},
-			},
-			global:   defaultGlobal,
-			expected: wrapWarnings("sets myagent flavour: python (changes pulled image)"),
-		},
 		// --- Agent overrides ---
 		{
 			name: "agent image override",
@@ -365,7 +346,6 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				},
 				Defaults: domainconfig.DefaultsConfig{
 					EgressProfile: "locked",
-					Flavour:       "go",
 					CPUs:          8,
 					Memory:        4096,
 				},
@@ -383,7 +363,6 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 						Command:       []string{"run"},
 						EnvForward:    []string{"KEY"},
 						EgressProfile: "locked",
-						Flavour:       "python",
 						AllowHosts: []domainconfig.EgressHostConfig{
 							{Name: "agent-extra.com"},
 						},
@@ -400,7 +379,6 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				"sets default egress profile: locked",
 				"sets default CPUs: 8",
 				"sets default memory: 4096 MiB",
-				"sets default flavour: go (changes pulled image)",
 				"adds egress hosts: global-extra.com",
 				"sets git token forwarding: false",
 				"overrides myagent image: custom:v1",
@@ -408,7 +386,6 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				"overrides myagent env forwarding",
 				"adds myagent egress hosts: agent-extra.com",
 				"sets myagent egress profile: locked",
-				"sets myagent flavour: python (changes pulled image)",
 				"sets myagent MCP group: custom",
 			),
 		},

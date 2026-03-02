@@ -3,9 +3,7 @@
 
 # Codex guest image for Brood Box.
 # Installs the Codex static binary (musl-linked) on top of the base image.
-# Use BASE_IMAGE to select a flavoured base (e.g., base-go, base-python).
-ARG BASE_IMAGE=ghcr.io/stacklok/brood-box/base:latest
-FROM ${BASE_IMAGE}
+FROM ghcr.io/stacklok/brood-box/base:latest
 
 # Install Codex static binary from GitHub Releases
 ARG TARGETARCH
