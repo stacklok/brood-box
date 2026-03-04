@@ -110,23 +110,18 @@ tasks:
     cmds:
       - mkdir -p internal/infra/vm/runtimebin
       - >-
-        if ! gh release download {{.PROPOLIS_VERSION}}
-          --repo stacklok/propolis
+        if ! gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis
           --pattern "propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz"
           --dir internal/infra/vm/runtimebin/ --clobber; then
-          gh release download {{.PROPOLIS_VERSION}}
-            --repo stacklok/propolis
+          gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis
             --pattern "propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH_ALT}}.tar.gz"
-            --dir internal/infra/vm/runtimebin/ --clobber;
-        fi
+            --dir internal/infra/vm/runtimebin/ --clobber; fi
       - >-
         if [ -f internal/infra/vm/runtimebin/propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz ]; then
           tar -xzf internal/infra/vm/runtimebin/propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz
-            -C internal/infra/vm/runtimebin/ --strip-components=1;
-        else
+            -C internal/infra/vm/runtimebin/ --strip-components=1; else
           tar -xzf internal/infra/vm/runtimebin/propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH_ALT}}.tar.gz
-            -C internal/infra/vm/runtimebin/ --strip-components=1;
-        fi
+            -C internal/infra/vm/runtimebin/ --strip-components=1; fi
       - rm -f internal/infra/vm/runtimebin/propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz internal/infra/vm/runtimebin/propolis-runtime-{{.HOST_OS}}-{{.HOST_ARCH_ALT}}.tar.gz
 
   fetch-firmware:
@@ -136,23 +131,18 @@ tasks:
     cmds:
       - mkdir -p internal/infra/vm/runtimebin
       - >-
-        if ! gh release download {{.PROPOLIS_VERSION}}
-          --repo stacklok/propolis
+        if ! gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis
           --pattern "propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz"
           --dir internal/infra/vm/runtimebin/ --clobber; then
-          gh release download {{.PROPOLIS_VERSION}}
-            --repo stacklok/propolis
+          gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis
             --pattern "propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH_ALT}}.tar.gz"
-            --dir internal/infra/vm/runtimebin/ --clobber;
-        fi
+            --dir internal/infra/vm/runtimebin/ --clobber; fi
       - >-
         if [ -f internal/infra/vm/runtimebin/propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz ]; then
           tar -xzf internal/infra/vm/runtimebin/propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz
-            -C internal/infra/vm/runtimebin/ --strip-components=1;
-        else
+            -C internal/infra/vm/runtimebin/ --strip-components=1; else
           tar -xzf internal/infra/vm/runtimebin/propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH_ALT}}.tar.gz
-            -C internal/infra/vm/runtimebin/ --strip-components=1;
-        fi
+            -C internal/infra/vm/runtimebin/ --strip-components=1; fi
       - rm -f internal/infra/vm/runtimebin/propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH}}.tar.gz internal/infra/vm/runtimebin/propolis-firmware-{{.HOST_OS}}-{{.HOST_ARCH_ALT}}.tar.gz
 
   test:
