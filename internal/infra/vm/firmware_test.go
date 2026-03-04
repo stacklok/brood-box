@@ -419,55 +419,158 @@ func TestEnsureSecureCacheRoot_NotDir(t *testing.T) {
 	require.Error(t, err) // os.MkdirAll fails when the path is a regular file.
 }
 
-// --- downloadChecksum tests ---
+// --- fetchReleaseAssets tests ---
 
-func TestDownloadChecksum(t *testing.T) {
+func TestFetchReleaseAssets(t *testing.T) {
 	t.Parallel()
-
-	validHex := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
 
 	tests := []struct {
 		name    string
 		body    string
 		status  int
 		wantErr string
-		want    string
+		wantLen int
 	}{
 		{
-			name:   "hex only",
-			body:   validHex,
-			status: http.StatusOK,
-			want:   validHex,
-		},
-		{
-			name:   "sha256sum format",
-			body:   validHex + "  firmware.tar.gz\n",
-			status: http.StatusOK,
-			want:   validHex,
-		},
-		{
-			name:    "too short",
-			body:    "abc123",
+			name: "happy path",
+			body: `{"assets":[
+				{"name":"sha256sums.txt","url":"https://api.github.com/repos/o/r/releases/assets/1","browser_download_url":"https://github.com/o/r/releases/download/v1/sha256sums.txt"},
+				{"name":"propolis-firmware-linux-amd64.tar.gz","url":"https://api.github.com/repos/o/r/releases/assets/2","browser_download_url":"https://github.com/o/r/releases/download/v1/propolis-firmware-linux-amd64.tar.gz"}
+			]}`,
 			status:  http.StatusOK,
-			wantErr: "invalid firmware checksum length",
+			wantLen: 2,
+		},
+		{
+			name:    "404",
+			body:    `{"message":"Not Found"}`,
+			status:  http.StatusNotFound,
+			wantErr: "unexpected status",
+		},
+		{
+			name:    "empty assets",
+			body:    `{"assets":[]}`,
+			status:  http.StatusOK,
+			wantLen: 0,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			// Temporarily override the API URL by calling the internal function directly
+			// with a test server URL. We test fetchReleaseAssets indirectly via the URL.
+			got, err := fetchReleaseAssetsFromURL(t.Context(), srv.URL+"/repos/o/r/releases/tags/v1")
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				assert.Len(t, got, tt.wantLen)
+			}
+		})
+	}
+}
+
+// --- parseChecksumMap tests ---
+
+func TestParseChecksumMap(t *testing.T) {
+	t.Parallel()
+
+	validHash1 := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+	validHash2 := "b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3"
+
+	tests := []struct {
+		name    string
+		text    string
+		want    map[string]string
+		wantErr string
+	}{
+		{
+			name: "valid multi-entry",
+			text: validHash1 + "  firmware-linux-amd64.tar.gz\n" + validHash2 + "  firmware-linux-arm64.tar.gz\n",
+			want: map[string]string{
+				"firmware-linux-amd64.tar.gz": validHash1,
+				"firmware-linux-arm64.tar.gz": validHash2,
+			},
+		},
+		{
+			name: "empty",
+			text: "",
+			want: map[string]string{},
 		},
 		{
 			name:    "invalid hex",
-			body:    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz",
+			text:    "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz  file.tar.gz\n",
+			wantErr: "invalid checksum hex",
+		},
+		{
+			name:    "wrong length",
+			text:    "abc123  file.tar.gz\n",
+			wantErr: "invalid checksum length",
+		},
+		{
+			name: "trailing whitespace",
+			text: validHash1 + "  file.tar.gz  \n",
+			want: map[string]string{
+				"file.tar.gz": validHash1,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := parseChecksumMap(tt.text)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				require.NoError(t, err)
+				assert.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
+// --- downloadChecksums tests ---
+
+func TestDownloadChecksums(t *testing.T) {
+	t.Parallel()
+
+	validHash := "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+
+	tests := []struct {
+		name    string
+		body    string
+		status  int
+		wantErr string
+		wantLen int
+	}{
+		{
+			name:    "happy path",
+			body:    validHash + "  file1.tar.gz\n" + validHash + "  file2.tar.gz\n",
 			status:  http.StatusOK,
-			wantErr: "invalid firmware checksum",
+			wantLen: 2,
+		},
+		{
+			name:    "404",
+			body:    "not found",
+			status:  http.StatusNotFound,
+			wantErr: "unexpected status",
 		},
 		{
 			name:    "empty body",
 			body:    "",
 			status:  http.StatusOK,
-			wantErr: "firmware checksum is empty",
-		},
-		{
-			name:    "http error",
-			body:    "not found",
-			status:  http.StatusNotFound,
-			wantErr: "unexpected status",
+			wantLen: 0,
 		},
 	}
 
@@ -481,13 +584,13 @@ func TestDownloadChecksum(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			got, err := downloadChecksum(t.Context(), srv.URL)
+			got, err := downloadChecksums(t.Context(), srv.URL)
 			if tt.wantErr != "" {
 				require.Error(t, err)
 				assert.Contains(t, err.Error(), tt.wantErr)
 			} else {
 				require.NoError(t, err)
-				assert.Equal(t, tt.want, got)
+				assert.Len(t, got, tt.wantLen)
 			}
 		})
 	}
@@ -564,32 +667,47 @@ func TestReadFirmwareManifestRaw_LegacyNoHash(t *testing.T) {
 	assert.Empty(t, got.LibraryHash, "legacy manifest should have empty LibraryHash")
 }
 
-// --- manifestToResolution tests ---
+// --- cache-hit Dir resolution test ---
 
-func TestManifestToResolution(t *testing.T) {
+func TestCacheHit_DirResolution(t *testing.T) {
 	t.Parallel()
 
-	ts := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-	m := FirmwareManifest{
-		Version:     "v1.0.0",
-		OS:          "linux",
-		Arch:        "amd64",
+	// Set up a cache with firmware in a subdirectory (like real archives).
+	cacheRoot := t.TempDir()
+	require.NoError(t, os.Chmod(cacheRoot, 0o700))
+
+	version := "v0.1.0"
+	osName := "linux"
+	arch := "amd64"
+	cacheDir := filepath.Join(cacheRoot, version, fmt.Sprintf("%s-%s", osName, arch))
+	libDir := filepath.Join(cacheDir, "lib")
+	require.NoError(t, os.MkdirAll(libDir, 0o755))
+
+	fwContent := []byte("firmware-binary-content")
+	libPath := filepath.Join(libDir, "libkrunfw.so.5")
+	require.NoError(t, os.WriteFile(libPath, fwContent, 0o644))
+
+	expectedHash := sha256.Sum256(fwContent)
+	expectedHashStr := hex.EncodeToString(expectedHash[:])
+
+	manifest := FirmwareManifest{
+		Version:     version,
+		OS:          osName,
+		Arch:        arch,
 		Source:      firmwareSourceDownload,
 		URL:         "https://example.com/fw.tar.gz",
-		LibraryHash: "deadbeef",
-		Timestamp:   ts,
+		LibraryHash: expectedHashStr,
+		Timestamp:   time.Now().UTC(),
 	}
+	manifestPath := filepath.Join(cacheDir, "firmware.json")
+	require.NoError(t, writeFirmwareManifest(manifestPath, manifest))
 
-	manifestPath := "/cache/v1.0.0/linux-amd64/firmware.json"
-	res := manifestToResolution(manifestPath, m)
+	res, err := downloadFirmware(t.Context(), cacheRoot, version, osName, arch)
+	require.NoError(t, err)
 
-	assert.Equal(t, "/cache/v1.0.0/linux-amd64", res.Dir)
-	assert.Equal(t, "v1.0.0", res.Version)
-	assert.Equal(t, "linux", res.OS)
-	assert.Equal(t, "amd64", res.Arch)
+	// Dir should point to the subdirectory containing the lib, not the cache root.
+	assert.Equal(t, libDir, res.Dir)
 	assert.Equal(t, firmwareSourceDownload, res.Source)
-	assert.Equal(t, "https://example.com/fw.tar.gz", res.URL)
-	assert.Equal(t, ts, res.Timestamp)
 }
 
 // --- WriteFirmwareReference tests ---

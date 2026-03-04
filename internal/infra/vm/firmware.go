@@ -144,7 +144,16 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 	if manifest, ok := readFirmwareManifestRaw(manifestPath); ok && manifest.LibraryHash != "" {
 		if fwPath, err := findFirmwareFile(cacheDir, osName); err == nil {
 			if fileHash, hashErr := hashFile(fwPath); hashErr == nil && fileHash == manifest.LibraryHash {
-				return manifestToResolution(manifestPath, manifest), nil
+				slog.DebugContext(ctx, "firmware cache hit", "dir", filepath.Dir(fwPath), "version", version)
+				return FirmwareResolution{
+					Dir:       filepath.Dir(fwPath),
+					Version:   manifest.Version,
+					OS:        manifest.OS,
+					Arch:      manifest.Arch,
+					Source:    manifest.Source,
+					URL:       manifest.URL,
+					Timestamp: manifest.Timestamp,
+				}, nil
 			}
 		}
 		// Hash mismatch, missing file, or legacy manifest — invalidate and re-download.
@@ -154,11 +163,35 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 		return FirmwareResolution{}, fmt.Errorf("clear firmware cache: %w", err)
 	}
 
+	// Fetch release asset metadata and checksums via GitHub API.
+	assets, err := fetchReleaseAssets(ctx, version)
+	if err != nil {
+		return FirmwareResolution{}, fmt.Errorf("fetch release assets: %w", err)
+	}
+	checksumURL, ok := assets["sha256sums.txt"]
+	if !ok {
+		return FirmwareResolution{}, errors.New("sha256sums.txt not found in release")
+	}
+	checksums, err := downloadChecksums(ctx, checksumURL)
+	if err != nil {
+		return FirmwareResolution{}, fmt.Errorf("download firmware checksums: %w", err)
+	}
+
 	archCandidates := firmwareArchCandidates(arch)
 	var lastErr error
 	for _, candidate := range archCandidates {
+		archiveName := fmt.Sprintf("propolis-firmware-%s-%s.tar.gz", osName, candidate)
+		checksum, ok := checksums[archiveName]
+		if !ok {
+			lastErr = fmt.Errorf("no checksum for %s", archiveName)
+			continue
+		}
+		archiveURL, ok := assets[archiveName]
+		if !ok {
+			lastErr = fmt.Errorf("no release asset for %s", archiveName)
+			continue
+		}
 		url := firmwareURL(version, osName, candidate)
-		checksumURL := url + ".sha256"
 
 		tmpArchive, err := os.CreateTemp(cacheRoot, "firmware-*.tar.gz")
 		if err != nil {
@@ -170,13 +203,7 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 			_ = os.Remove(tmpArchivePath)
 		}
 
-		checksum, err := downloadChecksum(ctx, checksumURL)
-		if err != nil {
-			cleanupArchive()
-			lastErr = err
-			continue
-		}
-		archiveHash, err := downloadToFile(ctx, url, tmpArchive, maxFirmwareArchiveSize)
+		archiveHash, err := downloadToFile(ctx, archiveURL, tmpArchive, maxFirmwareArchiveSize)
 		if err != nil {
 			cleanupArchive()
 			lastErr = err
@@ -206,18 +233,10 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 			lastErr = fmt.Errorf("extract firmware archive: %w", err)
 			continue
 		}
-		fwPath, err := findFirmwareFile(tmpDir, osName)
-		if err != nil {
+		if _, err := findFirmwareFile(tmpDir, osName); err != nil {
 			cleanupDir()
 			cleanupArchive()
 			lastErr = errors.New("firmware archive missing libkrunfw")
-			continue
-		}
-		fwHash, err := hashFile(fwPath)
-		if err != nil {
-			cleanupDir()
-			cleanupArchive()
-			lastErr = fmt.Errorf("hash firmware library: %w", err)
 			continue
 		}
 
@@ -231,6 +250,17 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 			cleanupArchive()
 			lastErr = fmt.Errorf("finalize firmware cache: %w", err)
 			continue
+		}
+		_ = os.Remove(tmpArchivePath)
+
+		// Find firmware in the final location to get the correct Dir.
+		finalFwPath, err := findFirmwareFile(cacheDir, osName)
+		if err != nil {
+			return FirmwareResolution{}, fmt.Errorf("find firmware in cache: %w", err)
+		}
+		fwHash, err := hashFile(finalFwPath)
+		if err != nil {
+			return FirmwareResolution{}, fmt.Errorf("hash firmware library: %w", err)
 		}
 
 		manifest := FirmwareManifest{
@@ -246,8 +276,9 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 			return FirmwareResolution{}, err
 		}
 
+		slog.DebugContext(ctx, "firmware downloaded", "dir", filepath.Dir(finalFwPath), "version", version, "arch", candidate)
 		return FirmwareResolution{
-			Dir:       cacheDir,
+			Dir:       filepath.Dir(finalFwPath),
 			Version:   version,
 			OS:        osName,
 			Arch:      arch,
@@ -300,11 +331,71 @@ func firmwareURL(version, osName, arch string) string {
 	return fmt.Sprintf("https://github.com/stacklok/propolis/releases/download/%s/propolis-firmware-%s-%s.tar.gz", version, osName, arch)
 }
 
+// setGitHubAuth adds a Bearer token to the request if GITHUB_TOKEN or GH_TOKEN
+// is set. Required for downloading release assets from private repositories.
+func setGitHubAuth(req *http.Request) {
+	token := os.Getenv("GITHUB_TOKEN")
+	if token == "" {
+		token = os.Getenv("GH_TOKEN")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+}
+
+type releaseAsset struct {
+	Name               string `json:"name"`
+	URL                string `json:"url"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+}
+
+type releaseResponse struct {
+	Assets []releaseAsset `json:"assets"`
+}
+
+// fetchReleaseAssets queries the GitHub API to get release asset metadata.
+// Returns a map of asset name → API download URL.
+func fetchReleaseAssets(ctx context.Context, version string) (map[string]string, error) {
+	apiURL := fmt.Sprintf("https://api.github.com/repos/stacklok/propolis/releases/tags/%s", version)
+	return fetchReleaseAssetsFromURL(ctx, apiURL)
+}
+
+func fetchReleaseAssetsFromURL(ctx context.Context, apiURL string) (map[string]string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create release request: %w", err)
+	}
+	setGitHubAuth(req)
+	req.Header.Set("Accept", "application/vnd.github+json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch release: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("fetch release: unexpected status %s", resp.Status)
+	}
+	var release releaseResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&release); err != nil {
+		return nil, fmt.Errorf("decode release: %w", err)
+	}
+	assets := make(map[string]string, len(release.Assets))
+	for _, a := range release.Assets {
+		assets[a.Name] = a.URL
+	}
+	return assets, nil
+}
+
 func downloadToFile(ctx context.Context, url string, dst *os.File, maxBytes int64) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", fmt.Errorf("create firmware request: %w", err)
 	}
+	setGitHubAuth(req)
+	req.Header.Set("Accept", "application/octet-stream")
 	client := &http.Client{Timeout: 2 * time.Minute}
 	resp, err := client.Do(req)
 	if err != nil {
@@ -479,18 +570,6 @@ func readFirmwareManifestRaw(path string) (FirmwareManifest, bool) {
 	return manifest, true
 }
 
-func manifestToResolution(manifestPath string, m FirmwareManifest) FirmwareResolution {
-	return FirmwareResolution{
-		Dir:       filepath.Dir(manifestPath),
-		Version:   m.Version,
-		OS:        m.OS,
-		Arch:      m.Arch,
-		Source:    m.Source,
-		URL:       m.URL,
-		Timestamp: m.Timestamp,
-	}
-}
-
 func writeFirmwareManifest(path string, manifest FirmwareManifest) error {
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -531,38 +610,53 @@ func firmwareArchCandidates(arch string) []string {
 	}
 }
 
-func downloadChecksum(ctx context.Context, url string) (string, error) {
+func parseChecksumMap(text string) (map[string]string, error) {
+	result := make(map[string]string)
+	for _, line := range strings.Split(text, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("invalid checksum line: %q", line)
+		}
+		hash := fields[0]
+		filename := fields[1]
+		if len(hash) != 64 {
+			return nil, fmt.Errorf("invalid checksum length %d for %s", len(hash), filename)
+		}
+		if _, err := hex.DecodeString(hash); err != nil {
+			return nil, fmt.Errorf("invalid checksum hex for %s: %w", filename, err)
+		}
+		result[filename] = hash
+	}
+	return result, nil
+}
+
+func downloadChecksums(ctx context.Context, url string) (map[string]string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("create firmware checksum request: %w", err)
+		return nil, fmt.Errorf("create checksums request: %w", err)
 	}
+	setGitHubAuth(req)
+	req.Header.Set("Accept", "application/octet-stream")
 	client := &http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("download firmware checksum: %w", err)
+		return nil, fmt.Errorf("download checksums: %w", err)
 	}
 	defer func() {
 		_ = resp.Body.Close()
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("download firmware checksum: unexpected status %s", resp.Status)
+		return nil, fmt.Errorf("download checksums: unexpected status %s", resp.Status)
 	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, 4096))
 	if err != nil {
-		return "", fmt.Errorf("read firmware checksum: %w", err)
+		return nil, fmt.Errorf("read checksums: %w", err)
 	}
-	fields := strings.Fields(string(data))
-	if len(fields) == 0 {
-		return "", errors.New("firmware checksum is empty")
-	}
-	checksum := fields[0]
-	if len(checksum) != 64 {
-		return "", fmt.Errorf("invalid firmware checksum length: %d", len(checksum))
-	}
-	if _, err := hex.DecodeString(checksum); err != nil {
-		return "", fmt.Errorf("invalid firmware checksum: %w", err)
-	}
-	return checksum, nil
+	return parseChecksumMap(string(data))
 }
 
 func safeFileMode(mode int64) os.FileMode {

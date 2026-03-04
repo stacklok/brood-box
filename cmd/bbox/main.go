@@ -408,6 +408,12 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	if fwErr != nil {
 		return fmt.Errorf("resolving firmware: %w", fwErr)
 	}
+	logger.Debug("resolved firmware",
+		"source", firmwareRes.Source,
+		"dir", firmwareRes.Dir,
+		"version", firmwareRes.Version,
+		"url", firmwareRes.URL,
+	)
 	dataDir, dataErr := infravm.VMDataDir(vmName)
 	if dataErr != nil {
 		return fmt.Errorf("resolving VM data directory: %w", dataErr)

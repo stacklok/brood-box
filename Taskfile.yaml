@@ -15,7 +15,14 @@ vars:
   HOST_ARCH:
     sh: uname -m
   HOST_ARCH_ALT:
-    sh: uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/;s/arm64/aarch64/'
+    sh: |
+      case $(uname -m) in
+        x86_64)  echo amd64 ;;
+        aarch64) echo arm64 ;;
+        arm64)   echo aarch64 ;;
+        amd64)   echo x86_64 ;;
+        *)       uname -m ;;
+      esac
   HOST_OS:
     sh: uname -s | tr '[:upper:]' '[:lower:]'
   HOST_OS_ALT:
@@ -112,7 +119,7 @@ tasks:
     cmds:
       - |
         mkdir -p internal/infra/vm/runtimebin
-        gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis --dir internal/infra/vm/runtimebin/ --clobber
+        gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis --dir internal/infra/vm/runtimebin/ --clobber --pattern 'propolis-runtime-*.tar.gz'
         archive=""
         for os in "{{.HOST_OS}}" "{{.HOST_OS_ALT}}"; do
           for arch in "{{.HOST_ARCH}}" "{{.HOST_ARCH_ALT}}"; do
@@ -134,11 +141,11 @@ tasks:
   fetch-firmware:
     desc: Download pre-built propolis firmware from GitHub Release
     status:
-      - test -f internal/infra/vm/runtimebin/libkrunfw.*
+      - ls internal/infra/vm/runtimebin/libkrunfw.* 1>/dev/null 2>&1
     cmds:
       - |
         mkdir -p internal/infra/vm/runtimebin
-        gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis --dir internal/infra/vm/runtimebin/ --clobber
+        gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis --dir internal/infra/vm/runtimebin/ --clobber --pattern 'propolis-firmware-*.tar.gz'
         archive=""
         for os in "{{.HOST_OS}}" "{{.HOST_OS_ALT}}"; do
           for arch in "{{.HOST_ARCH}}" "{{.HOST_ARCH_ALT}}"; do
@@ -213,6 +220,7 @@ tasks:
       - rm -f internal/infra/vm/runtimebin/libkrun.so.1 internal/infra/vm/runtimebin/libkrun.dylib
       - rm -f internal/infra/vm/runtimebin/libkrunfw.so.5 internal/infra/vm/runtimebin/libkrunfw.dylib
       - rm -f internal/infra/vm/runtimebin/VERSION internal/infra/vm/runtimebin/LICENSE-GPL
+      - rm -f internal/infra/vm/runtimebin/sha256sums.txt
 
   # --- OCI guest images ---
 
