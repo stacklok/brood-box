@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/propolis/extract"
 	"github.com/stacklok/propolis/hooks"
 	"github.com/stacklok/propolis/hypervisor/libkrun"
+	"github.com/stacklok/propolis/image"
 	"github.com/stacklok/propolis/net/hosted"
 	"github.com/stacklok/propolis/net/topology"
 	propolisssh "github.com/stacklok/propolis/ssh"
@@ -37,6 +38,7 @@ type PropolisRunner struct {
 	runtimeSource  extract.Source
 	firmwareSource extract.Source
 	cacheDir       string
+	imageCacheDir  string
 	logger         *slog.Logger
 }
 
@@ -69,6 +71,13 @@ func WithFirmwareSource(src extract.Source) RunnerOption {
 // WithCacheDir sets the cache directory for bundle-based extract.Sources.
 func WithCacheDir(dir string) RunnerOption {
 	return func(r *PropolisRunner) { r.cacheDir = dir }
+}
+
+// WithImageCacheDir sets a shared OCI image cache directory. When set, the
+// image cache is externalized from the per-VM data directory, surviving
+// across VM restarts and enabling sub-second warm starts via COW cloning.
+func WithImageCacheDir(dir string) RunnerOption {
+	return func(r *PropolisRunner) { r.imageCacheDir = dir }
 }
 
 // NewPropolisRunner creates a VMRunner backed by propolis.
@@ -232,6 +241,12 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 	}
 	if len(backendOpts) > 0 {
 		opts = append(opts, propolis.WithBackend(libkrun.NewBackend(backendOpts...)))
+	}
+
+	// Use external image cache when configured. WithImageCache sets
+	// an internal flag so option ordering with WithDataDir is irrelevant.
+	if r.imageCacheDir != "" {
+		opts = append(opts, propolis.WithImageCache(image.NewCache(r.imageCacheDir)))
 	}
 
 	// Add workspace mount if specified.

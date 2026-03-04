@@ -58,9 +58,13 @@ func NewVMCPProvider(group string, port uint16, configPath string, logger *slog.
 // Services discovers backends from the configured ToolHive group and returns
 // an HTTP handler that aggregates their MCP capabilities.
 func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, error) {
-	// Redirect the toolhive zap global logger to the bbox log file
-	// so vmcp diagnostics don't pollute stdout/stderr during the terminal session.
+	// Redirect the toolhive zap/slog loggers to the bbox log file so vmcp
+	// diagnostics don't pollute stdout/stderr during the terminal session.
+	// Save and restore the slog default because initToolhiveLogger clobbers
+	// it, and propolis (called later) relies on the broodbox default.
+	prevDefault := slog.Default()
 	initToolhiveLogger(p.logWriter)
+	defer slog.SetDefault(prevDefault)
 
 	// Force CLI-mode discovery. bbox always runs on the host, never
 	// in K8s, but a K8s kubeconfig on the machine would cause auto-detection
@@ -210,6 +214,11 @@ func (r *statusRecorder) WriteHeader(code int) {
 // slog singleton to the given writer (typically the bbox log file) so that
 // vmcp diagnostics don't pollute stdout/stderr during the terminal session.
 // If w is nil, no-op loggers are installed for both.
+//
+// NOTE: this clobbers the broodbox slog default, which means propolis debug
+// logs (image pull, cache hit, COW clone) are lost. The proper fix is for
+// toolhive to accept an injected *slog.Logger instead of mutating the global.
+// Until that's done, we restore the broodbox logger after Services() returns.
 func initToolhiveLogger(w io.Writer) {
 	if w == nil {
 		zap.ReplaceGlobals(zap.NewNop())

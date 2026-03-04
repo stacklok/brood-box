@@ -17,11 +17,13 @@ import (
 	"slices"
 	"strings"
 	"syscall"
+	"time"
 	"unicode"
 
 	"github.com/adrg/xdg"
 	"github.com/spf13/cobra"
 	"github.com/stacklok/propolis/extract"
+	"github.com/stacklok/propolis/image"
 
 	infraagent "github.com/stacklok/brood-box/internal/infra/agent"
 	infraconfig "github.com/stacklok/brood-box/internal/infra/config"
@@ -79,6 +81,7 @@ func rootCmd() *cobra.Command {
 		noGitToken    bool
 		noGitSSHAgent bool
 		noFirmwareDL  bool
+		noImageCache  bool
 		timings       bool
 	)
 
@@ -132,6 +135,7 @@ Example:
 				noGitToken:    noGitToken,
 				noGitSSHAgent: noGitSSHAgent,
 				noFirmwareDL:  noFirmwareDL,
+				noImageCache:  noImageCache,
 				timings:       timings,
 				commandArgs:   commandArgs,
 			})
@@ -159,6 +163,7 @@ Example:
 	cmd.Flags().BoolVar(&noGitToken, "no-git-token", false, "Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM")
 	cmd.Flags().BoolVar(&noGitSSHAgent, "no-git-ssh-agent", false, "Disable SSH agent forwarding into the VM")
 	cmd.Flags().BoolVar(&noFirmwareDL, "no-firmware-download", false, "Disable firmware download (use system libkrunfw only)")
+	cmd.Flags().BoolVar(&noImageCache, "no-image-cache", false, "Disable OCI image caching (fresh pull every run)")
 	cmd.Flags().BoolVar(&timings, "timings", false, "Print per-phase timing summary after run")
 
 	// Add list subcommand.
@@ -202,6 +207,7 @@ type runFlags struct {
 	noGitToken    bool
 	noGitSSHAgent bool
 	noFirmwareDL  bool
+	noImageCache  bool
 	timings       bool
 	commandArgs   []string
 }
@@ -439,6 +445,23 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			infravm.WithCacheDir(cacheDir),
 		)
 		logger.Info("using embedded propolis runtime", "version", infraruntime.Version)
+	}
+
+	// Wire external OCI image cache (unless --no-image-cache is set).
+	if !flags.noImageCache {
+		imgCacheDir, imgCacheErr := imageCacheDir()
+		if imgCacheErr != nil {
+			return fmt.Errorf("resolving image cache directory: %w", imgCacheErr)
+		}
+		vmRunnerOpts = append(vmRunnerOpts, infravm.WithImageCacheDir(imgCacheDir))
+
+		// Best-effort stale cache eviction (entries older than 7 days).
+		cache := image.NewCache(imgCacheDir)
+		if removed, evictErr := cache.Evict(7 * 24 * time.Hour); evictErr != nil {
+			logger.Warn("failed to evict stale image cache entries", "error", evictErr)
+		} else if removed > 0 {
+			logger.Info("evicted stale image cache entries", "count", removed)
+		}
 	}
 
 	// Wire dependencies.
@@ -860,4 +883,14 @@ func firmwareCacheDir() (string, error) {
 		return "", errors.New("xdg cache home is empty")
 	}
 	return filepath.Join(cacheBase, "broodbox", "firmware"), nil
+}
+
+// imageCacheDir returns the directory used for caching extracted OCI rootfs
+// images. Follows XDG_CACHE_HOME, defaulting to ~/.cache/broodbox/images/.
+func imageCacheDir() (string, error) {
+	cacheBase := xdg.CacheHome
+	if cacheBase == "" {
+		return "", errors.New("xdg cache home is empty")
+	}
+	return filepath.Join(cacheBase, "broodbox", "images"), nil
 }
