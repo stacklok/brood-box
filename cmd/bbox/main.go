@@ -198,8 +198,43 @@ func authCmd() *cobra.Command {
 		Use:   "auth",
 		Short: "Manage agent authentication",
 	}
+	cmd.AddCommand(authListCmd())
 	cmd.AddCommand(authClearCmd())
 	return cmd
+}
+
+func authListCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List agents with saved credentials",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			baseDir := filepath.Join(xdg.ConfigHome, "broodbox", "agent-state")
+			entries, err := os.ReadDir(baseDir)
+			if err != nil {
+				if os.IsNotExist(err) {
+					fmt.Println("No saved credentials")
+					return nil
+				}
+				return fmt.Errorf("reading agent state directory: %w", err)
+			}
+			var found bool
+			for _, e := range entries {
+				if !e.IsDir() {
+					continue
+				}
+				if err := agent.ValidateName(e.Name()); err != nil {
+					continue
+				}
+				fmt.Println(e.Name())
+				found = true
+			}
+			if !found {
+				fmt.Println("No saved credentials")
+			}
+			return nil
+		},
+	}
 }
 
 func authClearCmd() *cobra.Command {
