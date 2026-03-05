@@ -253,12 +253,12 @@ func TestCleanupStaleSnapshots(t *testing.T) {
 	staleDir := filepath.Join(parentDir, ".sandbox-snapshot-abc123")
 	require.NoError(t, os.MkdirAll(staleDir, 0o755))
 	// PID 2147483647 is almost certainly not running.
-	require.NoError(t, os.WriteFile(staleDir+snapshotSentinelSuffix, []byte("2147483647"), 0o600))
+	require.NoError(t, os.WriteFile(snapshotSentinelPath(staleDir), []byte("2147483647"), 0o600))
 
 	// Create a snapshot dir with sentinel containing OUR PID (should not be removed).
 	liveDir := filepath.Join(parentDir, ".sandbox-snapshot-live")
 	require.NoError(t, os.MkdirAll(liveDir, 0o755))
-	require.NoError(t, os.WriteFile(liveDir+snapshotSentinelSuffix, []byte(fmt.Sprintf("%d", os.Getpid())), 0o600))
+	require.NoError(t, os.WriteFile(snapshotSentinelPath(liveDir), []byte(fmt.Sprintf("%d", os.Getpid())), 0o600))
 
 	// Create a snapshot-prefixed dir WITHOUT sentinel (should not be removed).
 	noSentinelDir := filepath.Join(parentDir, ".sandbox-snapshot-no-sentinel")

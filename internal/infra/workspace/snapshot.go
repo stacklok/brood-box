@@ -28,6 +28,12 @@ const snapshotDirPrefix = ".sandbox-snapshot-"
 // to identify them as sandbox snapshots (vs unrelated directories).
 const snapshotSentinelSuffix = ".sentinel"
 
+// snapshotSentinelPath returns the path to the sentinel file for a given
+// snapshot directory. The sentinel is a sibling of the directory, not inside it.
+func snapshotSentinelPath(dir string) string {
+	return dir + snapshotSentinelSuffix
+}
+
 // FSWorkspaceCloner creates file-system-based workspace snapshots.
 type FSWorkspaceCloner struct {
 	cloner FileCloner
@@ -123,7 +129,7 @@ func (c *FSWorkspaceCloner) CreateSnapshot(ctx context.Context, workspacePath st
 	// Write sentinel file with our PID to identify this as an active snapshot.
 	// The PID allows stale cleanup to distinguish dead-process snapshots from
 	// a concurrently running instance's active snapshot.
-	sentinelPath := tmpDir + snapshotSentinelSuffix
+	sentinelPath := snapshotSentinelPath(tmpDir)
 	sentinelContent := fmt.Sprintf("%d", os.Getpid())
 	if err := os.WriteFile(sentinelPath, []byte(sentinelContent), 0o600); err != nil {
 		return nil, fmt.Errorf("writing snapshot sentinel: %w", err)
@@ -135,9 +141,8 @@ func (c *FSWorkspaceCloner) CreateSnapshot(ctx context.Context, workspacePath st
 		OriginalPath: absWorkspace,
 		SnapshotPath: snapshotDir,
 		Cleanup: func() error {
-			if err := os.Remove(sentinelPath); err != nil && !os.IsNotExist(err) {
-				return err
-			}
+			// Sentinel removal is best-effort; don't let it block directory cleanup.
+			_ = os.Remove(sentinelPath)
 			return os.RemoveAll(snapshotDir)
 		},
 	}, nil
@@ -200,7 +205,7 @@ func CleanupStaleSnapshots(workspacePath string, logger *slog.Logger) {
 
 		// Only remove directories that have our sentinel file to avoid
 		// deleting unrelated directories.
-		sentinelPath := stalePath + snapshotSentinelSuffix
+		sentinelPath := snapshotSentinelPath(stalePath)
 		data, err := os.ReadFile(sentinelPath)
 		if err != nil {
 			logger.Debug("skipping directory without sentinel", "path", stalePath)
