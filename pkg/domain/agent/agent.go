@@ -81,6 +81,11 @@ type Agent struct {
 
 	// MCPConfigFormat identifies how MCP server configuration is injected.
 	MCPConfigFormat MCPConfigFormat
+
+	// CredentialPaths lists relative paths (from the sandbox user's home)
+	// whose contents are persisted between sessions for authentication.
+	// Only built-in agents should set this field.
+	CredentialPaths []string
 }
 
 // Registry provides access to known agents by name.

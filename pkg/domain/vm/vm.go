@@ -57,6 +57,15 @@ type VMConfig struct {
 
 	// SSHAgentForward enables SSH agent forwarding to the VM.
 	SSHAgentForward bool
+
+	// AgentName is the canonical agent name (e.g. "claude-code") used as the
+	// credential store key. Distinct from Name, which is a unique VM instance
+	// identifier.
+	AgentName string
+
+	// CredentialPaths lists relative paths (from the sandbox user's home)
+	// whose contents are injected into the rootfs before boot.
+	CredentialPaths []string
 }
 
 // HostService describes an HTTP service exposed from host to guest.
@@ -96,4 +105,8 @@ type VM interface {
 	// Returns nil when host key pinning is not available, in which case
 	// the client should fall back to accepting any host key.
 	SSHHostKey() ssh.PublicKey
+
+	// RootFSPath returns the path to the extracted rootfs directory.
+	// Used for credential extraction after the session ends.
+	RootFSPath() string
 }

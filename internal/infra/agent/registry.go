@@ -67,6 +67,7 @@ func builtinAgents() map[string]domainagent.Agent {
 			DefaultMemory:        2048,
 			DefaultEgressProfile: egress.ProfilePermissive,
 			MCPConfigFormat:      domainagent.MCPConfigFormatClaudeCode,
+			CredentialPaths:      []string{".claude/"},
 			EgressHosts: map[egress.ProfileName][]egress.Host{
 				egress.ProfileLocked:   claudeLockedHosts,
 				egress.ProfileStandard: append(claudeLockedHosts, devInfraHosts...),
@@ -81,6 +82,7 @@ func builtinAgents() map[string]domainagent.Agent {
 			DefaultMemory:        2048,
 			DefaultEgressProfile: egress.ProfilePermissive,
 			MCPConfigFormat:      domainagent.MCPConfigFormatCodex,
+			CredentialPaths:      []string{".codex/"},
 			EgressHosts: map[egress.ProfileName][]egress.Host{
 				egress.ProfileLocked:   codexLockedHosts,
 				egress.ProfileStandard: append(codexLockedHosts, devInfraHosts...),
@@ -95,6 +97,7 @@ func builtinAgents() map[string]domainagent.Agent {
 			DefaultMemory:        2048,
 			DefaultEgressProfile: egress.ProfilePermissive,
 			MCPConfigFormat:      domainagent.MCPConfigFormatOpenCode,
+			CredentialPaths:      []string{".config/opencode/"},
 			EgressHosts: map[egress.ProfileName][]egress.Host{
 				egress.ProfileLocked:   opencodeLockedHosts,
 				egress.ProfileStandard: append(opencodeLockedHosts, devInfraHosts...),

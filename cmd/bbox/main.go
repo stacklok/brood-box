@@ -27,6 +27,7 @@ import (
 
 	infraagent "github.com/stacklok/brood-box/internal/infra/agent"
 	infraconfig "github.com/stacklok/brood-box/internal/infra/config"
+	infracredential "github.com/stacklok/brood-box/internal/infra/credential"
 	"github.com/stacklok/brood-box/internal/infra/diff"
 	"github.com/stacklok/brood-box/internal/infra/exclude"
 	infragit "github.com/stacklok/brood-box/internal/infra/git"
@@ -42,6 +43,7 @@ import (
 	"github.com/stacklok/brood-box/internal/version"
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
+	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/progress"
 	"github.com/stacklok/brood-box/pkg/domain/snapshot"
@@ -62,27 +64,28 @@ func main() {
 
 func rootCmd() *cobra.Command {
 	var (
-		cpus          uint32
-		memory        uint32
-		wsPath        string
-		sshPort       uint16
-		cfgPath       string
-		image         string
-		debug         bool
-		review        bool
-		excludes      []string
-		logFile       string
-		egressProfile string
-		allowHosts    []string
-		noMCP         bool
-		mcpGroup      string
-		mcpPort       uint16
-		mcpConfig     string
-		noGitToken    bool
-		noGitSSHAgent bool
-		noFirmwareDL  bool
-		noImageCache  bool
-		timings       bool
+		cpus              uint32
+		memory            uint32
+		wsPath            string
+		sshPort           uint16
+		cfgPath           string
+		image             string
+		debug             bool
+		review            bool
+		excludes          []string
+		logFile           string
+		egressProfile     string
+		allowHosts        []string
+		noMCP             bool
+		mcpGroup          string
+		mcpPort           uint16
+		mcpConfig         string
+		noGitToken        bool
+		noGitSSHAgent     bool
+		noSaveCredentials bool
+		noFirmwareDL      bool
+		noImageCache      bool
+		timings           bool
 	)
 
 	cmd := &cobra.Command{
@@ -116,28 +119,29 @@ Example:
 				commandArgs = args[1:]
 			}
 			return run(cmd.Context(), args[0], runFlags{
-				cpus:          cpus,
-				memory:        memory,
-				workspace:     wsPath,
-				sshPort:       sshPort,
-				cfgPath:       cfgPath,
-				image:         image,
-				debug:         debug,
-				review:        review,
-				excludes:      excludes,
-				logFile:       logFile,
-				egressProfile: egressProfile,
-				allowHosts:    allowHosts,
-				noMCP:         noMCP,
-				mcpGroup:      mcpGroup,
-				mcpPort:       mcpPort,
-				mcpConfig:     mcpConfig,
-				noGitToken:    noGitToken,
-				noGitSSHAgent: noGitSSHAgent,
-				noFirmwareDL:  noFirmwareDL,
-				noImageCache:  noImageCache,
-				timings:       timings,
-				commandArgs:   commandArgs,
+				cpus:              cpus,
+				memory:            memory,
+				workspace:         wsPath,
+				sshPort:           sshPort,
+				cfgPath:           cfgPath,
+				image:             image,
+				debug:             debug,
+				review:            review,
+				excludes:          excludes,
+				logFile:           logFile,
+				egressProfile:     egressProfile,
+				allowHosts:        allowHosts,
+				noMCP:             noMCP,
+				mcpGroup:          mcpGroup,
+				mcpPort:           mcpPort,
+				mcpConfig:         mcpConfig,
+				noGitToken:        noGitToken,
+				noGitSSHAgent:     noGitSSHAgent,
+				noSaveCredentials: noSaveCredentials,
+				noFirmwareDL:      noFirmwareDL,
+				noImageCache:      noImageCache,
+				timings:           timings,
+				commandArgs:       commandArgs,
 			})
 		},
 		SilenceUsage:  true,
@@ -162,12 +166,14 @@ Example:
 	cmd.Flags().StringVar(&mcpConfig, "mcp-config", "", "Path to custom vmcp config YAML")
 	cmd.Flags().BoolVar(&noGitToken, "no-git-token", false, "Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM")
 	cmd.Flags().BoolVar(&noGitSSHAgent, "no-git-ssh-agent", false, "Disable SSH agent forwarding into the VM")
+	cmd.Flags().BoolVar(&noSaveCredentials, "no-save-credentials", false, "Disable saving agent credentials between sessions (enabled by default)")
 	cmd.Flags().BoolVar(&noFirmwareDL, "no-firmware-download", false, "Disable firmware download (use system libkrunfw only)")
 	cmd.Flags().BoolVar(&noImageCache, "no-image-cache", false, "Disable OCI image caching (fresh pull every run)")
 	cmd.Flags().BoolVar(&timings, "timings", false, "Print per-phase timing summary after run")
 
-	// Add list subcommand.
+	// Add subcommands.
 	cmd.AddCommand(listCmd())
+	cmd.AddCommand(authCmd())
 
 	return cmd
 }
@@ -187,29 +193,59 @@ func listCmd() *cobra.Command {
 	}
 }
 
+func authCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "auth",
+		Short: "Manage agent authentication",
+	}
+	cmd.AddCommand(authClearCmd())
+	return cmd
+}
+
+func authClearCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "clear <agent>",
+		Short: "Remove saved credentials for an agent",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(_ *cobra.Command, args []string) error {
+			agentName := args[0]
+			if err := agent.ValidateName(agentName); err != nil {
+				return fmt.Errorf("invalid agent name: %w", err)
+			}
+			stateDir := filepath.Join(xdg.ConfigHome, "broodbox", "agent-state", agentName)
+			if err := os.RemoveAll(stateDir); err != nil {
+				return fmt.Errorf("removing credentials: %w", err)
+			}
+			fmt.Printf("Credentials cleared for %s\n", agentName)
+			return nil
+		},
+	}
+}
+
 type runFlags struct {
-	cpus          uint32
-	memory        uint32
-	workspace     string
-	sshPort       uint16
-	cfgPath       string
-	image         string
-	debug         bool
-	review        bool
-	excludes      []string
-	logFile       string
-	egressProfile string
-	allowHosts    []string
-	noMCP         bool
-	mcpGroup      string
-	mcpPort       uint16
-	mcpConfig     string
-	noGitToken    bool
-	noGitSSHAgent bool
-	noFirmwareDL  bool
-	noImageCache  bool
-	timings       bool
-	commandArgs   []string
+	cpus              uint32
+	memory            uint32
+	workspace         string
+	sshPort           uint16
+	cfgPath           string
+	image             string
+	debug             bool
+	review            bool
+	excludes          []string
+	logFile           string
+	egressProfile     string
+	allowHosts        []string
+	noMCP             bool
+	mcpGroup          string
+	mcpPort           uint16
+	mcpConfig         string
+	noGitToken        bool
+	noGitSSHAgent     bool
+	noSaveCredentials bool
+	noFirmwareDL      bool
+	noImageCache      bool
+	timings           bool
+	commandArgs       []string
 }
 
 func run(parentCtx context.Context, agentName string, flags runFlags) error {
@@ -464,16 +500,30 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		}
 	}
 
+	// Resolve credential persistence setting.
+	saveCredentials := cfg.Auth.SaveCredentialsEnabled() && !flags.noSaveCredentials
+
+	var credentialStore credential.Store
+	if saveCredentials {
+		credStateDir := filepath.Join(xdg.ConfigHome, "broodbox", "agent-state")
+		credentialStore = infracredential.NewFSStore(credStateDir, logger)
+	}
+
+	if credentialStore != nil {
+		vmRunnerOpts = append(vmRunnerOpts, infravm.WithCredentialStore(credentialStore))
+	}
+
 	// Wire dependencies.
 	var reviewer *review.InteractiveReviewer
 	deps := sandbox.SandboxDeps{
-		Registry:      registry,
-		VMRunner:      infravm.NewPropolisRunner(logger, vmRunnerOpts...),
-		SessionRunner: infrassh.NewInteractiveSession(logger),
-		Config:        sandboxCfg,
-		EnvProvider:   agent.NewOSEnvProvider(os.Environ),
-		Logger:        logger,
-		Observer:      observer,
+		Registry:        registry,
+		VMRunner:        infravm.NewPropolisRunner(logger, vmRunnerOpts...),
+		SessionRunner:   infrassh.NewInteractiveSession(logger),
+		Config:          sandboxCfg,
+		EnvProvider:     agent.NewOSEnvProvider(os.Environ),
+		Logger:          logger,
+		Observer:        observer,
+		CredentialStore: credentialStore,
 	}
 
 	// Wire MCP proxy (enabled by default, --no-mcp to disable).
@@ -574,16 +624,20 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		return err
 	}
 	defer func() {
-		observer.Start(progress.PhaseCleaning, "Cleaning up...")
-		if cleanErr := sb.Cleanup(); cleanErr != nil {
-			observer.Fail("Failed to clean up snapshot")
-			logger.Error("failed to clean up snapshot", "error", cleanErr)
-		} else {
-			observer.Complete("Cleaned up snapshot")
+		if sb.Snapshot != nil {
+			observer.Start(progress.PhaseCleaning, "Cleaning up...")
+			if cleanErr := sb.Cleanup(); cleanErr != nil {
+				observer.Fail("Failed to clean up snapshot")
+				logger.Error("failed to clean up snapshot", "error", cleanErr)
+			} else {
+				observer.Complete("Cleaned up snapshot")
+			}
 		}
 	}()
 
 	termErr := runner.Attach(ctx, sb, terminal)
+
+	runner.ExtractCredentials(sb)
 
 	if stopErr := runner.Stop(sb); stopErr != nil {
 		logger.Error("failed to stop VM", "error", stopErr)
@@ -708,6 +762,11 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 	// Review.Enabled — always ignored for security, warn if set.
 	if localCfg.Review.Enabled != nil {
 		warnings = append(warnings, "review.enabled is ignored for security — use --review or global config")
+	}
+
+	// Auth.SaveCredentials — always ignored for security, warn if set.
+	if localCfg.Auth.SaveCredentials != nil {
+		warnings = append(warnings, "auth.save_credentials is ignored in workspace config — use --no-save-credentials flag or global config")
 	}
 
 	// Review.ExcludePatterns — can hide changes from diff review.

@@ -32,6 +32,9 @@ type Config struct {
 	// Git configures git identity and auth forwarding.
 	Git GitConfig `yaml:"git"`
 
+	// Auth configures credential persistence.
+	Auth AuthConfig `yaml:"auth"`
+
 	// Runtime configures host runtime dependencies.
 	Runtime RuntimeConfig `yaml:"runtime"`
 
@@ -49,6 +52,22 @@ type GitConfig struct {
 	// ForwardSSHAgent controls whether SSH agent forwarding is enabled.
 	// nil = default true.
 	ForwardSSHAgent *bool `yaml:"forward_ssh_agent,omitempty"`
+}
+
+// AuthConfig configures credential persistence between sessions.
+type AuthConfig struct {
+	// SaveCredentials controls whether agent credentials are saved.
+	// nil = default true.
+	SaveCredentials *bool `yaml:"save_credentials,omitempty"`
+}
+
+// SaveCredentialsEnabled returns whether credential saving is enabled.
+// Defaults to true when SaveCredentials is nil.
+func (a AuthConfig) SaveCredentialsEnabled() bool {
+	if a.SaveCredentials == nil {
+		return true
+	}
+	return *a.SaveCredentials
 }
 
 // RuntimeConfig configures host runtime dependency handling.
@@ -247,6 +266,9 @@ func MergeConfigs(global, local *Config) *Config {
 
 	// Git: local can only tighten (disable), not enable if globally disabled.
 	result.Git = mergeGitConfig(global.Git, local.Git)
+
+	// Auth.SaveCredentials: local value is IGNORED (security constraint).
+	// Global preserved — local config cannot change credential persistence.
 
 	// Runtime: local overrides global when explicitly set.
 	result.Runtime = mergeRuntimeConfig(global.Runtime, local.Runtime)

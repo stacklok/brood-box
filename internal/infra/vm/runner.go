@@ -25,6 +25,7 @@ import (
 	propolisssh "github.com/stacklok/propolis/ssh"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/credential"
 	domvm "github.com/stacklok/brood-box/pkg/domain/vm"
 )
 
@@ -33,13 +34,14 @@ var _ domvm.VMRunner = (*PropolisRunner)(nil)
 
 // PropolisRunner implements VMRunner using the propolis library.
 type PropolisRunner struct {
-	runnerPath     string
-	libDir         string
-	runtimeSource  extract.Source
-	firmwareSource extract.Source
-	cacheDir       string
-	imageCacheDir  string
-	logger         *slog.Logger
+	runnerPath      string
+	libDir          string
+	runtimeSource   extract.Source
+	firmwareSource  extract.Source
+	cacheDir        string
+	imageCacheDir   string
+	credentialStore credential.Store
+	logger          *slog.Logger
 }
 
 // RunnerOption configures a PropolisRunner.
@@ -71,6 +73,12 @@ func WithFirmwareSource(src extract.Source) RunnerOption {
 // WithCacheDir sets the cache directory for bundle-based extract.Sources.
 func WithCacheDir(dir string) RunnerOption {
 	return func(r *PropolisRunner) { r.cacheDir = dir }
+}
+
+// WithCredentialStore sets the credential store used to inject saved
+// agent credentials into the guest rootfs before boot.
+func WithCredentialStore(store credential.Store) RunnerOption {
+	return func(r *PropolisRunner) { r.credentialStore = store }
 }
 
 // WithImageCacheDir sets a shared OCI image cache directory. When set, the
@@ -215,6 +223,13 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		}))
 	}
 
+	// Add credential injection hook if store and paths are configured.
+	if r.credentialStore != nil && len(cfg.CredentialPaths) > 0 {
+		opts = append(opts, propolis.WithRootFSHook(
+			InjectCredentials(r.credentialStore, cfg.AgentName, cfg.CredentialPaths),
+		))
+	}
+
 	// Add MCP config injection hook if host services and agent format are set.
 	if len(cfg.HostServices) > 0 && cfg.MCPConfigFormat != "" && cfg.MCPConfigFormat != agent.MCPConfigFormatNone {
 		opts = append(opts, propolis.WithRootFSHook(
@@ -316,6 +331,10 @@ func (v *propolisVM) SSHKeyPath() string {
 
 func (v *propolisVM) SSHHostKey() ssh.PublicKey {
 	return v.sshHostKey
+}
+
+func (v *propolisVM) RootFSPath() string {
+	return v.vm.RootFSPath()
 }
 
 // vmDataDir returns a per-VM data directory under ~/.config/broodbox/vms/<name>/data.

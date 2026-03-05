@@ -80,6 +80,8 @@ func DefaultSecurityPatterns() []string {
 		// Brood Box config (should not be modified by agents).
 		// Duplicated from config.LocalConfigFile to avoid cross-package dependency.
 		".broodbox.yaml",
+		// Brood Box agent state (saved credentials).
+		".config/broodbox/",
 	}
 }
 

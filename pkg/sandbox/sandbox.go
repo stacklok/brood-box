@@ -13,6 +13,7 @@ import (
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/config"
+	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	domaingit "github.com/stacklok/brood-box/pkg/domain/git"
 	"github.com/stacklok/brood-box/pkg/domain/hostservice"
@@ -115,6 +116,9 @@ type SandboxDeps struct {
 	Flusher         snapshot.Flusher
 	Differ          snapshot.Differ
 
+	// CredentialStore persists agent credentials between sessions (nil = disabled).
+	CredentialStore credential.Store
+
 	// MCPProvider creates host services for MCP proxy (nil = disabled).
 	MCPProvider hostservice.Provider
 
@@ -168,6 +172,7 @@ type SandboxRunner struct {
 	reviewer               snapshot.Reviewer
 	flusher                snapshot.Flusher
 	differ                 snapshot.Differ
+	credentialStore        credential.Store
 	mcpProvider            hostservice.Provider
 	snapshotPostProcessors []workspace.SnapshotPostProcessor
 	gitIdentityProvider    domaingit.IdentityProvider
@@ -191,6 +196,7 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 		reviewer:               deps.Reviewer,
 		flusher:                deps.Flusher,
 		differ:                 deps.Differ,
+		credentialStore:        deps.CredentialStore,
 		mcpProvider:            deps.MCPProvider,
 		snapshotPostProcessors: deps.SnapshotPostProcessors,
 		gitIdentityProvider:    deps.GitIdentityProvider,
@@ -414,6 +420,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 
 	vmCfg := domvm.VMConfig{
 		Name:            VMName(ag.Name, workspacePath),
+		AgentName:       ag.Name,
 		Image:           ag.Image,
 		CPUs:            ag.DefaultCPUs,
 		Memory:          ag.DefaultMemory,
@@ -426,6 +433,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		GitIdentity:     gitIdentity,
 		HasGitToken:     hasGitToken,
 		SSHAgentForward: opts.SSHAgentForward,
+		CredentialPaths: ag.CredentialPaths,
 	}
 
 	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)
@@ -480,6 +488,23 @@ func (s *SandboxRunner) Attach(ctx context.Context, sb *Sandbox, terminal sessio
 	)
 
 	return s.sessionRunner.Run(ctx, sessionOpts)
+}
+
+// ExtractCredentials saves agent credential files from the guest rootfs.
+// Errors are logged as warnings, not fatal — credential save failure should
+// not prevent the user from working.
+func (s *SandboxRunner) ExtractCredentials(sb *Sandbox) {
+	if s.credentialStore == nil || len(sb.Agent.CredentialPaths) == 0 {
+		return
+	}
+	s.observer.Start(progress.PhaseSavingCredentials, "Saving credentials...")
+	rootfsPath := sb.VM.RootFSPath()
+	if err := s.credentialStore.Extract(rootfsPath, sb.Agent.Name, sb.Agent.CredentialPaths); err != nil {
+		s.observer.Warn(fmt.Sprintf("Could not save credentials for %s — see logs with --debug", sb.Agent.Name))
+		s.logger.Warn("failed to extract credentials", "agent", sb.Agent.Name, "error", err)
+		return
+	}
+	s.observer.Complete(fmt.Sprintf("Saved credentials for %s", sb.Agent.Name))
 }
 
 // Stop gracefully shuts down the sandbox VM.
@@ -537,16 +562,20 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 		return err
 	}
 	defer func() {
-		s.observer.Start(progress.PhaseCleaning, "Cleaning up...")
-		if cleanErr := sb.Cleanup(); cleanErr != nil {
-			s.observer.Fail("Failed to clean up snapshot")
-			s.logger.Error("failed to clean up snapshot", "error", cleanErr)
-		} else {
-			s.observer.Complete("Cleaned up snapshot")
+		if sb.Snapshot != nil {
+			s.observer.Start(progress.PhaseCleaning, "Cleaning up...")
+			if cleanErr := sb.Cleanup(); cleanErr != nil {
+				s.observer.Fail("Failed to clean up snapshot")
+				s.logger.Error("failed to clean up snapshot", "error", cleanErr)
+			} else {
+				s.observer.Complete("Cleaned up snapshot")
+			}
 		}
 	}()
 
 	termErr := s.Attach(ctx, sb, opts.Terminal)
+
+	s.ExtractCredentials(sb)
 
 	if stopErr := s.Stop(sb); stopErr != nil {
 		s.logger.Error("failed to stop VM", "error", stopErr)

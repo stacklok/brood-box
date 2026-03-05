@@ -25,6 +25,8 @@ const (
 	PhaseFlushingChanges
 	// PhaseConfiguringMCP is the MCP proxy configuration phase.
 	PhaseConfiguringMCP
+	// PhaseSavingCredentials is the credential persistence phase.
+	PhaseSavingCredentials
 	// PhaseCleaning is the snapshot cleanup phase.
 	PhaseCleaning
 )

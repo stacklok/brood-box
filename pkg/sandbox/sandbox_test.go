@@ -46,6 +46,7 @@ type mockVM struct {
 	stopped    bool
 	sshPort    uint16
 	dataDir    string
+	rootFSPath string
 	sshKeyPath string
 	sshHostKey ssh.PublicKey
 }
@@ -59,6 +60,7 @@ func (m *mockVM) SSHPort() uint16           { return m.sshPort }
 func (m *mockVM) DataDir() string           { return m.dataDir }
 func (m *mockVM) SSHKeyPath() string        { return m.sshKeyPath }
 func (m *mockVM) SSHHostKey() ssh.PublicKey { return m.sshHostKey }
+func (m *mockVM) RootFSPath() string        { return m.rootFSPath }
 
 // mockSessionRunner records the session opts it was called with.
 type mockSessionRunner struct {
