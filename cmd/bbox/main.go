@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -303,9 +304,17 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		}
 	}
 
-	// Derive VM name from agent + workspace hash so concurrent sessions
-	// on different repos get separate data directories.
-	vmName := sandbox.VMName(agentName, earlyWs)
+	// Generate a unique session ID so concurrent sessions on the same
+	// workspace get separate VM names and data directories.
+	var sessionBytes [4]byte
+	if _, err := rand.Read(sessionBytes[:]); err != nil {
+		return fmt.Errorf("generating session ID: %w", err)
+	}
+	sessionID := fmt.Sprintf("%x", sessionBytes)
+
+	// Derive VM name from agent + workspace hash + session ID so concurrent
+	// sessions get separate data directories.
+	vmName := sandbox.VMName(agentName, earlyWs, sessionID)
 
 	// Set up logging: always write to file, debug mode enables DEBUG level.
 	logPath, logFile, logCloser, err := openLogFile(flags.logFile, vmName)
@@ -320,9 +329,8 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	logger := setupLogger(logFile, flags.debug).With("vm", vmName)
 	slog.SetDefault(logger)
 
-	if flags.debug {
-		_, _ = fmt.Fprintf(os.Stderr, "Debug logs: %s\n", logPath)
-	}
+	// Always show log path since VM names include a random session ID.
+	_, _ = fmt.Fprintf(os.Stderr, "Session log: %s\n", logPath)
 
 	// Set up progress observer based on mode.
 	terminal := infraterminal.NewOSTerminal(os.Stdin, os.Stdout, os.Stderr)
@@ -646,6 +654,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		AllowHosts:      parsedAllowHosts,
 		GitTokenEnabled: gitTokenEnabled,
 		SSHAgentForward: sshAgentEnabled,
+		SessionID:       sessionID,
 		CommandArgs:     flags.commandArgs,
 		Snapshot: sandbox.SnapshotOpts{
 			Enabled:         reviewEnabled,

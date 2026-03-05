@@ -77,6 +77,11 @@ type RunOpts struct {
 	// SSHAgentForward enables SSH agent forwarding to the VM.
 	SSHAgentForward bool
 
+	// SessionID uniquely identifies this session so concurrent runs on the
+	// same workspace get distinct VM names and data directories. Required;
+	// must be a non-empty hex string (max 16 chars).
+	SessionID string
+
 	// Terminal provides I/O streams for the session. Required for Run().
 	Terminal session.Terminal
 }
@@ -207,6 +212,11 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 // workspace snapshot (if enabled), and starts the VM.
 // The caller must call Cleanup() on the returned Sandbox when done.
 func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunOpts) (*Sandbox, error) {
+	// 0. Validate session ID.
+	if opts.SessionID == "" || len(opts.SessionID) > 16 || !isHexString(opts.SessionID) {
+		return nil, fmt.Errorf("session ID must be 1-16 hex characters, got %q", opts.SessionID)
+	}
+
 	// 1. Resolve agent from registry.
 	s.observer.Start(progress.PhaseResolvingAgent, "Resolving agent...")
 	ag, err := s.registry.Get(agentName)
@@ -419,7 +429,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	s.observer.Start(progress.PhaseStartingVM, "Starting sandbox VM...")
 
 	vmCfg := domvm.VMConfig{
-		Name:            VMName(ag.Name, workspacePath),
+		Name:            VMName(ag.Name, workspacePath, opts.SessionID),
 		AgentName:       ag.Name,
 		Image:           ag.Image,
 		CPUs:            ag.DefaultCPUs,
@@ -647,15 +657,25 @@ func resolveCommand(base, override, args []string) ([]string, error) {
 	return command, nil
 }
 
-// VMName returns a deterministic VM name derived from the agent name
-// and workspace path. The workspace hash prevents collisions when
-// running concurrent sessions on different repos.
-func VMName(agentName, workspacePath string) string {
+// VMName returns a VM name derived from the agent name, workspace path,
+// and session ID. The session ID makes each concurrent session unique.
+// sessionID must be a non-empty hex string.
+func VMName(agentName, workspacePath, sessionID string) string {
 	if workspacePath == "" {
-		return "sandbox-" + agentName
+		return fmt.Sprintf("sandbox-%s-%s", agentName, sessionID)
 	}
 	h := sha256.Sum256([]byte(workspacePath))
-	return fmt.Sprintf("sandbox-%s-%x", agentName, h[:4])
+	return fmt.Sprintf("sandbox-%s-%x-%s", agentName, h[:4], sessionID)
+}
+
+// isHexString returns true if s consists entirely of lowercase hex digits.
+func isHexString(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 // resolveMCPConfig returns the effective MCP configuration by merging

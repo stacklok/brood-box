@@ -215,13 +215,14 @@ func TestSandboxRunner_Run(t *testing.T) {
 		Workspace:     "/tmp/workspace",
 		SSHPort:       2222,
 		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
 		Terminal:      &mockTerminal{},
 	})
 
 	require.NoError(t, err)
 
-	// Verify VM was started with correct config (name includes workspace hash).
-	assert.Equal(t, VMName("test-agent", "/tmp/workspace"), vmRunner.startCfg.Name)
+	// Verify VM was started with correct config (name includes workspace hash + session ID).
+	assert.Equal(t, VMName("test-agent", "/tmp/workspace", "abcd1234"), vmRunner.startCfg.Name)
 	assert.Equal(t, "test-image:latest", vmRunner.startCfg.Image)
 	assert.Equal(t, uint32(2), vmRunner.startCfg.CPUs)
 	assert.Equal(t, uint32(2048), vmRunner.startCfg.Memory)
@@ -251,7 +252,8 @@ func TestSandboxRunner_Run_AgentNotFound(t *testing.T) {
 	})
 
 	err := runner.Run(context.Background(), "nonexistent", RunOpts{
-		Terminal: &mockTerminal{},
+		SessionID: "abcd1234",
+		Terminal:  &mockTerminal{},
 	})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "agent not found")
@@ -285,6 +287,7 @@ func TestSandboxRunner_Run_CLIOverrides(t *testing.T) {
 		Memory:        8192,
 		ImageOverride: "custom:v2",
 		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
 		Terminal:      &mockTerminal{},
 	})
 
@@ -358,6 +361,7 @@ func TestSandboxRunner_Run_CommandResolution(t *testing.T) {
 				CommandArgs:     tt.commandArgs,
 				CommandOverride: tt.overrideCommand,
 				EgressProfile:   string(egress.ProfilePermissive),
+				SessionID:       "abcd1234",
 			})
 
 			if tt.expectErr {
@@ -397,6 +401,7 @@ func TestSandboxRunner_Run_CommandArgs_DoesNotMutateBase(t *testing.T) {
 		Terminal:      &mockTerminal{},
 		CommandArgs:   []string{"--flag"},
 		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
 	})
 	require.NoError(t, err)
 
@@ -446,6 +451,7 @@ func TestSandboxRunner_Run_ReviewEnabled_UsesSnapshotPath(t *testing.T) {
 		Workspace:     workspaceDir,
 		EgressProfile: string(egress.ProfilePermissive),
 		Snapshot:      SnapshotOpts{Enabled: true},
+		SessionID:     "abcd1234",
 		Terminal:      &mockTerminal{},
 	})
 	require.NoError(t, err)
@@ -480,6 +486,7 @@ func TestSandboxRunner_Run_ReviewDisabled_UsesOriginalPath(t *testing.T) {
 		Workspace:     "/my/workspace",
 		EgressProfile: string(egress.ProfilePermissive),
 		Snapshot:      SnapshotOpts{Enabled: false},
+		SessionID:     "abcd1234",
 		Terminal:      &mockTerminal{},
 	})
 	require.NoError(t, err)
@@ -534,6 +541,7 @@ func TestSandboxRunner_Run_ReviewWithChanges_FlushesAccepted(t *testing.T) {
 		Workspace:     workspaceDir,
 		EgressProfile: string(egress.ProfilePermissive),
 		Snapshot:      SnapshotOpts{Enabled: true},
+		SessionID:     "abcd1234",
 		Terminal:      &mockTerminal{},
 	})
 	require.NoError(t, err)
@@ -583,6 +591,7 @@ func TestSandboxRunner_Run_ReviewEmptyDiff_SkipsReview(t *testing.T) {
 		Workspace:     workspaceDir,
 		EgressProfile: string(egress.ProfilePermissive),
 		Snapshot:      SnapshotOpts{Enabled: true},
+		SessionID:     "abcd1234",
 		Terminal:      &mockTerminal{},
 	})
 	require.NoError(t, err)
@@ -621,6 +630,7 @@ func TestSandboxRunner_Run_SnapshotCreationFails(t *testing.T) {
 		Workspace:     t.TempDir(),
 		EgressProfile: string(egress.ProfilePermissive),
 		Snapshot:      SnapshotOpts{Enabled: true},
+		SessionID:     "abcd1234",
 		Terminal:      &mockTerminal{},
 	})
 	require.Error(t, err)
@@ -673,6 +683,7 @@ func TestSandboxRunner_Run_VMStoppedBeforeReview(t *testing.T) {
 		Workspace:     workspaceDir,
 		EgressProfile: string(egress.ProfilePermissive),
 		Snapshot:      SnapshotOpts{Enabled: true},
+		SessionID:     "abcd1234",
 		Terminal:      &mockTerminal{},
 	})
 	require.NoError(t, err)
@@ -719,6 +730,7 @@ func TestSandboxRunner_Run_NilMatcherDefaultsToNop(t *testing.T) {
 	err := runner.Run(context.Background(), "test", RunOpts{
 		Workspace:     workspaceDir,
 		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
 		Terminal:      &mockTerminal{},
 		Snapshot: SnapshotOpts{
 			Enabled:         true,
@@ -803,13 +815,14 @@ func TestSandboxRunner_Prepare_Success(t *testing.T) {
 		Workspace:     workspaceDir,
 		EgressProfile: string(egress.ProfilePermissive),
 		Snapshot:      SnapshotOpts{Enabled: true},
+		SessionID:     "abcd1234",
 	})
 	require.NoError(t, err)
 	defer func() { _ = sb.Cleanup() }()
 
 	assert.Equal(t, "test-agent", sb.Agent.Name)
 	assert.NotNil(t, sb.VM)
-	assert.Equal(t, VMName("test-agent", snapshotDir), sb.VMConfig.Name)
+	assert.Equal(t, VMName("test-agent", snapshotDir, "abcd1234"), sb.VMConfig.Name)
 	assert.Equal(t, snapshotDir, sb.WorkspacePath)
 	assert.NotNil(t, sb.Snapshot)
 	assert.Equal(t, map[string]string{"TEST_KEY": "secret123", "GIT_TERMINAL_PROMPT": "0"}, sb.EnvVars)
@@ -832,7 +845,7 @@ func TestSandboxRunner_Prepare_AgentNotFound(t *testing.T) {
 		Logger:        testLogger(),
 	})
 
-	_, err := runner.Prepare(context.Background(), "nonexistent", RunOpts{})
+	_, err := runner.Prepare(context.Background(), "nonexistent", RunOpts{SessionID: "abcd1234"})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "resolving agent")
 
@@ -1068,6 +1081,7 @@ func TestSandboxRunner_LifecycleEndToEnd(t *testing.T) {
 		Workspace:     workspaceDir,
 		EgressProfile: string(egress.ProfilePermissive),
 		Snapshot:      SnapshotOpts{Enabled: true},
+		SessionID:     "abcd1234",
 	})
 	require.NoError(t, err)
 	defer func() { _ = sb.Cleanup() }()
@@ -1110,45 +1124,106 @@ func TestVMName(t *testing.T) {
 		name      string
 		agent     string
 		workspace string
+		sessionID string
 		want      string
 	}{
 		{
-			name:      "empty workspace uses simple name",
+			name:      "empty workspace uses agent and session only",
 			agent:     "claude-code",
 			workspace: "",
-			want:      "sandbox-claude-code",
+			sessionID: "abcd1234",
+			want:      "sandbox-claude-code-abcd1234",
 		},
 		{
-			name:      "workspace path produces hash suffix",
+			name:      "workspace path produces hash and session suffix",
 			agent:     "claude-code",
 			workspace: "/home/user/project",
-			want:      VMName("claude-code", "/home/user/project"),
+			sessionID: "abcd1234",
+			want:      VMName("claude-code", "/home/user/project", "abcd1234"),
 		},
 		{
 			name:      "different workspaces produce different names",
 			agent:     "claude-code",
 			workspace: "/home/user/other",
-			want:      VMName("claude-code", "/home/user/other"),
+			sessionID: "abcd1234",
+			want:      VMName("claude-code", "/home/user/other", "abcd1234"),
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := VMName(tt.agent, tt.workspace)
+			got := VMName(tt.agent, tt.workspace, tt.sessionID)
 			assert.Equal(t, tt.want, got)
 		})
 	}
 
 	// Verify different workspaces produce different VM names.
-	name1 := VMName("claude-code", "/project-a")
-	name2 := VMName("claude-code", "/project-b")
+	name1 := VMName("claude-code", "/project-a", "abcd1234")
+	name2 := VMName("claude-code", "/project-b", "abcd1234")
 	assert.NotEqual(t, name1, name2)
 
-	// Verify same workspace is deterministic.
-	assert.Equal(t, VMName("claude-code", "/project-a"), VMName("claude-code", "/project-a"))
+	// Verify same inputs are deterministic.
+	assert.Equal(t, VMName("claude-code", "/project-a", "abcd1234"), VMName("claude-code", "/project-a", "abcd1234"))
 
-	// Verify hash suffix format (8 hex chars).
-	name := VMName("test", "/workspace")
-	assert.Regexp(t, `^sandbox-test-[0-9a-f]{8}$`, name)
+	// Verify hash suffix format (8 hex workspace hash + session ID).
+	name := VMName("test", "/workspace", "abcd1234")
+	assert.Regexp(t, `^sandbox-test-[0-9a-f]{8}-[0-9a-f]{8}$`, name)
+}
+
+func TestVMName_ConcurrentSessionsUnique(t *testing.T) {
+	t.Parallel()
+
+	// Same agent and workspace with different session IDs must produce different names.
+	name1 := VMName("claude-code", "/home/user/project", "aaaaaaaa")
+	name2 := VMName("claude-code", "/home/user/project", "bbbbbbbb")
+	assert.NotEqual(t, name1, name2)
+}
+
+func TestSandboxRunner_Prepare_MissingSessionID(t *testing.T) {
+	t.Parallel()
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test": {Name: "test", Image: "img", Command: []string{"cmd"}}}},
+		VMRunner:      &mockVMRunner{},
+		SessionRunner: &mockSessionRunner{},
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+	})
+
+	_, err := runner.Prepare(context.Background(), "test", RunOpts{})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "session ID must be 1-16 hex characters")
+}
+
+func TestSandboxRunner_Prepare_InvalidSessionID(t *testing.T) {
+	t.Parallel()
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test": {Name: "test", Image: "img", Command: []string{"cmd"}}}},
+		VMRunner:      &mockVMRunner{},
+		SessionRunner: &mockSessionRunner{},
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+	})
+
+	tests := []struct {
+		name      string
+		sessionID string
+	}{
+		{name: "uppercase hex", sessionID: "ABCD1234"},
+		{name: "non-hex chars", sessionID: "ghijklmn"},
+		{name: "too long", sessionID: "abcdef0123456789a"},
+		{name: "special chars", sessionID: "abcd-123"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := runner.Prepare(context.Background(), "test", RunOpts{SessionID: tt.sessionID})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "session ID must be 1-16 hex characters")
+		})
+	}
 }
