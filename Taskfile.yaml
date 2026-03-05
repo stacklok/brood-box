@@ -27,6 +27,8 @@ vars:
     sh: uname -s | tr '[:upper:]' '[:lower:]'
   HOST_OS_ALT:
     sh: uname -s | tr '[:upper:]' '[:lower:]' | sed 's/darwin/macos/'
+  CONTAINER_ENGINE:
+    sh: echo ${CONTAINER_ENGINE:-$(command -v docker >/dev/null 2>&1 && echo docker || echo podman)}
   LDFLAGS: >-
     -X github.com/stacklok/brood-box/internal/version.Version={{.VERSION}}
     -X github.com/stacklok/brood-box/internal/version.Commit={{.COMMIT}}
@@ -228,25 +230,25 @@ tasks:
     desc: Build base guest image
     run: once
     cmds:
-      - podman build -t {{.IMAGE_REGISTRY}}/base:latest images/base/
+      - "{{.CONTAINER_ENGINE}} build -t {{.IMAGE_REGISTRY}}/base:latest images/base/"
 
   image-claude-code:
     desc: Build claude-code guest image
     deps: [image-base]
     cmds:
-      - podman build -t {{.IMAGE_REGISTRY}}/claude-code:latest images/claude-code/
+      - "{{.CONTAINER_ENGINE}} build -t {{.IMAGE_REGISTRY}}/claude-code:latest images/claude-code/"
 
   image-codex:
     desc: Build codex guest image
     deps: [image-base]
     cmds:
-      - podman build -t {{.IMAGE_REGISTRY}}/codex:latest images/codex/
+      - "{{.CONTAINER_ENGINE}} build -t {{.IMAGE_REGISTRY}}/codex:latest images/codex/"
 
   image-opencode:
     desc: Build opencode guest image
     deps: [image-base]
     cmds:
-      - podman build -t {{.IMAGE_REGISTRY}}/opencode:latest images/opencode/
+      - "{{.CONTAINER_ENGINE}} build -t {{.IMAGE_REGISTRY}}/opencode:latest images/opencode/"
 
   image-all:
     desc: Build all guest images
@@ -256,7 +258,7 @@ tasks:
     desc: Push all images to GHCR
     deps: [image-all]
     cmds:
-      - podman push {{.IMAGE_REGISTRY}}/base:latest
-      - podman push {{.IMAGE_REGISTRY}}/claude-code:latest
-      - podman push {{.IMAGE_REGISTRY}}/codex:latest
-      - podman push {{.IMAGE_REGISTRY}}/opencode:latest
+      - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/base:latest"
+      - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/claude-code:latest"
+      - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/codex:latest"
+      - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/opencode:latest"

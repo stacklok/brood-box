@@ -109,6 +109,8 @@ jobs:
   images:
     name: Build Images
     runs-on: ubuntu-latest
+    env:
+      CONTAINER_ENGINE: podman
     permissions:
       contents: read
       packages: write
