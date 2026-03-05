@@ -130,7 +130,7 @@ Brood Box uses a three-level config system: CLI flags > per-workspace > global. 
 defaults:
   cpus: 4
   memory: 4096
-  egress_profile: "standard"
+  egress_profile: "permissive"
 
 review:
   enabled: true
@@ -198,8 +198,8 @@ Each agent comes with DNS-aware egress policies. Three profiles are available:
 
 | Profile | What it allows |
 |---|---|
-| `permissive` | All outbound traffic, no restrictions |
-| `standard` (default) | LLM provider + common dev infrastructure (GitHub, npm, PyPI, Go proxy, Docker Hub, GHCR) |
+| `permissive` (default) | All outbound traffic, no restrictions |
+| `standard` | LLM provider + common dev infrastructure (GitHub, npm, PyPI, Go proxy, Docker Hub, GHCR) |
 | `locked` | LLM provider only (e.g. `api.anthropic.com` for Claude Code) |
 
 ```bash

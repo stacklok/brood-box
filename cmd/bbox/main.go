@@ -720,7 +720,7 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 	if localCfg.Defaults.EgressProfile != "" {
 		effectiveGlobal := egress.ProfileName(globalCfg.Defaults.EgressProfile)
 		if effectiveGlobal == "" {
-			effectiveGlobal = egress.ProfileStandard
+			effectiveGlobal = egress.ProfilePermissive
 		}
 		localProfile := egress.ProfileName(localCfg.Defaults.EgressProfile)
 		if localProfile.IsValid() && egress.Stricter(effectiveGlobal, localProfile) == effectiveGlobal {

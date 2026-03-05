@@ -40,7 +40,7 @@ ls -la /dev/kvm
 | `codex` | `ghcr.io/stacklok/brood-box/codex:latest` | `codex` | `OPENAI_API_KEY`, `CODEX_*` |
 | `opencode` | `ghcr.io/stacklok/brood-box/opencode:latest` | `opencode` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_*` |
 
-All agents default to the `standard` egress profile.
+All agents default to the `permissive` egress profile.
 
 List agents:
 
@@ -66,7 +66,7 @@ bbox <agent-name> [flags] [-- <agent-args...>]
 | `--image` | Agent default | Override the OCI image reference |
 | `--no-review` | `false` | Disable snapshot isolation, mount workspace directly |
 | `--exclude` | (none) | Additional gitignore-style exclude patterns (repeatable) |
-| `--egress-profile` | Agent default (`standard`) | Egress restriction level: `permissive`, `standard`, `locked` |
+| `--egress-profile` | Agent default (`permissive`) | Egress restriction level: `permissive`, `standard`, `locked` |
 | `--allow-host` | (none) | Additional allowed egress DNS hostname[:port] — no IP addresses (repeatable) |
 | `--no-mcp` | `false` | Disable MCP tool proxy |
 | `--mcp-group` | `default` | ToolHive group to discover MCP servers from |
@@ -129,7 +129,7 @@ override built-in agents, or define custom agents.
 defaults:
   cpus: 4
   memory: 4096
-  egress_profile: "standard"
+  egress_profile: "permissive"
 
 # Workspace snapshot review settings
 review:
@@ -288,8 +288,8 @@ Each agent comes with DNS-aware egress policies. Three profiles are available:
 
 | Profile | What it allows |
 |---|---|
-| `permissive` | All outbound traffic, no restrictions |
-| `standard` (default) | LLM provider + common dev infrastructure (GitHub, npm, PyPI, Go proxy, Docker Hub, GHCR, Sentry) |
+| `permissive` (default) | All outbound traffic, no restrictions |
+| `standard` | LLM provider + common dev infrastructure (GitHub, npm, PyPI, Go proxy, Docker Hub, GHCR, Sentry) |
 | `locked` | LLM provider only (e.g. `api.anthropic.com` for Claude Code) |
 
 ```bash

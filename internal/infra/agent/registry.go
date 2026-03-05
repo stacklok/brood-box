@@ -65,7 +65,7 @@ func builtinAgents() map[string]domainagent.Agent {
 			EnvForward:           []string{"ANTHROPIC_API_KEY", "CLAUDE_*"},
 			DefaultCPUs:          2,
 			DefaultMemory:        2048,
-			DefaultEgressProfile: egress.ProfileStandard,
+			DefaultEgressProfile: egress.ProfilePermissive,
 			MCPConfigFormat:      domainagent.MCPConfigFormatClaudeCode,
 			EgressHosts: map[egress.ProfileName][]egress.Host{
 				egress.ProfileLocked:   claudeLockedHosts,
@@ -79,7 +79,7 @@ func builtinAgents() map[string]domainagent.Agent {
 			EnvForward:           []string{"OPENAI_API_KEY", "CODEX_*"},
 			DefaultCPUs:          2,
 			DefaultMemory:        2048,
-			DefaultEgressProfile: egress.ProfileStandard,
+			DefaultEgressProfile: egress.ProfilePermissive,
 			MCPConfigFormat:      domainagent.MCPConfigFormatCodex,
 			EgressHosts: map[egress.ProfileName][]egress.Host{
 				egress.ProfileLocked:   codexLockedHosts,
@@ -93,7 +93,7 @@ func builtinAgents() map[string]domainagent.Agent {
 			EnvForward:           []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_*"},
 			DefaultCPUs:          2,
 			DefaultMemory:        2048,
-			DefaultEgressProfile: egress.ProfileStandard,
+			DefaultEgressProfile: egress.ProfilePermissive,
 			MCPConfigFormat:      domainagent.MCPConfigFormatOpenCode,
 			EgressHosts: map[egress.ProfileName][]egress.Host{
 				egress.ProfileLocked:   opencodeLockedHosts,

@@ -216,11 +216,11 @@ func MergeConfigs(global, local *Config) *Config {
 	)
 
 	// EgressProfile: local can only tighten (use Stricter).
-	// Treat empty global as "standard" — the implicit default for all built-in agents.
+	// Treat empty global as "permissive" — the implicit default for all built-in agents.
 	if local.Defaults.EgressProfile != "" {
 		effectiveGlobal := egress.ProfileName(result.Defaults.EgressProfile)
 		if effectiveGlobal == "" {
-			effectiveGlobal = egress.ProfileStandard
+			effectiveGlobal = egress.ProfilePermissive
 		}
 		result.Defaults.EgressProfile = string(egress.Stricter(
 			effectiveGlobal,
@@ -310,12 +310,12 @@ func Merge(a agent.Agent, override AgentOverride, defaults DefaultsConfig) agent
 	)
 
 	// EgressProfile: override can only tighten the agent's built-in profile.
-	// Treat empty as "standard" — the security baseline for all agents.
+	// Treat empty as "permissive" — the default for all agents.
 	if override.EgressProfile != "" {
 		overrideProfile := egress.ProfileName(override.EgressProfile)
 		current := result.DefaultEgressProfile
 		if current == "" {
-			current = egress.ProfileStandard
+			current = egress.ProfilePermissive
 		}
 		result.DefaultEgressProfile = egress.Stricter(current, overrideProfile)
 	}
@@ -323,7 +323,7 @@ func Merge(a agent.Agent, override AgentOverride, defaults DefaultsConfig) agent
 		result.DefaultEgressProfile = egress.ProfileName(defaults.EgressProfile)
 	}
 	if result.DefaultEgressProfile == "" {
-		result.DefaultEgressProfile = egress.ProfileStandard
+		result.DefaultEgressProfile = egress.ProfilePermissive
 	}
 
 	return result

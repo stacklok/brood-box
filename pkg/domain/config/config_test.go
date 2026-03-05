@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/egress"
 )
 
 func TestReviewConfig_Defaults(t *testing.T) {
@@ -167,17 +168,17 @@ func TestMergeConfigs(t *testing.T) {
 			},
 		},
 		{
-			name:   "egress profile — empty global + local permissive blocked",
+			name:   "egress profile — empty global + local permissive stays permissive",
 			global: &Config{},
 			local: &Config{
 				Defaults: DefaultsConfig{EgressProfile: "permissive"},
 			},
 			want: &Config{
-				Defaults: DefaultsConfig{EgressProfile: "standard"},
+				Defaults: DefaultsConfig{EgressProfile: "permissive"},
 			},
 		},
 		{
-			name:   "egress profile — empty global + local standard stays standard",
+			name:   "egress profile — empty global + local standard tightens to standard",
 			global: &Config{},
 			local: &Config{
 				Defaults: DefaultsConfig{EgressProfile: "standard"},
@@ -187,13 +188,13 @@ func TestMergeConfigs(t *testing.T) {
 			},
 		},
 		{
-			name:   "egress profile — unrecognized local profile treated as standard",
+			name:   "egress profile — unrecognized local profile treated as permissive",
 			global: &Config{},
 			local: &Config{
 				Defaults: DefaultsConfig{EgressProfile: "not-a-profile"},
 			},
 			want: &Config{
-				Defaults: DefaultsConfig{EgressProfile: "standard"},
+				Defaults: DefaultsConfig{EgressProfile: "permissive"},
 			},
 		},
 		{
@@ -259,7 +260,7 @@ func TestMerge(t *testing.T) {
 		EnvForward:           []string{"API_KEY"},
 		DefaultCPUs:          2,
 		DefaultMemory:        2048,
-		DefaultEgressProfile: "standard",
+		DefaultEgressProfile: egress.ProfileStandard,
 	}
 
 	tests := []struct {
@@ -290,7 +291,7 @@ func TestMerge(t *testing.T) {
 				EnvForward:           []string{"API_KEY"},
 				DefaultCPUs:          2,
 				DefaultMemory:        2048,
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfileStandard,
 			},
 		},
 		{
@@ -307,7 +308,7 @@ func TestMerge(t *testing.T) {
 				EnvForward:           []string{"API_KEY"},
 				DefaultCPUs:          2,
 				DefaultMemory:        2048,
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfileStandard,
 			},
 		},
 		{
@@ -324,7 +325,7 @@ func TestMerge(t *testing.T) {
 				EnvForward:           []string{"NEW_KEY", "OTHER_*"},
 				DefaultCPUs:          2,
 				DefaultMemory:        2048,
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfileStandard,
 			},
 		},
 		{
@@ -342,7 +343,7 @@ func TestMerge(t *testing.T) {
 				EnvForward:           []string{"API_KEY"},
 				DefaultCPUs:          4,
 				DefaultMemory:        4096,
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfileStandard,
 			},
 		},
 		{
@@ -363,7 +364,7 @@ func TestMerge(t *testing.T) {
 				Command:              []string{"cmd"},
 				DefaultCPUs:          2,
 				DefaultMemory:        1024,
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfilePermissive,
 			},
 		},
 		{
@@ -383,7 +384,7 @@ func TestMerge(t *testing.T) {
 				Command:              []string{"c"},
 				DefaultCPUs:          8,
 				DefaultMemory:        8192,
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfilePermissive,
 			},
 		},
 		{
@@ -402,7 +403,7 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfileStandard,
 			},
 			override: AgentOverride{EgressProfile: "locked"},
 			defaults: DefaultsConfig{},
@@ -410,7 +411,7 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultEgressProfile: "locked",
+				DefaultEgressProfile: egress.ProfileLocked,
 			},
 		},
 		{
@@ -426,7 +427,7 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultEgressProfile: "locked",
+				DefaultEgressProfile: egress.ProfileLocked,
 			},
 		},
 		{
@@ -435,7 +436,7 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfileStandard,
 			},
 			override: AgentOverride{EgressProfile: "permissive"},
 			defaults: DefaultsConfig{},
@@ -443,11 +444,11 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfileStandard,
 			},
 		},
 		{
-			name: "egress profile — permissive override blocked when agent empty",
+			name: "egress profile — permissive override allowed when agent empty",
 			agent: agent.Agent{
 				Name:    "a",
 				Image:   "i:l",
@@ -459,7 +460,7 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfilePermissive,
 			},
 		},
 		{
@@ -475,11 +476,11 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultEgressProfile: "locked",
+				DefaultEgressProfile: egress.ProfileLocked,
 			},
 		},
 		{
-			name: "egress profile — falls back to standard when all empty",
+			name: "egress profile — falls back to permissive when all empty",
 			agent: agent.Agent{
 				Name:    "a",
 				Image:   "i:l",
@@ -491,7 +492,7 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultEgressProfile: "standard",
+				DefaultEgressProfile: egress.ProfilePermissive,
 			},
 		},
 	}
@@ -733,7 +734,7 @@ func TestMerge_ResourceBounds(t *testing.T) {
 		Command:              []string{"cmd"},
 		DefaultCPUs:          2,
 		DefaultMemory:        2048,
-		DefaultEgressProfile: "standard",
+		DefaultEgressProfile: egress.ProfileStandard,
 	}
 
 	tests := []struct {
