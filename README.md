@@ -315,7 +315,7 @@ task lint
 # Format + lint + test
 task verify
 
-# Build guest VM images (requires podman)
+# Build guest VM images (requires docker or podman)
 task image-all
 ```
 
