@@ -5,8 +5,8 @@ internal/infra/vm/initbin/bbox-init
 internal/infra/vm/runtimebin/propolis-runner
 internal/infra/vm/runtimebin/libkrun.so.1
 internal/infra/vm/runtimebin/libkrunfw.so.5
-internal/infra/vm/runtimebin/libkrun.dylib
-internal/infra/vm/runtimebin/libkrunfw.dylib
+internal/infra/vm/runtimebin/libkrun.1.dylib
+internal/infra/vm/runtimebin/libkrunfw.5.dylib
 internal/infra/vm/runtimebin/VERSION
 internal/infra/vm/runtimebin/LICENSE-GPL
 internal/infra/vm/runtimebin/propolis-firmware-*.tar.gz

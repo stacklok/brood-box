@@ -590,7 +590,7 @@ func systemFirmwareDirs() []string {
 
 func firmwareLibNames(osName string) []string {
 	if osName == "darwin" {
-		return []string{"libkrunfw.dylib"}
+		return []string{"libkrunfw.5.dylib"}
 	}
 	return []string{"libkrunfw.so.5"}
 }

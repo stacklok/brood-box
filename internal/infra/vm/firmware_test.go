@@ -231,7 +231,7 @@ func TestFindFirmwareFile_Darwin(t *testing.T) {
 	t.Parallel()
 
 	dir := t.TempDir()
-	libPath := filepath.Join(dir, "libkrunfw.dylib")
+	libPath := filepath.Join(dir, "libkrunfw.5.dylib")
 	require.NoError(t, os.WriteFile(libPath, []byte("fw"), 0o644))
 
 	found, err := findFirmwareFile(dir, "darwin")
@@ -826,7 +826,7 @@ func TestFirmwareLibNames(t *testing.T) {
 	t.Parallel()
 
 	assert.Equal(t, []string{"libkrunfw.so.5"}, firmwareLibNames("linux"))
-	assert.Equal(t, []string{"libkrunfw.dylib"}, firmwareLibNames("darwin"))
+	assert.Equal(t, []string{"libkrunfw.5.dylib"}, firmwareLibNames("darwin"))
 }
 
 // --- systemFirmwareDirs test (smoke) ---

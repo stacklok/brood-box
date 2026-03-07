@@ -219,8 +219,8 @@ tasks:
       - rm -f coverage.out coverage.html
       - rm -f internal/infra/vm/initbin/bbox-init
       - rm -f internal/infra/vm/runtimebin/propolis-runner
-      - rm -f internal/infra/vm/runtimebin/libkrun.so.1 internal/infra/vm/runtimebin/libkrun.dylib
-      - rm -f internal/infra/vm/runtimebin/libkrunfw.so.5 internal/infra/vm/runtimebin/libkrunfw.dylib
+      - rm -f internal/infra/vm/runtimebin/libkrun.so.1 internal/infra/vm/runtimebin/libkrun.1.dylib
+      - rm -f internal/infra/vm/runtimebin/libkrunfw.so.5 internal/infra/vm/runtimebin/libkrunfw.5.dylib
       - rm -f internal/infra/vm/runtimebin/VERSION internal/infra/vm/runtimebin/LICENSE-GPL
       - rm -f internal/infra/vm/runtimebin/sha256sums.txt
 
