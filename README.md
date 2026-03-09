@@ -28,7 +28,7 @@ VM. When the agent exits, you review the diff and accept or reject each file.
 
 ## Features
 
-- **Hardware-isolated microVMs** -- KVM-backed VMs via libkrun, not just containers
+- **Hardware-isolated microVMs** -- KVM (Linux) and Hypervisor.framework (macOS) backed VMs via libkrun, not just containers
 - **Workspace snapshot & review** -- COW snapshot so the agent never touches your real files; interactive per-file review with unified diffs when it's done
 - **Multi-agent support** -- Claude Code, Codex, and OpenCode out of the box, plus custom agents via config
 - **DNS-aware egress firewall** -- Three profiles (permissive, standard, locked) control what the VM can reach
@@ -273,7 +273,7 @@ The guest VM runs a custom Go init binary (`bbox-init`) as PID 1. No shell scrip
 no external sshd, no iproute2. Everything the guest needs is compiled into a single
 binary that handles boot, networking, workspace mounting, and an embedded SSH server.
 
-The workspace snapshot uses FICLONE on Linux for near-instant copy-on-write cloning.
+The workspace snapshot uses FICLONE on Linux and `clonefile(2)` on macOS for near-instant copy-on-write cloning.
 When the agent is done, a SHA-256 based differ detects changes, and the review UI
 shows unified diffs for each file. Accepted changes are flushed back with hash
 re-verification to prevent TOCTOU attacks. The VM is explicitly stopped before
