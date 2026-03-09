@@ -6,7 +6,7 @@ module github.com/stacklok/brood-box
 go 1.26.0
 
 require (
-	charm.land/lipgloss/v2 v2.0.0
+	charm.land/lipgloss/v2 v2.0.1
 	github.com/adrg/xdg v0.5.3
 	github.com/charmbracelet/glamour v0.10.0
 	github.com/elastic/go-seccomp-bpf v1.6.0
