@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"syscall"
@@ -105,13 +106,18 @@ func copyOwnership(src, dst string) {
 	_ = os.Lchown(dst, int(stat.Uid), int(stat.Gid))
 }
 
-// chownRecursive sets uid:gid on all entries under root.
-func chownRecursive(root string, uid, gid int) {
+// chownRecursive sets uid:gid on all entries under root. Failures are
+// logged rather than silently discarded because a failed chown means
+// the sandbox user cannot access its own SSH keys or config files.
+func chownRecursive(root string, uid, gid int, logger *slog.Logger) {
 	_ = filepath.WalkDir(root, func(path string, _ fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
-		_ = os.Lchown(path, uid, gid)
+		if err := os.Lchown(path, uid, gid); err != nil {
+			logger.Warn("chown failed, sandbox user may lack access",
+				"path", path, "error", err)
+		}
 		return nil
 	})
 }
