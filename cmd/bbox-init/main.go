@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/stacklok/brood-box/internal/guest/homefs"
 	"github.com/stacklok/brood-box/internal/guest/seccomp"
 	"github.com/stacklok/propolis/guest/boot"
 	"github.com/stacklok/propolis/guest/reaper"
@@ -37,6 +38,15 @@ func main() {
 		logger.Error("boot failed", "error", err)
 		halt()
 		return
+	}
+
+	// Make /home/sandbox writable. On certain host kernels (e.g. openSUSE
+	// MicroOS / Tumbleweed), the root virtiofs rejects writes even though
+	// the mount is nominally rw. An overlayfs (or tmpfs fallback) on the
+	// home directory works around this so agents can create config files.
+	if err := homefs.MakeWritable(logger, homefs.SandboxHome, homefs.SandboxUID, homefs.SandboxGID); err != nil {
+		logger.Warn("failed to make home writable, agents may not start",
+			"error", err)
 	}
 
 	if err := seccomp.Apply(); err != nil {
