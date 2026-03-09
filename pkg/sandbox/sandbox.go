@@ -369,15 +369,16 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		s.observer.Start(progress.PhaseConfiguringMCP, "Discovering MCP servers...")
 		services, mcpErr := s.mcpProvider.Services(ctx)
 		if mcpErr != nil {
-			s.observer.Fail("Failed to configure MCP")
-			return nil, fmt.Errorf("configuring MCP services: %w", mcpErr)
+			s.observer.Warn("MCP unavailable, continuing without MCP support")
+			s.logger.Warn("failed to configure MCP services", "error", mcpErr)
+		} else {
+			for _, svc := range services {
+				hostServices = append(hostServices, domvm.HostService{
+					Name: svc.Name, Port: svc.Port, Handler: svc.Handler,
+				})
+			}
+			s.observer.Complete(fmt.Sprintf("MCP proxy ready on port %d", mcpCfg.Port))
 		}
-		for _, svc := range services {
-			hostServices = append(hostServices, domvm.HostService{
-				Name: svc.Name, Port: svc.Port, Handler: svc.Handler,
-			})
-		}
-		s.observer.Complete(fmt.Sprintf("MCP proxy ready on port %d", mcpCfg.Port))
 	}
 
 	// 5. Set up workspace path (possibly with snapshot isolation).

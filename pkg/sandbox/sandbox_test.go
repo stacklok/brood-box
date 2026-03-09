@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"strings"
 	"testing"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
+	"github.com/stacklok/brood-box/pkg/domain/hostservice"
 	"github.com/stacklok/brood-box/pkg/domain/session"
 	"github.com/stacklok/brood-box/pkg/domain/snapshot"
 	domvm "github.com/stacklok/brood-box/pkg/domain/vm"
@@ -174,6 +176,20 @@ func (m *mockFlusher) Flush(_, _ string, accepted []snapshot.FileChange) error {
 	m.flushed = accepted
 	return m.flushErr
 }
+
+// mockMCPProvider implements hostservice.Provider for testing.
+type mockMCPProvider struct {
+	services []hostservice.Service
+	err      error
+	called   bool
+}
+
+func (m *mockMCPProvider) Services(_ context.Context) ([]hostservice.Service, error) {
+	m.called = true
+	return m.services, m.err
+}
+
+func (m *mockMCPProvider) Close() error { return nil }
 
 func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
@@ -1226,4 +1242,85 @@ func TestSandboxRunner_Prepare_InvalidSessionID(t *testing.T) {
 			assert.Contains(t, err.Error(), "session ID must be 1-16 hex characters")
 		})
 	}
+}
+
+func TestSandboxRunner_Prepare_MCPFailure_WarnsAndContinues(t *testing.T) {
+	t.Parallel()
+
+	testAgent := agent.Agent{
+		Name:          "test",
+		Image:         "img:latest",
+		Command:       []string{"cmd"},
+		DefaultCPUs:   2,
+		DefaultMemory: 2048,
+	}
+
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	mcpProvider := &mockMCPProvider{
+		err: fmt.Errorf("no available runtime found"),
+	}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
+		VMRunner:      &mockVMRunner{vm: mvm},
+		SessionRunner: &mockSessionRunner{},
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+		MCPProvider:   mcpProvider,
+	})
+
+	sb, err := runner.Prepare(t.Context(), "test", RunOpts{
+		Workspace:     "/tmp/workspace",
+		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
+	})
+	require.NoError(t, err, "MCP failure should not be fatal")
+	defer func() { _ = sb.Cleanup() }()
+
+	assert.True(t, mcpProvider.called, "MCP provider should have been called")
+	assert.Empty(t, sb.VMConfig.HostServices, "no host services should be configured on MCP failure")
+}
+
+func TestSandboxRunner_Prepare_MCPSuccess_AddsHostServices(t *testing.T) {
+	t.Parallel()
+
+	testAgent := agent.Agent{
+		Name:          "test",
+		Image:         "img:latest",
+		Command:       []string{"cmd"},
+		DefaultCPUs:   2,
+		DefaultMemory: 2048,
+	}
+
+	handler := http.NewServeMux()
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	mcpProvider := &mockMCPProvider{
+		services: []hostservice.Service{
+			{Name: "mcp", Port: 4483, Handler: handler},
+		},
+	}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test": testAgent}},
+		VMRunner:      &mockVMRunner{vm: mvm},
+		SessionRunner: &mockSessionRunner{},
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+		MCPProvider:   mcpProvider,
+	})
+
+	sb, err := runner.Prepare(t.Context(), "test", RunOpts{
+		Workspace:     "/tmp/workspace",
+		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	assert.True(t, mcpProvider.called)
+	require.Len(t, sb.VMConfig.HostServices, 1)
+	assert.Equal(t, "mcp", sb.VMConfig.HostServices[0].Name)
+	assert.Equal(t, uint16(4483), sb.VMConfig.HostServices[0].Port)
 }
