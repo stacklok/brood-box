@@ -5,10 +5,6 @@ variable "REGISTRY" {
   default = "ghcr.io/stacklok/brood-box"
 }
 
-variable "BASE_IMAGE" {
-  default = "${REGISTRY}/base:latest"
-}
-
 group "default" {
   targets = ["base", "claude-code", "codex", "opencode"]
 }
@@ -28,10 +24,10 @@ target "claude-code" {
   cache-from = ["type=gha,scope=claude-code"]
   cache-to   = ["type=gha,mode=max,scope=claude-code"]
   args = {
-    BASE_IMAGE = BASE_IMAGE
+    BASE_IMAGE = "brood-box-base"
   }
   contexts = {
-    "${BASE_IMAGE}" = "target:base"
+    "brood-box-base" = "target:base"
   }
 }
 
@@ -42,10 +38,10 @@ target "codex" {
   cache-from = ["type=gha,scope=codex"]
   cache-to   = ["type=gha,mode=max,scope=codex"]
   args = {
-    BASE_IMAGE = BASE_IMAGE
+    BASE_IMAGE = "brood-box-base"
   }
   contexts = {
-    "${BASE_IMAGE}" = "target:base"
+    "brood-box-base" = "target:base"
   }
 }
 
@@ -56,9 +52,9 @@ target "opencode" {
   cache-from = ["type=gha,scope=opencode"]
   cache-to   = ["type=gha,mode=max,scope=opencode"]
   args = {
-    BASE_IMAGE = BASE_IMAGE
+    BASE_IMAGE = "brood-box-base"
   }
   contexts = {
-    "${BASE_IMAGE}" = "target:base"
+    "brood-box-base" = "target:base"
   }
 }
