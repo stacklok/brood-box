@@ -23,11 +23,38 @@ import (
 	"github.com/stacklok/propolis/guest/reaper"
 )
 
+// lockPath is used to ensure only one bbox-init instance runs.
+// On macOS, libkrun's init.krun forks a child for the timesync
+// clock_worker. When the worker fails (vsock DGRAM bind error),
+// it returns instead of calling _exit(), so the child falls through
+// and execs a second bbox-init. See https://github.com/containers/libkrun/issues/580
+const lockPath = "/bbox-init.lock"
+
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
 		Level: slog.LevelDebug,
 	}))
 	slog.SetDefault(logger)
+
+	// Guard against duplicate init spawning caused by libkrun#580.
+	// Use flock(LOCK_EX|LOCK_NB) for an atomic, kernel-level lock.
+	// The lock file lives on the rootfs (virtiofs) which is shared
+	// across all processes, and stale lock files from previous runs
+	// hold no active flock.
+	lockFd, err := syscall.Open(lockPath, syscall.O_WRONLY|syscall.O_CREAT, 0o600)
+	if err != nil {
+		logger.Error("failed to open lock file", "error", err)
+	} else if err := syscall.Flock(lockFd, syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		logger.Warn("another bbox-init is already running, blocking forever", "pid", os.Getpid())
+		// Do NOT exit — the losing child's parent (init.krun) would
+		// call reboot(POWER_OFF), killing the entire VM including the
+		// winning bbox-init. Block on a signal channel instead.
+		ch := make(chan os.Signal, 1)
+		signal.Notify(ch, syscall.SIGTERM)
+		<-ch
+		os.Exit(0)
+	}
+	// Keep the fd open for the lifetime of the process (flock released on close).
 
 	// PID 1 must reap orphaned children.
 	stopReaper := reaper.Start(logger)
