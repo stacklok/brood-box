@@ -162,6 +162,7 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		propolis.WithCleanDataDir(),
 		propolis.WithCPUs(cfg.CPUs),
 		propolis.WithMemory(cfg.Memory),
+		propolis.WithLogLevel(cfg.LogLevel),
 		propolis.WithPorts(propolis.PortForward{Host: sshPort, Guest: 22}),
 		propolis.WithRootFSHook(
 			hooks.InjectAuthorizedKeys(pubKey),

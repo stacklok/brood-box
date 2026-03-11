@@ -66,6 +66,9 @@ type VMConfig struct {
 	// CredentialPaths lists relative paths (from the sandbox user's home)
 	// whose contents are injected into the rootfs before boot.
 	CredentialPaths []string
+
+	// LogLevel sets the hypervisor log verbosity (0=off, 5=trace).
+	LogLevel uint32
 }
 
 // HostService describes an HTTP service exposed from host to guest.

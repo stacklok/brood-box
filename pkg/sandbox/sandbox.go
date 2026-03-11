@@ -82,6 +82,9 @@ type RunOpts struct {
 	// must be a non-empty hex string (max 16 chars).
 	SessionID string
 
+	// LogLevel sets the hypervisor log verbosity (0=off, 5=trace).
+	LogLevel uint32
+
 	// Terminal provides I/O streams for the session. Required for Run().
 	Terminal session.Terminal
 }
@@ -445,6 +448,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		HasGitToken:     hasGitToken,
 		SSHAgentForward: opts.SSHAgentForward,
 		CredentialPaths: ag.CredentialPaths,
+		LogLevel:        opts.LogLevel,
 	}
 
 	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)

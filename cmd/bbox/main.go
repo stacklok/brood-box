@@ -654,6 +654,13 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		commandOverride = []string{flags.exec}
 	}
 
+	// Enable libkrun trace logging when --debug is set so vm.log
+	// captures hypervisor-level diagnostics.
+	var logLevel uint32
+	if flags.debug {
+		logLevel = 5 // trace
+	}
+
 	opts := sandbox.RunOpts{
 		CPUs:            flags.cpus,
 		Memory:          flags.memory,
@@ -666,6 +673,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		SSHAgentForward: sshAgentEnabled,
 		SessionID:       sessionID,
 		CommandOverride: commandOverride,
+		LogLevel:        logLevel,
 		CommandArgs:     flags.commandArgs,
 		Snapshot: sandbox.SnapshotOpts{
 			Enabled:         reviewEnabled,
