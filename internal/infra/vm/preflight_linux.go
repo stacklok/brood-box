@@ -19,6 +19,7 @@ const kvmDevicePath = "/dev/kvm"
 func buildPreflightChecker(dataDir string) preflight.Checker {
 	checker := preflight.NewEmpty()
 	checker.Register(kvmCheck())
+	checker.Register(preflight.UserNamespaceCheck())
 	checker.Register(preflight.DiskSpaceCheck(dataDir, 2.0))
 	checker.Register(preflight.ResourceCheck(1, 1.0))
 	return checker

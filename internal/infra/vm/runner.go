@@ -255,6 +255,10 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 	if r.cacheDir != "" {
 		backendOpts = append(backendOpts, libkrun.WithCacheDir(r.cacheDir))
 	}
+	// Spawn the runner in a user namespace so libkrun's virtiofs passthrough
+	// gains CAP_SETGID within the namespace. Without this, set_creds() fails
+	// with EPERM when host GID != guest GID.
+	backendOpts = append(backendOpts, libkrun.WithUserNamespaceUID(sandboxUID, sandboxGID))
 	if len(backendOpts) > 0 {
 		opts = append(opts, propolis.WithBackend(libkrun.NewBackend(backendOpts...)))
 	}
