@@ -632,6 +632,8 @@ github.com/stacklok/propolis v0.0.19 h1:mUiS+xLNP3kqaRZsPK08+QqwLoTTcFqXCAs1xrTP
 github.com/stacklok/propolis v0.0.19/go.mod h1:C727m7ggN78TJ0vok+68e+YKnZMlm1L4GlY63P4IReA=
 github.com/stacklok/toolhive v0.11.2 h1:6HxvqhBlpgyL8sG351wWFIWzPx11H4krTYr2Xu6ojqM=
 github.com/stacklok/toolhive v0.11.2/go.mod h1:LU04sTTWLQMLYnNohJEAiOgl0Ipn7l38aome/rKfmh4=
+github.com/stacklok/toolhive v0.11.3 h1:lU0WgfaYNEZUusnrt7Uy6t6DcDXBwgXp8aYdUm5GCYI=
+github.com/stacklok/toolhive v0.11.3/go.mod h1:LU04sTTWLQMLYnNohJEAiOgl0Ipn7l38aome/rKfmh4=
 github.com/stacklok/toolhive-core v0.0.11 h1:tFLwSHE/AUikLYu6x7N9iTfMUR9eJS9JAVzvoPU+yrI=
 github.com/stacklok/toolhive-core v0.0.11/go.mod h1:XnAsVL81S2T9010NfoeByxY1RUlBGbFAO3E+e0FENQo=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
