@@ -5,7 +5,11 @@
 
 package runtimebin
 
-import _ "embed"
+import (
+	_ "embed"
+
+	"github.com/stacklok/propolis/extract"
+)
 
 //go:embed propolis-runner
 var runner []byte
@@ -14,3 +18,7 @@ var runner []byte
 var libkrun []byte
 
 const available = true
+
+func extraLibs() []extract.File {
+	return nil
+}

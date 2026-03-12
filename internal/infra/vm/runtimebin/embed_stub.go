@@ -5,9 +5,15 @@
 
 package runtimebin
 
+import "github.com/stacklok/propolis/extract"
+
 var (
 	runner  []byte
 	libkrun []byte
 )
 
 const available = false
+
+func extraLibs() []extract.File {
+	return nil
+}

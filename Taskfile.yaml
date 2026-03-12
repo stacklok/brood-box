@@ -232,6 +232,7 @@ tasks:
       - rm -f internal/infra/vm/runtimebin/propolis-runner
       - rm -f internal/infra/vm/runtimebin/libkrun.so.1 internal/infra/vm/runtimebin/libkrun.1.dylib
       - rm -f internal/infra/vm/runtimebin/libkrunfw.so.5 internal/infra/vm/runtimebin/libkrunfw.5.dylib
+      - rm -f internal/infra/vm/runtimebin/libepoxy.0.dylib internal/infra/vm/runtimebin/libvirglrenderer.1.dylib internal/infra/vm/runtimebin/libMoltenVK.dylib
       - rm -f internal/infra/vm/runtimebin/VERSION internal/infra/vm/runtimebin/LICENSE-GPL
       - rm -f internal/infra/vm/runtimebin/sha256sums.txt
 

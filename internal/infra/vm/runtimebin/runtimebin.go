@@ -20,5 +20,5 @@ func RuntimeSource() extract.Source {
 	if !available {
 		return nil
 	}
-	return extract.RuntimeBundle(Version, runner, libkrun)
+	return extract.RuntimeBundle(Version, runner, libkrun, extraLibs()...)
 }
