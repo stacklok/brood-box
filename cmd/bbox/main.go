@@ -557,12 +557,10 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		fsStore := infracredential.NewFSStore(credStateDir, logger)
 		credentialStore = fsStore
 
-		if seedCreds && saveCredentials {
-			// Seeder selection will be wired in the next task.
-			if agentName == "claude-code" {
-				seeder := infracredential.NewClaudeCodeSeeder(logger)
+		if seedCreds {
+			if seeder := credentialSeederForAgent(agentName, logger); seeder != nil {
 				if err := seeder.Seed(fsStore); err != nil {
-					logger.Warn("failed to seed credentials", "agent", agentName, "error", err)
+					logger.Warn("credential seeding failed", "agent", agentName, "error", err)
 				}
 			}
 		}
@@ -1034,6 +1032,17 @@ func sanitizeAll(ss []string) []string {
 		out[i] = sanitizeValue(s)
 	}
 	return out
+}
+
+// credentialSeederForAgent returns a CredentialSeeder for the given agent,
+// or nil if no seeder is available.
+func credentialSeederForAgent(name string, logger *slog.Logger) credential.CredentialSeeder {
+	switch name {
+	case "claude-code":
+		return infracredential.NewClaudeCodeSeeder(logger)
+	default:
+		return nil
+	}
 }
 
 // runtimeCacheDir returns the directory used for extracting embedded runtime
