@@ -140,6 +140,24 @@ func TestInjectClaudeCodeMCP(t *testing.T) {
 	}
 }
 
+func TestInjectClaudeCodeMCP_SetsOnboardingFlag(t *testing.T) {
+	t.Parallel()
+
+	rootfs := setupRootfs(t)
+	chown, _ := recordingChown()
+	err := injectClaudeCodeMCP(rootfs, "192.168.127.1", 4483, chown)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(rootfs, sandboxHome, ".claude.json"))
+	require.NoError(t, err)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+
+	assert.Contains(t, raw, "hasCompletedOnboarding")
+	assert.JSONEq(t, "true", string(raw["hasCompletedOnboarding"]))
+}
+
 func TestInjectClaudeCodeMCP_CustomPort(t *testing.T) {
 	t.Parallel()
 
@@ -173,8 +191,10 @@ func TestInjectClaudeCodeMCP_NoExtraFields(t *testing.T) {
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(data, &raw))
 
-	assert.Len(t, raw, 1, "top-level should have only mcpServers")
+	assert.Len(t, raw, 2, "top-level should have mcpServers and hasCompletedOnboarding")
 	assert.Contains(t, raw, "mcpServers")
+	assert.Contains(t, raw, "hasCompletedOnboarding")
+	assert.Equal(t, true, raw["hasCompletedOnboarding"])
 
 	servers := raw["mcpServers"].(map[string]any)
 	assert.Len(t, servers, 1, "should have only sandbox-tools")

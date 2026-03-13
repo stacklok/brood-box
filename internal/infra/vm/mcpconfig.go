@@ -54,6 +54,8 @@ type claudeCodeServer struct {
 
 // injectClaudeCodeMCP merges an MCP server entry into ~/.claude.json,
 // preserving any pre-existing keys (auth tokens, onboarding flags, etc.).
+// It also sets hasCompletedOnboarding so Claude Code skips the interactive
+// setup wizard, which cannot complete inside a headless VM.
 func injectClaudeCodeMCP(rootfsPath, gatewayIP string, port uint16, chown ChownFunc) error {
 	servers := map[string]claudeCodeServer{
 		"sandbox-tools": {
@@ -67,7 +69,11 @@ func injectClaudeCodeMCP(rootfsPath, gatewayIP string, port uint16, chown ChownF
 		return err
 	}
 
-	return mergeJSONKey(homeDir, ".claude.json", "mcpServers", servers, chown)
+	if err := mergeJSONKey(homeDir, ".claude.json", "mcpServers", servers, chown); err != nil {
+		return err
+	}
+
+	return mergeJSONKey(homeDir, ".claude.json", "hasCompletedOnboarding", true, chown)
 }
 
 // --- Codex ---
