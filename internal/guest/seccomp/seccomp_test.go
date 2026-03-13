@@ -103,11 +103,26 @@ func TestBlockedSocketFamilies(t *testing.T) {
 	}
 }
 
-func TestBlockedSyscallsReturnsThreeGroups(t *testing.T) {
+func TestCloneNamespaceBlock(t *testing.T) {
+	t.Parallel()
+
+	group := cloneNamespaceBlock()
+	assert.Equal(t, secbpf.ActionErrno, group.Action)
+	require.Len(t, group.NamesWithCondtions, 1)
+
+	entry := group.NamesWithCondtions[0]
+	assert.Equal(t, "clone", entry.Name)
+	require.Len(t, entry.Conditions, 1)
+	assert.Equal(t, uint32(0), entry.Conditions[0].Argument)
+	assert.Equal(t, secbpf.BitsSet, entry.Conditions[0].Operation)
+	assert.Equal(t, uint64(cloneNamespaceMask), entry.Conditions[0].Value)
+}
+
+func TestBlockedSyscallsReturnsFourGroups(t *testing.T) {
 	t.Parallel()
 
 	groups := blockedSyscalls()
-	assert.Len(t, groups, 3, "expected exploit + operational + socket groups")
+	assert.Len(t, groups, 4, "expected exploit + operational + clone-ns + socket groups")
 }
 
 // TestApplyBlocksSyscalls verifies the seccomp filter in an isolated subprocess.

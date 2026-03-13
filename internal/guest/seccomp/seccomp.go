@@ -53,6 +53,7 @@ func blockedSyscalls() []secbpf.SyscallGroup {
 	return []secbpf.SyscallGroup{
 		exploitIndicatorBlocks(),
 		operationalBlocks(),
+		cloneNamespaceBlock(),
 		blockedSocketFamilies(),
 	}
 }
@@ -147,6 +148,44 @@ func operationalBlocks() secbpf.SyscallGroup {
 			"lookup_dcookie",
 			"kcmp",
 			"nfsservctl",
+		},
+	}
+}
+
+// cloneNamespaceMask is the combined bitmask of all CLONE_NEW* flags.
+// clone() with any of these bits set is blocked (EPERM) to prevent namespace
+// creation — the #1 entry point for container-style privilege escalation.
+const cloneNamespaceMask = syscall.CLONE_NEWUSER |
+	syscall.CLONE_NEWNS |
+	syscall.CLONE_NEWNET |
+	syscall.CLONE_NEWPID |
+	syscall.CLONE_NEWIPC |
+	syscall.CLONE_NEWUTS |
+	syscall.CLONE_NEWCGROUP |
+	syscall.CLONE_NEWTIME
+
+// cloneNamespaceBlock blocks clone() calls that set any namespace flag.
+// This closes the gap where unshare/setns are blocked but clone() with
+// CLONE_NEWUSER|CLONE_NEWNS could still create namespaces.
+//
+// Note: clone3 is NOT blocked — glibc 2.34+ uses it for fork(), and its
+// namespace flags live inside a struct pointer that BPF cannot inspect
+// (same rationale as the existing comment in operationalBlocks).
+func cloneNamespaceBlock() secbpf.SyscallGroup {
+	return secbpf.SyscallGroup{
+		Action: secbpf.ActionErrno,
+		// NamesWithCondtions has a typo in the upstream library (missing 'i').
+		NamesWithCondtions: []secbpf.NameWithConditions{
+			{
+				Name: "clone",
+				Conditions: secbpf.ArgumentConditions{
+					{
+						Argument:  0,
+						Operation: secbpf.BitsSet,
+						Value:     cloneNamespaceMask,
+					},
+				},
+			},
 		},
 	}
 }
