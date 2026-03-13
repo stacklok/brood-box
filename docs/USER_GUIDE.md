@@ -72,6 +72,7 @@ bbox <agent-name> [flags] [-- <agent-args...>]
 | `--mcp-group` | `default` | ToolHive group to discover MCP servers from |
 | `--mcp-port` | `4483` | Port for MCP proxy on VM gateway |
 | `--mcp-config` | (none) | Path to custom vmcp config YAML |
+| `--mcp-authz-profile` | `full-access` | MCP authorization profile: `full-access`, `observe`, `safe-tools`, `custom` |
 | `--no-git-token` | `false` | Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM |
 | `--no-git-ssh-agent` | `false` | Disable SSH agent forwarding into the VM |
 | `--no-firmware-download` | `false` | Disable firmware download (use system libkrunfw only) |
@@ -150,6 +151,8 @@ mcp:
   group: "default"
   port: 4483
   config: "/path/to/vmcp-config.yaml"  # optional advanced config
+  authz:
+    profile: "full-access"  # observe, safe-tools, custom
 
 # Git identity and auth forwarding
 git:
@@ -334,6 +337,61 @@ bbox claude-code --mcp-port 5000
 
 MCP config is injected into the guest in the agent-specific format
 (Claude Code, Codex, and OpenCode each use different config formats).
+
+### MCP Authorization Profiles
+
+By default, the agent has full access to all MCP operations. You can
+restrict what the agent can do with authorization profiles:
+
+| Profile | What the agent can do |
+|---|---|
+| `full-access` (default) | All MCP operations — no restrictions |
+| `observe` | List and read tools, prompts, and resources — cannot call tools |
+| `safe-tools` | Observe + call tools annotated as read-only or non-destructive and closed-world |
+| `custom` | Operator-defined Cedar policies from vmcp config YAML |
+
+```bash
+# Agent can only list and read MCP capabilities
+bbox claude-code --mcp-authz-profile observe
+
+# Agent can call safe tools (read-only or non-destructive + closed-world)
+bbox claude-code --mcp-authz-profile safe-tools
+
+# Use custom Cedar policies from a vmcp config file
+bbox claude-code --mcp-authz-profile custom --mcp-config /path/to/vmcp.yaml
+```
+
+Or set it in the global config file:
+
+```yaml
+mcp:
+  authz:
+    profile: observe
+```
+
+The `safe-tools` profile uses MCP tool annotations to decide what to
+allow. Tools with `readOnlyHint: true` are permitted. Tools with both
+`destructiveHint: false` and `openWorldHint: false` are also permitted.
+Tools without annotations are denied by default (Cedar default-deny).
+
+The `custom` profile reads Cedar policies from the vmcp config YAML's
+`incomingAuth.authz.policies` section:
+
+```yaml
+# vmcp.yaml (passed via --mcp-config)
+groupRef: default
+incomingAuth:
+  type: anonymous
+  authz:
+    type: cedar
+    policies:
+      - 'permit(principal, action == Action::"list_tools", resource);'
+      - 'permit(principal, action == Action::"call_tool", resource == Tool::"search_code");'
+```
+
+**Security**: Per-workspace `.broodbox.yaml` can only tighten the authz
+profile (e.g. from `safe-tools` to `observe`), never widen it. The
+`custom` profile cannot be set from workspace config.
 
 ## Git Integration
 

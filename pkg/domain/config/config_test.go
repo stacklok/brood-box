@@ -725,6 +725,115 @@ func TestMergeConfigs_ResourceBounds(t *testing.T) {
 	}
 }
 
+func TestStricterMCPAuthzProfile(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a    string
+		b    string
+		want string
+	}{
+		{name: "both empty defaults to full-access", a: "", b: "", want: MCPAuthzProfileFullAccess},
+		{name: "observe is stricter than safe-tools", a: MCPAuthzProfileSafeTools, b: MCPAuthzProfileObserve, want: MCPAuthzProfileObserve},
+		{name: "observe is stricter than full-access", a: MCPAuthzProfileFullAccess, b: MCPAuthzProfileObserve, want: MCPAuthzProfileObserve},
+		{name: "safe-tools is stricter than full-access", a: MCPAuthzProfileFullAccess, b: MCPAuthzProfileSafeTools, want: MCPAuthzProfileSafeTools},
+		{name: "same profile returns itself", a: MCPAuthzProfileObserve, b: MCPAuthzProfileObserve, want: MCPAuthzProfileObserve},
+		{name: "empty a treated as full-access", a: "", b: MCPAuthzProfileObserve, want: MCPAuthzProfileObserve},
+		{name: "empty b treated as full-access", a: MCPAuthzProfileObserve, b: "", want: MCPAuthzProfileObserve},
+		{name: "custom a preserved", a: MCPAuthzProfileCustom, b: MCPAuthzProfileObserve, want: MCPAuthzProfileCustom},
+		{name: "custom b preserved", a: MCPAuthzProfileObserve, b: MCPAuthzProfileCustom, want: MCPAuthzProfileCustom},
+		{name: "both custom returns a", a: MCPAuthzProfileCustom, b: MCPAuthzProfileCustom, want: MCPAuthzProfileCustom},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := StricterMCPAuthzProfile(tt.a, tt.b)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestIsValidMCPAuthzProfile(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, IsValidMCPAuthzProfile(MCPAuthzProfileFullAccess))
+	assert.True(t, IsValidMCPAuthzProfile(MCPAuthzProfileObserve))
+	assert.True(t, IsValidMCPAuthzProfile(MCPAuthzProfileSafeTools))
+	assert.True(t, IsValidMCPAuthzProfile(MCPAuthzProfileCustom))
+	assert.False(t, IsValidMCPAuthzProfile(""))
+	assert.False(t, IsValidMCPAuthzProfile("unknown"))
+}
+
+func TestMergeConfigs_MCPAuthz(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		global *Config
+		local  *Config
+		want   *MCPAuthzConfig
+	}{
+		{
+			name:   "both nil — no authz",
+			global: &Config{},
+			local:  &Config{},
+			want:   nil,
+		},
+		{
+			name:   "global set, local nil — global preserved",
+			global: &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve}}},
+			local:  &Config{},
+			want:   &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+		},
+		{
+			name:   "global nil, local set — local applied",
+			global: &Config{},
+			local:  &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools}}},
+			want:   &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+		},
+		{
+			name:   "local can tighten — observe beats safe-tools",
+			global: &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools}}},
+			local:  &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve}}},
+			want:   &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+		},
+		{
+			name:   "local cannot widen — full-access blocked by observe",
+			global: &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve}}},
+			local:  &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileFullAccess}}},
+			want:   &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+		},
+		{
+			name:   "local cannot widen — safe-tools blocked by observe",
+			global: &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve}}},
+			local:  &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools}}},
+			want:   &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+		},
+		{
+			name:   "custom from local config is ignored — global preserved",
+			global: &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve}}},
+			local:  &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileCustom}}},
+			want:   &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+		},
+		{
+			name:   "custom from local config is ignored — nil global stays nil",
+			global: &Config{},
+			local:  &Config{MCP: MCPConfig{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileCustom}}},
+			want:   nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := MergeConfigs(tt.global, tt.local)
+			assert.Equal(t, tt.want, got.MCP.Authz)
+		})
+	}
+}
+
 func TestMerge_ResourceBounds(t *testing.T) {
 	t.Parallel()
 

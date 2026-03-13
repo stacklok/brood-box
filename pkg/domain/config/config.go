@@ -110,6 +110,90 @@ type MCPConfig struct {
 	// ConfigPath is an optional path to a vmcp config YAML for advanced
 	// customization (tool filtering, conflict resolution, composite workflows).
 	ConfigPath string `yaml:"config,omitempty"`
+
+	// Authz configures authorization for the MCP proxy.
+	Authz *MCPAuthzConfig `yaml:"authz,omitempty"`
+}
+
+// MCPAuthzConfig configures authorization for the MCP proxy.
+type MCPAuthzConfig struct {
+	// Profile is the authorization profile: "full-access" (default), "observe",
+	// "safe-tools", or "custom". The "custom" profile delegates to Cedar policies
+	// defined in the vmcp config YAML (--mcp-config) and cannot be set from
+	// workspace-local config.
+	Profile string `yaml:"profile,omitempty"`
+}
+
+const (
+	// MCPAuthzProfileFullAccess allows all MCP operations (default, no authz middleware).
+	MCPAuthzProfileFullAccess = "full-access"
+
+	// MCPAuthzProfileObserve allows listing and reading tools/prompts/resources only.
+	MCPAuthzProfileObserve = "observe"
+
+	// MCPAuthzProfileSafeTools allows observe operations plus calling non-destructive
+	// closed-world tools based on MCP tool annotations.
+	MCPAuthzProfileSafeTools = "safe-tools"
+
+	// MCPAuthzProfileCustom delegates authorization to Cedar policies defined in
+	// the vmcp config YAML (--mcp-config incomingAuth.authz.policies). Requires
+	// --mcp-config to be set with valid Cedar policies. Cannot be set from
+	// workspace-local config for security.
+	MCPAuthzProfileCustom = "custom"
+)
+
+// mcpAuthzProfileStrictness defines the ordering from least to most permissive.
+// Lower index = stricter. "custom" is excluded — its permissiveness is unknown.
+var mcpAuthzProfileStrictness = []string{
+	MCPAuthzProfileObserve,
+	MCPAuthzProfileSafeTools,
+	MCPAuthzProfileFullAccess,
+}
+
+// ValidMCPAuthzProfiles returns the list of valid MCP authz profile names.
+func ValidMCPAuthzProfiles() []string {
+	return []string{
+		MCPAuthzProfileFullAccess, MCPAuthzProfileObserve,
+		MCPAuthzProfileSafeTools, MCPAuthzProfileCustom,
+	}
+}
+
+// IsValidMCPAuthzProfile reports whether the given profile name is recognized.
+func IsValidMCPAuthzProfile(profile string) bool {
+	switch profile {
+	case MCPAuthzProfileFullAccess, MCPAuthzProfileObserve,
+		MCPAuthzProfileSafeTools, MCPAuthzProfileCustom:
+		return true
+	default:
+		return false
+	}
+}
+
+// StricterMCPAuthzProfile returns the stricter of the two profiles.
+// An empty string is treated as full-access (the implicit default).
+// "custom" cannot be compared — if either side is "custom", it is returned
+// unchanged (the caller is responsible for validating custom policy sources).
+func StricterMCPAuthzProfile(a, b string) string {
+	if a == MCPAuthzProfileCustom || b == MCPAuthzProfileCustom {
+		// Custom has unknown permissiveness; preserve whichever side is custom.
+		if a == MCPAuthzProfileCustom {
+			return a
+		}
+		return b
+	}
+	if a == "" {
+		a = MCPAuthzProfileFullAccess
+	}
+	if b == "" {
+		b = MCPAuthzProfileFullAccess
+	}
+	for _, p := range mcpAuthzProfileStrictness {
+		if p == a || p == b {
+			return p
+		}
+	}
+	// Both unknown — return a unchanged.
+	return a
 }
 
 // IsEnabled returns whether the MCP proxy is enabled.
@@ -273,6 +357,10 @@ func MergeConfigs(global, local *Config) *Config {
 	// Runtime: local overrides global when explicitly set.
 	result.Runtime = mergeRuntimeConfig(global.Runtime, local.Runtime)
 
+	// MCP.Authz: local can only tighten (not widen). Same security pattern
+	// as egress profiles — a workspace config cannot escalate permissions.
+	result.MCP.Authz = mergeMCPAuthzConfig(global.MCP.Authz, local.MCP.Authz)
+
 	// Agents: local extends/overrides global per key.
 	if len(local.Agents) > 0 {
 		if result.Agents == nil {
@@ -367,6 +455,28 @@ func mergeGitConfig(global, local GitConfig) GitConfig {
 	}
 
 	return result
+}
+
+// mergeMCPAuthzConfig merges local into global using tighten-only semantics.
+// Local can only make the profile stricter, never more permissive.
+// "custom" from local config is silently ignored (security: local config must
+// not be able to switch to operator-controlled Cedar policies).
+// Returns nil when neither side sets an authz config.
+func mergeMCPAuthzConfig(global, local *MCPAuthzConfig) *MCPAuthzConfig {
+	if local == nil || local.Profile == "" {
+		return global
+	}
+	// "custom" is not allowed from workspace-local config — it would let a
+	// repository supply its own Cedar policies via a vmcp YAML it controls.
+	if local.Profile == MCPAuthzProfileCustom {
+		return global
+	}
+	if global == nil || global.Profile == "" {
+		return local
+	}
+	return &MCPAuthzConfig{
+		Profile: StricterMCPAuthzProfile(global.Profile, local.Profile),
+	}
 }
 
 func mergeRuntimeConfig(global, local RuntimeConfig) RuntimeConfig {

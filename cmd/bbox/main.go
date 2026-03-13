@@ -80,6 +80,7 @@ func rootCmd() *cobra.Command {
 		mcpGroup          string
 		mcpPort           uint16
 		mcpConfig         string
+		mcpAuthzProfile   string
 		noGitToken        bool
 		noGitSSHAgent     bool
 		noSaveCredentials bool
@@ -138,6 +139,7 @@ Example:
 				mcpGroup:          mcpGroup,
 				mcpPort:           mcpPort,
 				mcpConfig:         mcpConfig,
+				mcpAuthzProfile:   mcpAuthzProfile,
 				noGitToken:        noGitToken,
 				noGitSSHAgent:     noGitSSHAgent,
 				noSaveCredentials: noSaveCredentials,
@@ -168,6 +170,7 @@ Example:
 	cmd.Flags().StringVar(&mcpGroup, "mcp-group", "default", "ToolHive group to discover MCP servers from")
 	cmd.Flags().Uint16Var(&mcpPort, "mcp-port", 4483, "Port for MCP proxy on VM gateway")
 	cmd.Flags().StringVar(&mcpConfig, "mcp-config", "", "Path to custom vmcp config YAML")
+	cmd.Flags().StringVar(&mcpAuthzProfile, "mcp-authz-profile", "", "MCP authorization profile: full-access, observe, safe-tools, custom (default: full-access)")
 	cmd.Flags().BoolVar(&noGitToken, "no-git-token", false, "Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM")
 	cmd.Flags().BoolVar(&noGitSSHAgent, "no-git-ssh-agent", false, "Disable SSH agent forwarding into the VM")
 	cmd.Flags().BoolVar(&noSaveCredentials, "no-save-credentials", false, "Disable saving agent credentials between sessions (enabled by default)")
@@ -279,6 +282,7 @@ type runFlags struct {
 	mcpGroup          string
 	mcpPort           uint16
 	mcpConfig         string
+	mcpAuthzProfile   string
 	noGitToken        bool
 	noGitSSHAgent     bool
 	noSaveCredentials bool
@@ -582,7 +586,16 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 				mcpConfigPath = cfg.MCP.ConfigPath
 			}
 		}
-		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpConfigPath, logger, logFile)
+
+		// Resolve MCP authz config: CLI flag overrides config file.
+		var authzCfg *domainconfig.MCPAuthzConfig
+		if flags.mcpAuthzProfile != "" {
+			authzCfg = &domainconfig.MCPAuthzConfig{Profile: flags.mcpAuthzProfile}
+		} else if cfg != nil && cfg.MCP.Authz != nil {
+			authzCfg = cfg.MCP.Authz
+		}
+
+		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpConfigPath, authzCfg, logger, logFile)
 		deps.MCPProvider = mcpProvider
 		defer func() { _ = mcpProvider.Close() }()
 		// Ensure sandbox config reflects MCP enabled state for the application layer.
@@ -591,6 +604,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		sandboxCfg.MCP.Group = mcpGroup
 		sandboxCfg.MCP.Port = mcpPort
 		sandboxCfg.MCP.ConfigPath = mcpConfigPath
+		sandboxCfg.MCP.Authz = authzCfg
 	}
 
 	// Resolve git config from config + CLI flags.
@@ -621,6 +635,12 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	if flags.egressProfile != "" && !egress.ProfileName(flags.egressProfile).IsValid() {
 		return fmt.Errorf("invalid --egress-profile %q: valid values are %v",
 			flags.egressProfile, egress.ValidProfiles())
+	}
+
+	// Validate MCP authz profile flag early.
+	if flags.mcpAuthzProfile != "" && !domainconfig.IsValidMCPAuthzProfile(flags.mcpAuthzProfile) {
+		return fmt.Errorf("invalid --mcp-authz-profile %q: valid values are %v",
+			flags.mcpAuthzProfile, domainconfig.ValidMCPAuthzProfiles())
 	}
 
 	var parsedAllowHosts []egress.Host
@@ -891,6 +911,17 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 			warnings = append(warnings, "firmware download re-enable is ignored — global config disables it")
 		} else {
 			warnings = append(warnings, fmt.Sprintf("sets firmware download: %t", *localCfg.Runtime.FirmwareDownload))
+		}
+	}
+
+	// MCP authz profile — local can only tighten (tighten-only merge).
+	// "custom" from local config is silently ignored by merge, but we still warn.
+	if localCfg.MCP.Authz != nil && localCfg.MCP.Authz.Profile != "" {
+		profile := sanitizeValue(localCfg.MCP.Authz.Profile)
+		if localCfg.MCP.Authz.Profile == domainconfig.MCPAuthzProfileCustom {
+			warnings = append(warnings, fmt.Sprintf("MCP authz profile %q is ignored — custom profiles cannot be set from workspace config", profile))
+		} else {
+			warnings = append(warnings, fmt.Sprintf("sets MCP authz profile: %s (can only tighten, not widen)", profile))
 		}
 	}
 

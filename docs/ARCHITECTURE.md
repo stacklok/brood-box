@@ -136,7 +136,9 @@ Concrete implementations of domain interfaces and system integration.
   `.git/config` in snapshots.
 - **`mcp/`** -- `VMCPProvider` integrates toolhive's vmcp library to
   discover MCP backends from ToolHive groups and expose an aggregated
-  MCP proxy as an HTTP host service.
+  MCP proxy as an HTTP host service. Includes Cedar-based authorization
+  profile resolver (`profiles.go`) with built-in profiles (`observe`,
+  `safe-tools`) and support for custom Cedar policies from vmcp config.
 - **`terminal/`** -- `OSTerminal` wraps real terminal I/O with raw
   mode, SIGWINCH, and dimension queries.
 - **`progress/`** -- `SpinnerObserver` (animated spinner for
@@ -315,6 +317,11 @@ Inside the VM:
 - **VM stopped before review**: The VM is explicitly stopped before
   diff/review/flush, preventing the agent from modifying files during
   the review phase.
+- **MCP authorization profiles**: Opt-in Cedar-based authorization
+  restricts what MCP operations the agent can perform. Profiles follow
+  tighten-only merge semantics (workspace config can only restrict, not
+  widen). The `custom` profile is global/CLI only — workspace config
+  cannot set it.
 
 ## Relationship to Propolis
 

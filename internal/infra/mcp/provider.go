@@ -28,30 +28,34 @@ import (
 	vmcpserver "github.com/stacklok/toolhive/pkg/vmcp/server"
 	workloadsmgr "github.com/stacklok/toolhive/pkg/workloads"
 
+	"github.com/stacklok/brood-box/pkg/domain/config"
 	"github.com/stacklok/brood-box/pkg/domain/hostservice"
 )
 
 // VMCPProvider implements hostservice.Provider using toolhive's vmcp library.
 type VMCPProvider struct {
-	group      string
-	port       uint16
-	configPath string
-	server     *vmcpserver.Server
-	logger     *slog.Logger
-	logWriter  io.Writer
+	group       string
+	port        uint16
+	configPath  string
+	authzConfig *config.MCPAuthzConfig
+	server      *vmcpserver.Server
+	logger      *slog.Logger
+	logWriter   io.Writer
 }
 
 // NewVMCPProvider creates a new provider that will proxy MCP traffic to
 // backends discovered in the given ToolHive group.
+// authzConfig controls MCP authorization (nil = full-access, no restrictions).
 // logWriter receives toolhive's zap logs (typically the bbox log file).
 // If nil, toolhive logs are discarded.
-func NewVMCPProvider(group string, port uint16, configPath string, logger *slog.Logger, logWriter io.Writer) *VMCPProvider {
+func NewVMCPProvider(group string, port uint16, configPath string, authzConfig *config.MCPAuthzConfig, logger *slog.Logger, logWriter io.Writer) *VMCPProvider {
 	return &VMCPProvider{
-		group:      group,
-		port:       port,
-		configPath: configPath,
-		logger:     logger,
-		logWriter:  logWriter,
+		group:       group,
+		port:        port,
+		configPath:  configPath,
+		authzConfig: authzConfig,
+		logger:      logger,
+		logWriter:   logWriter,
 	}
 }
 
@@ -84,6 +88,7 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 
 	// Load optional vmcp config for advanced customization.
 	var aggConfig *vmcpconfig.AggregationConfig
+	var vmcpIncomingAuth *vmcpconfig.IncomingAuthConfig
 	if p.configPath != "" {
 		loader := vmcpconfig.NewYAMLLoader(p.configPath, &env.OSReader{})
 		cfg, loadErr := loader.Load()
@@ -91,6 +96,7 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 			return nil, fmt.Errorf("loading vmcp config %s: %w", p.configPath, loadErr)
 		}
 		aggConfig = cfg.Aggregation
+		vmcpIncomingAuth = cfg.IncomingAuth
 	}
 
 	// Discover backends in the group.
@@ -138,16 +144,25 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 	// Create router.
 	rt := router.NewDefaultRouter()
 
-	// Create vmcp server with local user auth middleware so the discovery
-	// manager has an identity in the request context (required for caching).
+	// Resolve authorization middleware.
+	authMiddleware, authzMiddleware, authInfoHandler, err := p.resolveAuthMiddleware(
+		ctx, vmcpIncomingAuth,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create vmcp server with the resolved auth/authz middleware.
 	srv, err := vmcpserver.New(
 		ctx,
 		&vmcpserver.Config{
-			Name:           "bbox-mcp",
-			GroupRef:       p.group,
-			Port:           int(p.port),
-			EndpointPath:   "/mcp",
-			AuthMiddleware: thvauth.LocalUserMiddleware("sandbox"),
+			Name:            "bbox-mcp",
+			GroupRef:        p.group,
+			Port:            int(p.port),
+			EndpointPath:    "/mcp",
+			AuthMiddleware:  authMiddleware,
+			AuthzMiddleware: authzMiddleware,
+			AuthInfoHandler: authInfoHandler,
 		},
 		rt,
 		backendClient,
@@ -197,6 +212,66 @@ func (p *VMCPProvider) Close() error {
 		return p.server.Stop(ctx)
 	}
 	return nil
+}
+
+// resolveAuthMiddleware builds the auth/authz middleware stack based on the
+// configured authorization profile.
+//
+// - full-access (or nil config): LocalUserMiddleware only, no authz.
+// - observe / safe-tools: Anonymous auth + Cedar authz with built-in policies.
+// - custom: Anonymous auth + Cedar authz with policies from the vmcp config YAML.
+func (p *VMCPProvider) resolveAuthMiddleware(
+	ctx context.Context,
+	vmcpIncomingAuth *vmcpconfig.IncomingAuthConfig,
+) (
+	authMw func(http.Handler) http.Handler,
+	authzMw func(http.Handler) http.Handler,
+	authInfoH http.Handler,
+	err error,
+) {
+	// Handle the "custom" profile: read Cedar policies from the vmcp config YAML.
+	if p.authzConfig != nil && p.authzConfig.Profile == config.MCPAuthzProfileCustom {
+		if vmcpIncomingAuth == nil ||
+			vmcpIncomingAuth.Authz == nil ||
+			len(vmcpIncomingAuth.Authz.Policies) == 0 {
+			return nil, nil, nil, fmt.Errorf(
+				"MCP authz profile %q requires Cedar policies in --mcp-config "+
+					"(incomingAuth.authz.policies)", config.MCPAuthzProfileCustom)
+		}
+		authMw, authzMw, authInfoH, err = vmcpauthfactory.NewIncomingAuthMiddleware(
+			ctx, vmcpIncomingAuth,
+		)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("creating custom MCP auth middleware: %w", err)
+		}
+		return authMw, authzMw, authInfoH, nil
+	}
+
+	// Resolve built-in profile to Cedar policies.
+	policies, err := ResolveProfile(p.authzConfig)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("resolving MCP authz profile: %w", err)
+	}
+
+	if policies == nil {
+		// full-access: no authz, just identity for caching.
+		return thvauth.LocalUserMiddleware("sandbox"), nil, nil, nil
+	}
+
+	authMw, authzMw, authInfoH, err = vmcpauthfactory.NewIncomingAuthMiddleware(
+		ctx,
+		&vmcpconfig.IncomingAuthConfig{
+			Type: "anonymous",
+			Authz: &vmcpconfig.AuthzConfig{
+				Type:     "cedar",
+				Policies: policies,
+			},
+		},
+	)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("creating MCP auth middleware: %w", err)
+	}
+	return authMw, authzMw, authInfoH, nil
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code.

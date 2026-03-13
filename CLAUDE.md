@@ -61,6 +61,7 @@ This project follows DDD layered architecture with dependency injection **strict
 - `internal/infra/ssh/` — Interactive PTY terminal session
 - `internal/infra/config/` — YAML config loader
 - `internal/infra/agent/` — Built-in agent registry
+- `internal/infra/mcp/` — VMCPProvider (vmcp proxy), Cedar authz profile resolver
 - `internal/infra/exclude/` — Gitignore-compatible exclude pattern loading + two-tier matching
 - `internal/infra/workspace/` — COW workspace cloning (FICLONE on Linux, clonefile on macOS, copy fallback)
 - `internal/infra/diff/` — SHA-256 based file diff engine
@@ -116,6 +117,57 @@ review:
 ```
 
 Execution order: create snapshot → start VM → terminal → stop VM → diff → review/auto-accept → flush → cleanup.
+
+## MCP Authorization
+
+The MCP proxy supports opt-in authorization profiles that restrict what MCP operations the agent can perform. Default is `full-access` (no restrictions). Authorization uses toolhive's Cedar-based authz middleware with annotation enrichment.
+
+### Profiles
+
+| Profile | Agent can do | Cedar behavior |
+|---|---|---|
+| `full-access` | Everything (default) | No authz middleware |
+| `observe` | List + read tools/prompts/resources | 5 static permit policies for list/read actions |
+| `safe-tools` | Above + non-destructive closed-world tools | Above + `when` clauses on `resource.readOnlyHint`, `resource.destructiveHint`, `resource.openWorldHint` |
+| `custom` | Operator-defined | Cedar policies from vmcp config YAML (`--mcp-config`) |
+
+### Usage
+
+```bash
+bbox claude-code --mcp-authz-profile observe
+bbox claude-code --mcp-authz-profile safe-tools
+bbox claude-code --mcp-authz-profile custom --mcp-config /path/to/vmcp.yaml
+```
+
+Or via global config (`~/.config/broodbox/config.yaml`):
+```yaml
+mcp:
+  authz:
+    profile: observe
+```
+
+### Custom profile
+
+The `custom` profile delegates to Cedar policies defined in the vmcp config YAML's `incomingAuth.authz.policies` section. Requires `--mcp-config` pointing to a YAML with valid Cedar policies:
+
+```yaml
+# vmcp.yaml
+groupRef: default
+incomingAuth:
+  type: anonymous
+  authz:
+    type: cedar
+    policies:
+      - 'permit(principal, action == Action::"list_tools", resource);'
+      - 'permit(principal, action == Action::"call_tool", resource == Tool::"search_code");'
+```
+
+### Security constraints
+
+- **Tighten-only merge**: workspace-local `.broodbox.yaml` can only make the profile stricter, never more permissive (same pattern as egress profiles).
+- **`custom` is global/CLI only**: workspace-local config cannot set `profile: custom` — it would allow a repository to supply its own Cedar policies.
+- Profile constants and strictness ordering live in `pkg/domain/config/` (domain layer).
+- Cedar policy resolution lives in `internal/infra/mcp/profiles.go` (infrastructure layer).
 
 ## CI/CD
 
