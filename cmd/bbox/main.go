@@ -47,7 +47,6 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/progress"
-	"github.com/stacklok/brood-box/pkg/domain/snapshot"
 	"github.com/stacklok/brood-box/pkg/domain/workspace"
 	"github.com/stacklok/brood-box/pkg/sandbox"
 )
@@ -96,9 +95,10 @@ func rootCmd() *cobra.Command {
 		Long: `bbox boots a microVM, mounts your workspace, forwards secrets,
 and drops into an interactive terminal session with a coding agent.
 
-By default, the workspace is mounted directly into the VM. Use --review to
-enable COW snapshot isolation: after the agent finishes, you review changes
-per-file before they touch the real workspace.
+Workspace snapshot isolation is always active: a COW snapshot is created
+before the VM starts, and changes are flushed back after the agent finishes.
+Use --review to interactively approve or reject each changed file; without it,
+all changes are auto-accepted.
 
 Supported agents: claude-code, codex, opencode
 
@@ -159,7 +159,7 @@ Example:
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/broodbox/config.yaml)")
 	cmd.Flags().StringVar(&image, "image", "", "Override OCI image reference")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug-level logging to file (default: info level)")
-	cmd.Flags().BoolVar(&review, "review", false, "Enable workspace snapshot isolation (COW snapshot with per-file review)")
+	cmd.Flags().BoolVar(&review, "review", false, "Enable interactive per-file review of workspace changes (snapshot isolation is always active)")
 	cmd.Flags().StringSliceVar(&excludes, "exclude", nil, "Additional exclude patterns for workspace snapshot (repeatable)")
 	cmd.Flags().StringVar(&logFile, "log-file", "", "Override log file path (default: ~/.config/broodbox/vms/<vm-name>/broodbox.log)")
 	cmd.Flags().StringVar(&egressProfile, "egress-profile", "", "Egress restriction level: permissive, standard, locked (default: agent's built-in default)")
@@ -355,9 +355,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	ws := earlyWs
 
 	// Clean up stale snapshot dirs from previous crashes.
-	if flags.review {
-		infraws.CleanupStaleSnapshots(ws, logger)
-	}
+	infraws.CleanupStaleSnapshots(ws, logger)
 
 	// Clean up stale VM log directories from previous crashes.
 	if home, homeErr := os.UserHomeDir(); homeErr == nil {
@@ -415,23 +413,11 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		}
 	}
 
-	// Determine review mode. Default is disabled unless --review is set
-	// or config explicitly enables it.
-	reviewEnabled := flags.review
-	if !reviewEnabled && cfg != nil && cfg.Review.Enabled != nil && *cfg.Review.Enabled {
-		reviewEnabled = true
-	}
-
-	// Warn if review is disabled and git config contains credentials.
-	if !reviewEnabled {
-		gitConfigPath := filepath.Join(ws, ".git", "config")
-		if hasCreds, credErr := infragit.ContainsCredentials(gitConfigPath); credErr != nil {
-			logger.Warn("failed to check git config for credentials", "error", credErr)
-		} else if hasCreds {
-			_, _ = fmt.Fprintf(os.Stderr, "\nSecurity: .git/config contains credentials that will be exposed inside the VM.\n")
-			_, _ = fmt.Fprintf(os.Stderr, "  Snapshot isolation is disabled, so git credential sanitization is skipped.\n")
-			_, _ = fmt.Fprintf(os.Stderr, "  Consider using --review to enable credential sanitization.\n\n")
-		}
+	// Determine interactive review mode. Default is disabled unless --review
+	// is set or config explicitly enables it. Snapshot isolation is always on.
+	interactiveReview := flags.review
+	if !interactiveReview && cfg != nil && cfg.Review.Enabled != nil && *cfg.Review.Enabled {
+		interactiveReview = true
 	}
 
 	// Merge exclude patterns from config and CLI.
@@ -441,21 +427,18 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 	excludePatterns = append(excludePatterns, flags.excludes...)
 
-	// Build exclude matchers (moved from app layer to composition root).
-	var snapshotMatcher, diffMatcher snapshot.Matcher
-	if reviewEnabled {
-		excludeCfg, err := exclude.LoadExcludeConfig(ws, excludePatterns, logger)
-		if err != nil {
-			return fmt.Errorf("loading exclude config: %w", err)
-		}
-		snapshotMatcher = exclude.NewMatcherFromConfig(excludeCfg)
-
-		gitignorePatterns, err := exclude.LoadGitignorePatterns(ws, logger)
-		if err != nil {
-			logger.Warn("failed to load .gitignore patterns", "error", err)
-		}
-		diffMatcher = exclude.NewDiffMatcher(excludeCfg, gitignorePatterns)
+	// Build exclude matchers — always needed since snapshot isolation is always active.
+	excludeCfg, err := exclude.LoadExcludeConfig(ws, excludePatterns, logger)
+	if err != nil {
+		return fmt.Errorf("loading exclude config: %w", err)
 	}
+	snapshotMatcher := exclude.NewMatcherFromConfig(excludeCfg)
+
+	gitignorePatterns, err := exclude.LoadGitignorePatterns(ws, logger)
+	if err != nil {
+		logger.Warn("failed to load .gitignore patterns", "error", err)
+	}
+	diffMatcher := exclude.NewDiffMatcher(excludeCfg, gitignorePatterns)
 
 	// Validate and convert config-file egress hosts.
 	configEgressHosts, egressErr := domainconfig.ToEgressHosts(cfg.Network.AllowHosts)
@@ -562,7 +545,6 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 
 	// Wire dependencies.
-	var reviewer *review.InteractiveReviewer
 	deps := sandbox.SandboxDeps{
 		Registry:        registry,
 		VMRunner:        infravm.NewPropolisRunner(logger, vmRunnerOpts...),
@@ -612,20 +594,21 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Wire git identity provider (unconditional — used for both review and no-review modes).
 	deps.GitIdentityProvider = infragit.NewHostIdentityProvider("")
 
-	// Wire snapshot isolation dependencies only when review is enabled.
-	if reviewEnabled {
-		deps.WorkspaceCloner = infraws.NewFSWorkspaceCloner(
-			infraws.NewPlatformCloner(), logger,
-		)
-		reviewer = review.NewInteractiveReviewer(os.Stdin, os.Stdout)
-		deps.Reviewer = reviewer
-		deps.Flusher = review.NewFSFlusher()
-		deps.Differ = diff.NewFSDiffer()
+	// Wire snapshot isolation dependencies (always active).
+	deps.WorkspaceCloner = infraws.NewFSWorkspaceCloner(
+		infraws.NewPlatformCloner(), logger,
+	)
+	if interactiveReview {
+		deps.Reviewer = review.NewInteractiveReviewer(os.Stdin, os.Stdout)
+	} else {
+		deps.Reviewer = review.NewAutoAcceptReviewer(logger)
+	}
+	deps.Flusher = review.NewFSFlusher()
+	deps.Differ = diff.NewFSDiffer()
 
-		// Wire snapshot post-processors (git config sanitizer).
-		deps.SnapshotPostProcessors = []workspace.SnapshotPostProcessor{
-			infragit.NewConfigSanitizer(logger),
-		}
+	// Wire snapshot post-processors (git config sanitizer).
+	deps.SnapshotPostProcessors = []workspace.SnapshotPostProcessor{
+		infragit.NewConfigSanitizer(logger),
 	}
 
 	// Validate and parse egress flags.
@@ -676,7 +659,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		LogLevel:        logLevel,
 		CommandArgs:     flags.commandArgs,
 		Snapshot: sandbox.SnapshotOpts{
-			Enabled:         reviewEnabled,
+			Enabled:         true,
 			SnapshotMatcher: snapshotMatcher,
 			DiffMatcher:     diffMatcher,
 		},
@@ -707,12 +690,12 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 
 	var reviewErr error
-	if reviewEnabled && sb.Snapshot != nil && reviewer != nil {
+	if sb.Snapshot != nil {
 		changes, chErr := runner.Changes(sb)
 		if chErr != nil {
 			reviewErr = chErr
 		} else if len(changes) > 0 {
-			result, revErr := reviewer.Review(changes)
+			result, revErr := deps.Reviewer.Review(changes)
 			if revErr != nil {
 				reviewErr = fmt.Errorf("reviewing changes: %w", revErr)
 			} else if len(result.Accepted) > 0 {
@@ -737,7 +720,13 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		// Propagate the agent's exit code without printing an error.
 		var exitErr *infrassh.ExitError
 		if errors.As(err, &exitErr) {
-			// os.Exit bypasses defers, so flush the timing summary now.
+			// os.Exit bypasses defers, so clean up snapshot and flush
+			// the timing summary now.
+			if sb.Snapshot != nil {
+				if cleanErr := sb.Cleanup(); cleanErr != nil {
+					logger.Error("failed to clean up snapshot", "error", cleanErr)
+				}
+			}
 			if timingObs != nil {
 				timingObs.Summary(os.Stderr)
 			}
@@ -824,7 +813,7 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 
 	// Review.Enabled — always ignored for security, warn if set.
 	if localCfg.Review.Enabled != nil {
-		warnings = append(warnings, "review.enabled is ignored for security — use --review or global config")
+		warnings = append(warnings, "review.enabled (interactive review) is ignored for security — use --review or global config")
 	}
 
 	// Auth.SaveCredentials — always ignored for security, warn if set.

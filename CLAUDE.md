@@ -64,7 +64,7 @@ This project follows DDD layered architecture with dependency injection **strict
 - `internal/infra/exclude/` — Gitignore-compatible exclude pattern loading + two-tier matching
 - `internal/infra/workspace/` — COW workspace cloning (FICLONE on Linux, clonefile on macOS, copy fallback)
 - `internal/infra/diff/` — SHA-256 based file diff engine
-- `internal/infra/review/` — Interactive per-file terminal review + flusher with hash verification
+- `internal/infra/review/` — Interactive per-file terminal review, auto-accept reviewer, flusher with hash verification
 
 **Guest VM** (`internal/guest/`, Linux only — runs inside the microVM):
 - `internal/guest/` — Boot, mount, network, env, sshd, reaper packages
@@ -97,25 +97,25 @@ This project follows DDD layered architecture with dependency injection **strict
 
 ## Workspace Snapshot Isolation
 
-By default, the workspace is mounted directly into the VM. Use `--review` to enable COW snapshot isolation: after the agent finishes, you review changes per-file before they touch the real workspace.
+Snapshot isolation is always active: a COW snapshot is created before the VM starts, and changes are flushed back after the agent finishes. Git credential sanitization runs automatically. Use `--review` to interactively approve or reject each changed file; without it, all changes are auto-accepted.
 
-- `--review` — Enable snapshot isolation with per-file review
+- `--review` — Enable interactive per-file review (snapshot isolation is always active)
 - `--exclude "pattern"` — Additional gitignore-style exclude patterns (repeatable)
 - `.broodboxignore` — Per-workspace exclude file (gitignore syntax) in workspace root
-- `.broodbox.yaml` — Per-workspace config file (merged into global config; `review.enabled` is **ignored** for security)
+- `.broodbox.yaml` — Per-workspace config file (merged into global config; `review.enabled` controls interactive review and is **ignored** from workspace config for security)
 - Security patterns (`.env*`, `*.pem`, `.ssh/`, `.broodbox.yaml`, etc.) are **non-overridable** — cannot be negated
 - Performance patterns (`node_modules/`, `vendor/`, etc.) can be negated in `.broodboxignore`
 
 Global config (`~/.config/broodbox/config.yaml`):
 ```yaml
 review:
-  enabled: true
+  enabled: true          # Enable interactive per-file review
   exclude_patterns:
     - "*.log"
     - "tmp/"
 ```
 
-Execution order: create snapshot → start VM → terminal → stop VM → diff → review → flush → cleanup.
+Execution order: create snapshot → start VM → terminal → stop VM → diff → review/auto-accept → flush → cleanup.
 
 ## CI/CD
 

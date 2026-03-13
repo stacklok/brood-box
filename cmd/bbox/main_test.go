@@ -89,7 +89,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 			},
 			global: defaultGlobal,
 			expected: wrapWarnings(
-				"review.enabled is ignored for security — use --review or global config",
+				"review.enabled (interactive review) is ignored for security — use --review or global config",
 			),
 		},
 		{
@@ -376,7 +376,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 			},
 			global: defaultGlobal,
 			expected: wrapWarnings(
-				"review.enabled is ignored for security — use --review or global config",
+				"review.enabled (interactive review) is ignored for security — use --review or global config",
 				"adds review exclude patterns: *.log",
 				"sets default egress profile: locked",
 				"sets default CPUs: 8",
