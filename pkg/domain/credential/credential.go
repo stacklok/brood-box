@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package credential defines the Store interface for persisting agent
+// Package credential defines interfaces for persisting and seeding agent
 // authentication credentials across sandbox VM sessions.
 package credential
 
@@ -39,4 +39,10 @@ type Store interface {
 	// home (e.g. ".claude/.credentials.json"). Unlike SeedFile, this
 	// always writes regardless of whether the file already exists.
 	OverwriteFile(agentName, relPath string, content []byte) error
+}
+
+// CredentialSeeder seeds fresh credentials from the host into the store
+// before VM boot. Each agent has a different implementation.
+type CredentialSeeder interface {
+	Seed(store Store) error
 }
