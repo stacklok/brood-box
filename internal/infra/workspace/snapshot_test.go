@@ -42,7 +42,7 @@ func TestCreateSnapshot_BasicFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "sub", "lib.go"), []byte("package sub"), 0o644))
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, logger)
+	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, t.TempDir(), logger)
 	matcher := &testMatcher{excluded: map[string]bool{}}
 
 	snap, err := cloner.CreateSnapshot(context.Background(), srcDir, matcher)
@@ -67,7 +67,7 @@ func TestCreateSnapshot_ExcludedFiles(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(srcDir, ".env"), []byte("SECRET=x"), 0o644))
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, logger)
+	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, t.TempDir(), logger)
 	matcher := &testMatcher{excluded: map[string]bool{".env": true}}
 
 	snap, err := cloner.CreateSnapshot(context.Background(), srcDir, matcher)
@@ -92,7 +92,7 @@ func TestCreateSnapshot_ExcludedDirectory(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "app.js"), []byte("app"), 0o644))
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, logger)
+	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, t.TempDir(), logger)
 	matcher := &testMatcher{excluded: map[string]bool{"node_modules": true, "node_modules/": true}}
 
 	snap, err := cloner.CreateSnapshot(context.Background(), srcDir, matcher)
@@ -121,7 +121,7 @@ func TestCreateSnapshot_SymlinkOutsideBoundary(t *testing.T) {
 	require.NoError(t, os.Symlink(filepath.Join(outsideDir, "secret.txt"), filepath.Join(srcDir, "link.txt")))
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, logger)
+	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, t.TempDir(), logger)
 	matcher := &testMatcher{excluded: map[string]bool{}}
 
 	snap, err := cloner.CreateSnapshot(context.Background(), srcDir, matcher)
@@ -145,7 +145,7 @@ func TestCreateSnapshot_SymlinkInsideBoundary(t *testing.T) {
 	require.NoError(t, os.Symlink("target.txt", filepath.Join(srcDir, "link.txt")))
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, logger)
+	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, t.TempDir(), logger)
 	matcher := &testMatcher{excluded: map[string]bool{}}
 
 	snap, err := cloner.CreateSnapshot(context.Background(), srcDir, matcher)
@@ -165,7 +165,7 @@ func TestCreateSnapshot_PreservesPermissions(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "script.sh"), []byte("#!/bin/sh"), 0o755))
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, logger)
+	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, t.TempDir(), logger)
 	matcher := &testMatcher{excluded: map[string]bool{}}
 
 	snap, err := cloner.CreateSnapshot(context.Background(), srcDir, matcher)
@@ -184,7 +184,7 @@ func TestCreateSnapshot_ContextCancellation(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(srcDir, "file.go"), []byte("x"), 0o644))
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, logger)
+	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, t.TempDir(), logger)
 	matcher := &testMatcher{excluded: map[string]bool{}}
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -245,31 +245,29 @@ func TestValidateInBounds(t *testing.T) {
 func TestCleanupStaleSnapshots(t *testing.T) {
 	t.Parallel()
 
-	parentDir := t.TempDir()
-	workspaceDir := filepath.Join(parentDir, "my-project")
-	require.NoError(t, os.MkdirAll(workspaceDir, 0o755))
+	snapshotDir := t.TempDir()
 
 	// Create a stale snapshot dir with sentinel containing a dead PID.
-	staleDir := filepath.Join(parentDir, ".sandbox-snapshot-abc123")
+	staleDir := filepath.Join(snapshotDir, ".sandbox-snapshot-abc123")
 	require.NoError(t, os.MkdirAll(staleDir, 0o755))
 	// PID 2147483647 is almost certainly not running.
 	require.NoError(t, os.WriteFile(snapshotSentinelPath(staleDir), []byte("2147483647"), 0o600))
 
 	// Create a snapshot dir with sentinel containing OUR PID (should not be removed).
-	liveDir := filepath.Join(parentDir, ".sandbox-snapshot-live")
+	liveDir := filepath.Join(snapshotDir, ".sandbox-snapshot-live")
 	require.NoError(t, os.MkdirAll(liveDir, 0o755))
 	require.NoError(t, os.WriteFile(snapshotSentinelPath(liveDir), []byte(fmt.Sprintf("%d", os.Getpid())), 0o600))
 
 	// Create a snapshot-prefixed dir WITHOUT sentinel (should not be removed).
-	noSentinelDir := filepath.Join(parentDir, ".sandbox-snapshot-no-sentinel")
+	noSentinelDir := filepath.Join(snapshotDir, ".sandbox-snapshot-no-sentinel")
 	require.NoError(t, os.MkdirAll(noSentinelDir, 0o755))
 
 	// Create a non-snapshot dir (should not be removed).
-	otherDir := filepath.Join(parentDir, "other-project")
+	otherDir := filepath.Join(snapshotDir, "other-project")
 	require.NoError(t, os.MkdirAll(otherDir, 0o755))
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	CleanupStaleSnapshots(workspaceDir, logger)
+	CleanupStaleSnapshots(snapshotDir, logger)
 
 	_, err := os.Stat(staleDir)
 	assert.True(t, os.IsNotExist(err), "stale snapshot with dead PID should be removed")
@@ -288,6 +286,14 @@ func TestCleanupStaleSnapshots(t *testing.T) {
 
 	_, err = os.Stat(otherDir)
 	assert.NoError(t, err, "non-snapshot dir should remain")
+}
+
+func TestCleanupStaleSnapshots_NonExistentDir(t *testing.T) {
+	t.Parallel()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	// Should not panic or log errors for a non-existent directory.
+	CleanupStaleSnapshots(filepath.Join(t.TempDir(), "does-not-exist"), logger)
 }
 
 func TestPlatformCloner(t *testing.T) {

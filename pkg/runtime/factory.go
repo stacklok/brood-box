@@ -8,7 +8,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path/filepath"
 
+	"github.com/adrg/xdg"
 	"github.com/stacklok/propolis/extract"
 
 	infraagent "github.com/stacklok/brood-box/internal/infra/agent"
@@ -61,6 +63,11 @@ type DefaultSandboxDepsOpts struct {
 
 	// CacheDir is the directory used by bundle-based Sources for extraction.
 	CacheDir string
+
+	// SnapshotDir overrides the directory for workspace snapshot temp dirs.
+	// Defaults to ~/.cache/broodbox/snapshots/ (XDG_CACHE_HOME), falling
+	// back to os.TempDir() if XDG resolution fails.
+	SnapshotDir string
 }
 
 // NewDefaultSandboxDeps wires Brood Box's standard infrastructure dependencies.
@@ -98,6 +105,16 @@ func NewDefaultSandboxDeps(opts DefaultSandboxDepsOpts) sandbox.SandboxDeps {
 		runnerOpts = append(runnerOpts, infravm.WithCacheDir(opts.CacheDir))
 	}
 
+	// Resolve snapshot base directory.
+	snapDir := opts.SnapshotDir
+	if snapDir == "" {
+		if cacheBase := xdg.CacheHome; cacheBase != "" {
+			snapDir = filepath.Join(cacheBase, "broodbox", "snapshots")
+		} else {
+			snapDir = filepath.Join(os.TempDir(), "broodbox-snapshots")
+		}
+	}
+
 	return sandbox.SandboxDeps{
 		Registry:      infraagent.NewRegistry(),
 		VMRunner:      infravm.NewPropolisRunner(logger, runnerOpts...),
@@ -108,6 +125,7 @@ func NewDefaultSandboxDeps(opts DefaultSandboxDepsOpts) sandbox.SandboxDeps {
 		Observer:      opts.Observer,
 		WorkspaceCloner: infraworkspace.NewFSWorkspaceCloner(
 			infraworkspace.NewPlatformCloner(),
+			snapDir,
 			logger,
 		),
 		Differ:                 infradiff.NewFSDiffer(),

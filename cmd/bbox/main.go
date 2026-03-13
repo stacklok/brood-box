@@ -354,8 +354,14 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Use the workspace resolved above for VM naming.
 	ws := earlyWs
 
+	// Resolve snapshot cache directory (XDG cache).
+	snapDir, snapDirErr := snapshotCacheDir()
+	if snapDirErr != nil {
+		return fmt.Errorf("resolving snapshot cache directory: %w", snapDirErr)
+	}
+
 	// Clean up stale snapshot dirs from previous crashes.
-	infraws.CleanupStaleSnapshots(ws, logger)
+	infraws.CleanupStaleSnapshots(snapDir, logger)
 
 	// Clean up stale VM log directories from previous crashes.
 	if home, homeErr := os.UserHomeDir(); homeErr == nil {
@@ -596,7 +602,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	// Wire snapshot isolation dependencies (always active).
 	deps.WorkspaceCloner = infraws.NewFSWorkspaceCloner(
-		infraws.NewPlatformCloner(), logger,
+		infraws.NewPlatformCloner(), snapDir, logger,
 	)
 	if interactiveReview {
 		deps.Reviewer = review.NewInteractiveReviewer(os.Stdin, os.Stdout)
@@ -994,6 +1000,16 @@ func firmwareCacheDir() (string, error) {
 		return "", errors.New("xdg cache home is empty")
 	}
 	return filepath.Join(cacheBase, "broodbox", "firmware"), nil
+}
+
+// snapshotCacheDir returns the directory used for workspace snapshot temp dirs.
+// Follows XDG_CACHE_HOME, defaulting to ~/.cache/broodbox/snapshots/.
+func snapshotCacheDir() (string, error) {
+	cacheBase := xdg.CacheHome
+	if cacheBase == "" {
+		return "", errors.New("xdg cache home is empty")
+	}
+	return filepath.Join(cacheBase, "broodbox", "snapshots"), nil
 }
 
 // imageCacheDir returns the directory used for caching extracted OCI rootfs

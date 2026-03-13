@@ -36,15 +36,19 @@ func snapshotSentinelPath(dir string) string {
 
 // FSWorkspaceCloner creates file-system-based workspace snapshots.
 type FSWorkspaceCloner struct {
-	cloner FileCloner
-	logger *slog.Logger
+	cloner          FileCloner
+	snapshotBaseDir string
+	logger          *slog.Logger
 }
 
 // NewFSWorkspaceCloner creates a WorkspaceCloner backed by the filesystem.
-func NewFSWorkspaceCloner(cloner FileCloner, logger *slog.Logger) *FSWorkspaceCloner {
+// snapshotBaseDir is the directory where snapshot temp dirs are created
+// (e.g. ~/.cache/broodbox/snapshots/).
+func NewFSWorkspaceCloner(cloner FileCloner, snapshotBaseDir string, logger *slog.Logger) *FSWorkspaceCloner {
 	return &FSWorkspaceCloner{
-		cloner: cloner,
-		logger: logger,
+		cloner:          cloner,
+		snapshotBaseDir: snapshotBaseDir,
+		logger:          logger,
 	}
 }
 
@@ -56,9 +60,11 @@ func (c *FSWorkspaceCloner) CreateSnapshot(ctx context.Context, workspacePath st
 		return nil, fmt.Errorf("resolving workspace path: %w", err)
 	}
 
-	// Create temp dir in the same parent directory (same filesystem for COW).
-	parentDir := filepath.Dir(absWorkspace)
-	tmpDir, err := os.MkdirTemp(parentDir, snapshotDirPrefix)
+	// Create temp dir in the configured snapshot base directory.
+	if err := os.MkdirAll(c.snapshotBaseDir, 0o700); err != nil {
+		return nil, fmt.Errorf("creating snapshot base dir: %w", err)
+	}
+	tmpDir, err := os.MkdirTemp(c.snapshotBaseDir, snapshotDirPrefix)
 	if err != nil {
 		return nil, fmt.Errorf("creating snapshot temp dir: %w", err)
 	}
@@ -186,12 +192,13 @@ func (c *FSWorkspaceCloner) handleSymlink(workspaceRoot, path, relPath, destPath
 }
 
 // CleanupStaleSnapshots removes orphaned snapshot directories from a previous
-// crash. It scans the parent directory of workspacePath for dirs matching the
-// snapshot prefix.
-func CleanupStaleSnapshots(workspacePath string, logger *slog.Logger) {
-	parentDir := filepath.Dir(workspacePath)
-	entries, err := os.ReadDir(parentDir)
+// crash. It scans snapshotBaseDir for dirs matching the snapshot prefix.
+func CleanupStaleSnapshots(snapshotBaseDir string, logger *slog.Logger) {
+	entries, err := os.ReadDir(snapshotBaseDir)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return // Fresh install — no cache dir yet.
+		}
 		logger.Warn("failed to scan for stale snapshots", "error", err)
 		return
 	}
@@ -201,7 +208,7 @@ func CleanupStaleSnapshots(workspacePath string, logger *slog.Logger) {
 			continue
 		}
 
-		stalePath := filepath.Join(parentDir, entry.Name())
+		stalePath := filepath.Join(snapshotBaseDir, entry.Name())
 
 		// Only remove directories that have our sentinel file to avoid
 		// deleting unrelated directories.
