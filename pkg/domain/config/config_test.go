@@ -71,6 +71,18 @@ func TestMergeConfigs(t *testing.T) {
 			},
 		},
 		{
+			name: "auth.seed_host_credentials from local is ignored",
+			global: &Config{
+				Auth: AuthConfig{SeedHostCredentials: nil},
+			},
+			local: &Config{
+				Auth: AuthConfig{SeedHostCredentials: boolPtr(true)},
+			},
+			want: &Config{
+				Auth: AuthConfig{SeedHostCredentials: nil},
+			},
+		},
+		{
 			name: "exclude patterns are additive",
 			global: &Config{
 				Review: ReviewConfig{ExcludePatterns: []string{"*.log"}},
@@ -564,6 +576,27 @@ func TestToEgressHosts(t *testing.T) {
 		assert.Contains(t, err.Error(), "allow_hosts[0]")
 		assert.Contains(t, err.Error(), "bare wildcard")
 	})
+}
+
+func TestAuthConfig_SeedHostCredentialsEnabled(t *testing.T) {
+	t.Parallel()
+	// Defaults to false when nil.
+	var a AuthConfig
+	if a.SeedHostCredentialsEnabled() {
+		t.Fatal("expected default false")
+	}
+	// Explicit true.
+	tr := true
+	a.SeedHostCredentials = &tr
+	if !a.SeedHostCredentialsEnabled() {
+		t.Fatal("expected true")
+	}
+	// Explicit false.
+	f := false
+	a.SeedHostCredentials = &f
+	if a.SeedHostCredentialsEnabled() {
+		t.Fatal("expected false")
+	}
 }
 
 func TestMergeGitConfig(t *testing.T) {

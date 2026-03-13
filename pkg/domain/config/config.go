@@ -59,6 +59,11 @@ type AuthConfig struct {
 	// SaveCredentials controls whether agent credentials are saved.
 	// nil = default true.
 	SaveCredentials *bool `yaml:"save_credentials,omitempty"`
+
+	// SeedHostCredentials controls whether host credentials (e.g. macOS
+	// Keychain) are seeded into the VM before the agent starts.
+	// nil = default false.
+	SeedHostCredentials *bool `yaml:"seed_host_credentials,omitempty"`
 }
 
 // SaveCredentialsEnabled returns whether credential saving is enabled.
@@ -68,6 +73,15 @@ func (a AuthConfig) SaveCredentialsEnabled() bool {
 		return true
 	}
 	return *a.SaveCredentials
+}
+
+// SeedHostCredentialsEnabled returns whether host credential seeding is enabled.
+// Defaults to false when SeedHostCredentials is nil.
+func (a AuthConfig) SeedHostCredentialsEnabled() bool {
+	if a.SeedHostCredentials == nil {
+		return false
+	}
+	return *a.SeedHostCredentials
 }
 
 // RuntimeConfig configures host runtime dependency handling.
@@ -351,8 +365,13 @@ func MergeConfigs(global, local *Config) *Config {
 	// Git: local can only tighten (disable), not enable if globally disabled.
 	result.Git = mergeGitConfig(global.Git, local.Git)
 
-	// Auth.SaveCredentials: local value is IGNORED (security constraint).
-	// Global preserved — local config cannot change credential persistence.
+	// Auth: local values are IGNORED (security constraint).
+	// Explicitly preserve only global values to prevent workspace config
+	// from enabling credential persistence or host credential seeding.
+	result.Auth = AuthConfig{
+		SaveCredentials:     global.Auth.SaveCredentials,
+		SeedHostCredentials: global.Auth.SeedHostCredentials,
+	}
 
 	// Runtime: local overrides global when explicitly set.
 	result.Runtime = mergeRuntimeConfig(global.Runtime, local.Runtime)

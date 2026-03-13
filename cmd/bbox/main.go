@@ -84,6 +84,7 @@ func rootCmd() *cobra.Command {
 		noGitToken        bool
 		noGitSSHAgent     bool
 		noSaveCredentials bool
+		seedCredentials   bool
 		noFirmwareDL      bool
 		noImageCache      bool
 		timings           bool
@@ -143,6 +144,7 @@ Example:
 				noGitToken:        noGitToken,
 				noGitSSHAgent:     noGitSSHAgent,
 				noSaveCredentials: noSaveCredentials,
+				seedCredentials:   seedCredentials,
 				noFirmwareDL:      noFirmwareDL,
 				noImageCache:      noImageCache,
 				timings:           timings,
@@ -174,6 +176,7 @@ Example:
 	cmd.Flags().BoolVar(&noGitToken, "no-git-token", false, "Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM")
 	cmd.Flags().BoolVar(&noGitSSHAgent, "no-git-ssh-agent", false, "Disable SSH agent forwarding into the VM")
 	cmd.Flags().BoolVar(&noSaveCredentials, "no-save-credentials", false, "Disable saving agent credentials between sessions (enabled by default)")
+	cmd.Flags().BoolVar(&seedCredentials, "seed-credentials", false, "Seed agent credentials from host (e.g. macOS Keychain) into the VM")
 	cmd.Flags().BoolVar(&noFirmwareDL, "no-firmware-download", false, "Disable firmware download (use system libkrunfw only)")
 	cmd.Flags().BoolVar(&noImageCache, "no-image-cache", false, "Disable OCI image caching (fresh pull every run)")
 	cmd.Flags().BoolVar(&timings, "timings", false, "Print per-phase timing summary after run")
@@ -286,6 +289,7 @@ type runFlags struct {
 	noGitToken        bool
 	noGitSSHAgent     bool
 	noSaveCredentials bool
+	seedCredentials   bool
 	noFirmwareDL      bool
 	noImageCache      bool
 	timings           bool
@@ -544,18 +548,22 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Resolve credential persistence setting.
 	saveCredentials := cfg.Auth.SaveCredentialsEnabled() && !flags.noSaveCredentials
 
+	// Resolve host credential seeding: opt-in via flag or config.
+	seedCreds := flags.seedCredentials || cfg.Auth.SeedHostCredentialsEnabled()
+
 	var credentialStore credential.Store
 	if saveCredentials {
 		credStateDir := filepath.Join(xdg.ConfigHome, "broodbox", "agent-state")
 		fsStore := infracredential.NewFSStore(credStateDir, logger)
 		credentialStore = fsStore
 
-		// Seed Claude Code credentials from the host if not already stored.
-		// This bootstraps the first session so OAuth works without a browser.
-		if agentName == "claude-code" {
-			seeder := infracredential.NewClaudeCodeSeeder(logger)
-			if err := seeder.Seed(fsStore); err != nil {
-				logger.Warn("failed to seed Claude Code credentials", "error", err)
+		if seedCreds && saveCredentials {
+			// Seeder selection will be wired in the next task.
+			if agentName == "claude-code" {
+				seeder := infracredential.NewClaudeCodeSeeder(logger)
+				if err := seeder.Seed(fsStore); err != nil {
+					logger.Warn("failed to seed credentials", "agent", agentName, "error", err)
+				}
 			}
 		}
 	}
@@ -855,6 +863,11 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 	// Auth.SaveCredentials — always ignored for security, warn if set.
 	if localCfg.Auth.SaveCredentials != nil {
 		warnings = append(warnings, "auth.save_credentials is ignored in workspace config — use --no-save-credentials flag or global config")
+	}
+
+	// Auth.SeedHostCredentials — always ignored for security, warn if set.
+	if localCfg.Auth.SeedHostCredentials != nil {
+		warnings = append(warnings, "auth.seed_host_credentials is ignored in workspace config — use --seed-credentials flag or global config")
 	}
 
 	// Review.ExcludePatterns — can hide changes from diff review.
