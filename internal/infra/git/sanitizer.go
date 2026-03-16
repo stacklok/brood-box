@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/stacklok/brood-box/pkg/domain/workspace"
 )
@@ -45,9 +46,19 @@ func NewConfigSanitizer(logger *slog.Logger) *ConfigSanitizer {
 }
 
 // Process reads .git/config from originalPath, sanitizes it, and writes
-// the result into snapshotPath/.git/config.
+// the result into snapshotPath/.git/config. Supports both normal repos
+// (where .git is a directory) and git worktrees (where .git is a file
+// pointing to the main repo's gitdir).
 func (s *ConfigSanitizer) Process(_ context.Context, originalPath, snapshotPath string) error {
-	srcPath := filepath.Join(originalPath, ".git", "config")
+	srcPath, err := resolveGitConfigPath(originalPath)
+	if err != nil {
+		s.logger.Warn("could not resolve git config path, skipping sanitization",
+			"path", originalPath, "error", err)
+		return nil
+	}
+	if srcPath == "" {
+		return nil
+	}
 
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
@@ -60,6 +71,13 @@ func (s *ConfigSanitizer) Process(_ context.Context, originalPath, snapshotPath 
 	sanitized := SanitizeConfig(string(data))
 
 	dstDir := filepath.Join(snapshotPath, ".git")
+
+	// In worktree snapshots, .git may be a file (the worktree pointer).
+	// Remove it so MkdirAll can create the directory.
+	if err := removeIfFile(dstDir); err != nil {
+		return fmt.Errorf("removing .git file in snapshot: %w", err)
+	}
+
 	if err := os.MkdirAll(dstDir, 0o755); err != nil {
 		return fmt.Errorf("creating .git directory in snapshot: %w", err)
 	}
@@ -70,6 +88,86 @@ func (s *ConfigSanitizer) Process(_ context.Context, originalPath, snapshotPath 
 	}
 
 	return nil
+}
+
+// resolveGitConfigPath returns the path to the git config file for the
+// given workspace. It handles both normal repos (.git is a directory)
+// and worktrees (.git is a file with a gitdir pointer).
+//
+// Returns ("", nil) if there is no .git entry (not a git repo).
+func resolveGitConfigPath(workspacePath string) (string, error) {
+	dotGitPath := filepath.Join(workspacePath, ".git")
+
+	data, err := os.ReadFile(dotGitPath)
+	if err == nil {
+		// .git is a file — this is a worktree.
+		return resolveWorktreeConfigPath(workspacePath, data)
+	}
+
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", nil
+	}
+
+	if errors.Is(err, syscall.EISDIR) {
+		// .git is a directory — normal repo.
+		return filepath.Join(dotGitPath, "config"), nil
+	}
+
+	return "", fmt.Errorf("reading .git: %w", err)
+}
+
+// resolveWorktreeConfigPath parses the worktree .git file content and
+// resolves through the commondir file to find the shared git config.
+func resolveWorktreeConfigPath(workspacePath string, dotGitData []byte) (string, error) {
+	content := strings.TrimSpace(string(dotGitData))
+	if !strings.HasPrefix(content, "gitdir: ") {
+		return "", fmt.Errorf("malformed .git file: missing 'gitdir: ' prefix")
+	}
+
+	gitdir := strings.TrimPrefix(content, "gitdir: ")
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(workspacePath, gitdir)
+	}
+	gitdir = filepath.Clean(gitdir)
+
+	// Try to read the commondir file to find the shared .git directory.
+	commondirData, err := os.ReadFile(filepath.Join(gitdir, "commondir"))
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			// No commondir — fall back to gitdir/config (submodules, etc.).
+			return filepath.Join(gitdir, "config"), nil
+		}
+		return "", fmt.Errorf("reading commondir: %w", err)
+	}
+
+	commondir := strings.TrimSpace(string(commondirData))
+	if !filepath.IsAbs(commondir) {
+		commondir = filepath.Join(gitdir, commondir)
+	}
+	commondir = filepath.Clean(commondir)
+
+	// Defense-in-depth: verify the resolved path looks like a git directory.
+	if _, err := os.Stat(filepath.Join(commondir, "HEAD")); err != nil {
+		return "", fmt.Errorf("resolved commondir %q does not contain HEAD: %w", commondir, err)
+	}
+
+	return filepath.Join(commondir, "config"), nil
+}
+
+// removeIfFile removes the path if it exists and is not a directory.
+// No-op if the path does not exist or is already a directory.
+func removeIfFile(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		return err
+	}
+	if info.IsDir() {
+		return nil
+	}
+	return os.Remove(path)
 }
 
 // SanitizeConfig parses a git config file and returns a sanitized version

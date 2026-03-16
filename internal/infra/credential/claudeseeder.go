@@ -31,9 +31,9 @@ const keychainService = "Claude Code-credentials"
 //   - No credentials exist yet (first run), or
 //   - The stored access token has expired and the host has a fresher one.
 type ClaudeCodeSeeder struct {
-	logger    *slog.Logger
-	readHost  func() ([]byte, string, error) // reads host credentials
-	nowMs     func() int64                   // current time in epoch ms
+	logger   *slog.Logger
+	readHost func() ([]byte, string, error) // reads host credentials
+	nowMs    func() int64                   // current time in epoch ms
 }
 
 // NewClaudeCodeSeeder creates a new ClaudeCodeSeeder with production defaults.

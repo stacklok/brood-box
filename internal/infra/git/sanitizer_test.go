@@ -494,3 +494,227 @@ func TestContainsCredentials_FileHandling(t *testing.T) {
 		assert.False(t, hasCreds)
 	})
 }
+
+func TestResolveGitConfigPath(t *testing.T) {
+	t.Parallel()
+
+	t.Run("normal repo returns .git/config", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		gitDir := filepath.Join(dir, ".git")
+		require.NoError(t, os.MkdirAll(gitDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(gitDir, "config"), []byte("[core]\n"), 0o644))
+
+		path, err := resolveGitConfigPath(dir)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(gitDir, "config"), path)
+	})
+
+	t.Run("no git returns empty", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+
+		path, err := resolveGitConfigPath(dir)
+		require.NoError(t, err)
+		assert.Empty(t, path)
+	})
+
+	t.Run("worktree resolves through commondir", func(t *testing.T) {
+		t.Parallel()
+
+		// Set up a main repo .git directory.
+		mainRepo := t.TempDir()
+		mainGitDir := filepath.Join(mainRepo, ".git")
+		require.NoError(t, os.MkdirAll(filepath.Join(mainGitDir, "worktrees", "wt1"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "config"), []byte("[core]\n\tbare = false\n"), 0o644))
+
+		// Set up commondir in the worktree gitdir.
+		wtGitDir := filepath.Join(mainGitDir, "worktrees", "wt1")
+		require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../..\n"), 0o644))
+
+		// Set up worktree workspace with .git file.
+		wtWorkspace := t.TempDir()
+		require.NoError(t, os.WriteFile(
+			filepath.Join(wtWorkspace, ".git"),
+			[]byte("gitdir: "+wtGitDir+"\n"),
+			0o644,
+		))
+
+		path, err := resolveGitConfigPath(wtWorkspace)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(mainGitDir, "config"), path)
+	})
+
+	t.Run("worktree with relative commondir", func(t *testing.T) {
+		t.Parallel()
+
+		mainRepo := t.TempDir()
+		mainGitDir := filepath.Join(mainRepo, ".git")
+		require.NoError(t, os.MkdirAll(filepath.Join(mainGitDir, "worktrees", "wt1"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "config"), []byte("[core]\n"), 0o644))
+
+		wtGitDir := filepath.Join(mainGitDir, "worktrees", "wt1")
+		// Relative commondir (standard git worktree layout).
+		require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../.."), 0o644))
+
+		wtWorkspace := t.TempDir()
+		require.NoError(t, os.WriteFile(
+			filepath.Join(wtWorkspace, ".git"),
+			[]byte("gitdir: "+wtGitDir+"\n"),
+			0o644,
+		))
+
+		path, err := resolveGitConfigPath(wtWorkspace)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(mainGitDir, "config"), path)
+	})
+
+	t.Run("malformed .git file returns error", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, ".git"), []byte("garbage content\n"), 0o644))
+
+		_, err := resolveGitConfigPath(dir)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "malformed .git file")
+	})
+
+	t.Run("worktree without commondir falls back to gitdir/config", func(t *testing.T) {
+		t.Parallel()
+
+		// Set up a gitdir without a commondir file (e.g. submodule).
+		gitdir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(gitdir, "config"), []byte("[core]\n"), 0o644))
+
+		wtWorkspace := t.TempDir()
+		require.NoError(t, os.WriteFile(
+			filepath.Join(wtWorkspace, ".git"),
+			[]byte("gitdir: "+gitdir+"\n"),
+			0o644,
+		))
+
+		path, err := resolveGitConfigPath(wtWorkspace)
+		require.NoError(t, err)
+		assert.Equal(t, filepath.Join(gitdir, "config"), path)
+	})
+
+	t.Run("broken gitdir path returns error", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dir, ".git"),
+			[]byte("gitdir: /nonexistent/path/that/does/not/exist\n"),
+			0o644,
+		))
+
+		// commondir won't exist → falls back to gitdir/config, which also
+		// won't exist. resolveGitConfigPath still returns a path (it doesn't
+		// verify the config file exists — that's Process's job).
+		path, err := resolveGitConfigPath(dir)
+		require.NoError(t, err)
+		assert.Equal(t, "/nonexistent/path/that/does/not/exist/config", path)
+	})
+}
+
+func TestProcess_Worktree(t *testing.T) {
+	t.Parallel()
+
+	// Set up a main repo with .git directory.
+	mainRepo := t.TempDir()
+	mainGitDir := filepath.Join(mainRepo, ".git")
+	require.NoError(t, os.MkdirAll(filepath.Join(mainGitDir, "worktrees", "wt1"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+
+	configContent := strings.Join([]string{
+		"[core]",
+		"\tbare = false",
+		"[credential]",
+		"\thelper = store",
+		`[remote "origin"]`,
+		"\turl = https://user:token@github.com/org/repo.git",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "config"), []byte(configContent), 0o644))
+
+	// Set up worktree gitdir with commondir.
+	wtGitDir := filepath.Join(mainGitDir, "worktrees", "wt1")
+	require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../.."), 0o644))
+
+	// Original workspace: .git is a file.
+	originalDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(originalDir, ".git"),
+		[]byte("gitdir: "+wtGitDir+"\n"),
+		0o644,
+	))
+
+	// Snapshot: also has .git as a file (mimicking snapshot walker behavior).
+	snapshotDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(snapshotDir, ".git"),
+		[]byte("gitdir: "+wtGitDir+"\n"),
+		0o644,
+	))
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	sanitizer := NewConfigSanitizer(logger)
+
+	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
+	require.NoError(t, err)
+
+	// The .git should now be a directory with a sanitized config.
+	info, err := os.Stat(filepath.Join(snapshotDir, ".git"))
+	require.NoError(t, err)
+	assert.True(t, info.IsDir())
+
+	result, err := os.ReadFile(filepath.Join(snapshotDir, ".git", "config"))
+	require.NoError(t, err)
+
+	expected := strings.Join([]string{
+		"[core]",
+		"\tbare = false",
+		`[remote "origin"]`,
+		"\turl = https://github.com/org/repo.git",
+	}, "\n")
+	assert.Equal(t, expected, string(result))
+}
+
+func TestProcess_WorktreeNoCommondir(t *testing.T) {
+	t.Parallel()
+
+	// Set up a gitdir without commondir (e.g. submodule).
+	gitdir := t.TempDir()
+	configContent := strings.Join([]string{
+		"[core]",
+		"\tbare = false",
+		"[credential]",
+		"\thelper = store",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "config"), []byte(configContent), 0o644))
+
+	// Original workspace: .git is a file pointing to gitdir.
+	originalDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(originalDir, ".git"),
+		[]byte("gitdir: "+gitdir+"\n"),
+		0o644,
+	))
+
+	snapshotDir := t.TempDir()
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	sanitizer := NewConfigSanitizer(logger)
+
+	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
+	require.NoError(t, err)
+
+	result, err := os.ReadFile(filepath.Join(snapshotDir, ".git", "config"))
+	require.NoError(t, err)
+
+	expected := strings.Join([]string{
+		"[core]",
+		"\tbare = false",
+	}, "\n")
+	assert.Equal(t, expected, string(result))
+}
