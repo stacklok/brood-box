@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/stacklok/brood-box/pkg/domain/snapshot"
 )
 
 func TestLoadExcludeConfig_NoFile(t *testing.T) {
@@ -23,6 +25,7 @@ func TestLoadExcludeConfig_NoFile(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEmpty(t, cfg.SecurityPatterns)
+	assert.NotEmpty(t, cfg.DiffSecurityPatterns)
 	assert.NotEmpty(t, cfg.PerformancePatterns)
 	assert.Empty(t, cfg.FilePatterns)
 	assert.Empty(t, cfg.CLIPatterns)
@@ -73,6 +76,42 @@ func TestLoadExcludeConfig_CLIPatterns(t *testing.T) {
 	assert.Equal(t, []string{"*.bak", "temp/"}, cfg.CLIPatterns)
 }
 
+func TestNewDiffMatcher_MergesDiffSecurityPatterns(t *testing.T) {
+	t.Parallel()
+
+	cfg := snapshot.ExcludeConfig{
+		SecurityPatterns:     snapshot.DefaultSecurityPatterns(),
+		DiffSecurityPatterns: snapshot.DefaultDiffSecurityPatterns(),
+		PerformancePatterns:  snapshot.DefaultPerformancePatterns(),
+	}
+
+	m := NewDiffMatcher(cfg, nil)
+
+	// Shared security pattern should match.
+	assert.True(t, m.Match(".env"), "shared security pattern .env should match")
+	// Diff-only security pattern should match .git file (worktree pointer).
+	assert.True(t, m.Match(".git"), "diff security pattern .git should match")
+	// Diff-only security pattern should match .git/ directory contents.
+	assert.True(t, m.Match(".git/hooks/pre-commit"), ".git/ contents should match via diff security")
+	// Regular file should not match.
+	assert.False(t, m.Match("main.go"), "regular file should not match")
+}
+
+func TestNewDiffMatcher_GitignorePatternsIncluded(t *testing.T) {
+	t.Parallel()
+
+	cfg := snapshot.ExcludeConfig{
+		SecurityPatterns:     snapshot.DefaultSecurityPatterns(),
+		DiffSecurityPatterns: snapshot.DefaultDiffSecurityPatterns(),
+	}
+
+	m := NewDiffMatcher(cfg, []string{"*.o", "build/"})
+
+	// Gitignore patterns should match.
+	assert.True(t, m.Match("foo.o"), "gitignore pattern *.o should match")
+	assert.True(t, m.Match("build/output"), "gitignore pattern build/ should match")
+}
+
 func TestNewMatcherFromConfig(t *testing.T) {
 	t.Parallel()
 
@@ -90,4 +129,7 @@ func TestNewMatcherFromConfig(t *testing.T) {
 	assert.True(t, m.Match("node_modules/foo.js"))
 	// Regular file should not match.
 	assert.False(t, m.Match("main.go"))
+	// .git must NOT be excluded in snapshot matcher — agent needs it for git operations.
+	// Only the diff matcher (NewDiffMatcher) should exclude .git.
+	assert.False(t, m.Match(".git"), ".git should not be excluded in snapshot matcher")
 }

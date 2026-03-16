@@ -35,10 +35,11 @@ func LoadExcludeConfig(workspacePath string, cliPatterns []string, logger *slog.
 	}
 
 	return snapshot.ExcludeConfig{
-		SecurityPatterns:    securityPatterns,
-		PerformancePatterns: perfPatterns,
-		FilePatterns:        filePatterns,
-		CLIPatterns:         cliPatterns,
+		SecurityPatterns:     securityPatterns,
+		DiffSecurityPatterns: snapshot.DefaultDiffSecurityPatterns(),
+		PerformancePatterns:  perfPatterns,
+		FilePatterns:         filePatterns,
+		CLIPatterns:          cliPatterns,
 	}, nil
 }
 
@@ -65,7 +66,11 @@ func NewDiffMatcher(cfg snapshot.ExcludeConfig, gitignorePatterns []string) snap
 	userAndPerf = append(userAndPerf, cfg.CLIPatterns...)
 	userAndPerf = append(userAndPerf, gitignorePatterns...)
 
-	return NewMatcher(userAndPerf, cfg.SecurityPatterns)
+	allSecurity := make([]string, 0, len(cfg.SecurityPatterns)+len(cfg.DiffSecurityPatterns))
+	allSecurity = append(allSecurity, cfg.SecurityPatterns...)
+	allSecurity = append(allSecurity, cfg.DiffSecurityPatterns...)
+
+	return NewMatcher(userAndPerf, allSecurity)
 }
 
 // readIgnoreFile reads a .broodboxignore file and returns the cleaned patterns.

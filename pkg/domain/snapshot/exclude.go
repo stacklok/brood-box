@@ -9,6 +9,12 @@ type ExcludeConfig struct {
 	// These cannot be negated by user patterns.
 	SecurityPatterns []string
 
+	// DiffSecurityPatterns are additional non-overridable patterns
+	// applied only during diff/flush. These prevent agent modifications
+	// to files that must exist in the snapshot but should never be
+	// flushed back (e.g. .git in worktrees).
+	DiffSecurityPatterns []string
+
 	// PerformancePatterns are built-in patterns that can be
 	// overridden via negation in .broodboxignore.
 	PerformancePatterns []string
@@ -59,6 +65,7 @@ func DefaultSecurityPatterns() []string {
 		".config/gcloud/",
 		// Credential files
 		"credentials.json",
+		".git-credentials",
 		".netrc",
 		".npmrc",
 		".yarnrc.yml",
@@ -82,6 +89,20 @@ func DefaultSecurityPatterns() []string {
 		".broodbox.yaml",
 		// Brood Box agent state (saved credentials).
 		".config/broodbox/",
+	}
+}
+
+// DefaultDiffSecurityPatterns returns non-overridable patterns applied only
+// during diff/flush. These protect files that must exist in the snapshot
+// (the agent needs them) but should never be diffed or flushed back.
+func DefaultDiffSecurityPatterns() []string {
+	return []string{
+		// Covers .git file (worktree pointer) and .git/ directory + contents.
+		// The agent needs .git in the snapshot for git operations, but nothing
+		// under .git is agent output and must not be flushed back. Without this,
+		// the sanitizer's replacement of the .git worktree file with a directory
+		// causes the differ to mark the original .git file as deleted.
+		".git",
 	}
 }
 

@@ -50,6 +50,7 @@ func TestDefaultSecurityPatterns(t *testing.T) {
 		".gcloud/",
 		".config/gcloud/",
 		"credentials.json",
+		".git-credentials",
 		".yarnrc.yml",
 		".docker/config.json",
 		".git/config",
@@ -65,6 +66,14 @@ func TestDefaultSecurityPatterns(t *testing.T) {
 	for _, pat := range expected {
 		assert.Contains(t, patterns, pat, "missing security pattern: %s", pat)
 	}
+}
+
+func TestDefaultDiffSecurityPatterns(t *testing.T) {
+	t.Parallel()
+
+	patterns := DefaultDiffSecurityPatterns()
+	assert.NotEmpty(t, patterns)
+	assert.Contains(t, patterns, ".git", "diff security patterns must exclude .git")
 }
 
 func TestDefaultPerformancePatterns(t *testing.T) {
