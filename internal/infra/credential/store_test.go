@@ -4,6 +4,7 @@
 package credential
 
 import (
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -284,6 +285,218 @@ func TestFSStore(t *testing.T) {
 			tt.check(t, baseDir, rootfsPath)
 		})
 	}
+}
+
+func TestSeedFile(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	t.Run("seeds new file", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		err := store.SeedFile("claude-code", ".claude/.credentials.json", []byte(`{"token":"abc"}`))
+		if err != nil {
+			t.Fatalf("SeedFile failed: %v", err)
+		}
+
+		data, err := os.ReadFile(filepath.Join(baseDir, "claude-code", ".claude", ".credentials.json"))
+		if err != nil {
+			t.Fatalf("expected seeded file: %v", err)
+		}
+		if string(data) != `{"token":"abc"}` {
+			t.Fatalf("unexpected content: %s", data)
+		}
+	})
+
+	t.Run("skips existing file", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		// Pre-create the file.
+		dst := filepath.Join(baseDir, "claude-code", ".claude", ".credentials.json")
+		if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, []byte("original"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		err := store.SeedFile("claude-code", ".claude/.credentials.json", []byte("replacement"))
+		if err != nil {
+			t.Fatalf("SeedFile failed: %v", err)
+		}
+
+		data, err := os.ReadFile(dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "original" {
+			t.Fatalf("seed should not overwrite existing file, got: %s", data)
+		}
+	})
+
+	t.Run("rejects path traversal", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		err := store.SeedFile("claude-code", "../escape/creds.json", []byte("evil"))
+		if err == nil {
+			t.Fatal("expected error for path traversal")
+		}
+	})
+
+	t.Run("rejects invalid agent name", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		err := store.SeedFile("../evil", ".claude/.credentials.json", []byte("x"))
+		if err == nil {
+			t.Fatal("expected error for invalid agent name")
+		}
+	})
+}
+
+func TestReadFile(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	t.Run("reads existing file", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		// Pre-create the file.
+		dst := filepath.Join(baseDir, "claude-code", ".claude", ".credentials.json")
+		if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, []byte(`{"token":"abc"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		data, err := store.ReadFile("claude-code", ".claude/.credentials.json")
+		if err != nil {
+			t.Fatalf("ReadFile failed: %v", err)
+		}
+		if string(data) != `{"token":"abc"}` {
+			t.Fatalf("unexpected content: %s", data)
+		}
+	})
+
+	t.Run("returns error for missing file", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		_, err := store.ReadFile("claude-code", ".claude/.credentials.json")
+		if err == nil {
+			t.Fatal("expected error for missing file")
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("expected os.ErrNotExist, got: %v", err)
+		}
+	})
+
+	t.Run("rejects invalid agent name", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		_, err := store.ReadFile("../evil", ".claude/.credentials.json")
+		if err == nil {
+			t.Fatal("expected error for invalid agent name")
+		}
+	})
+
+	t.Run("rejects path traversal", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		_, err := store.ReadFile("claude-code", "../escape/creds.json")
+		if err == nil {
+			t.Fatal("expected error for path traversal")
+		}
+	})
+}
+
+func TestOverwriteFile(t *testing.T) {
+	t.Parallel()
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	t.Run("writes new file", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		err := store.OverwriteFile("claude-code", ".claude/.credentials.json", []byte(`{"token":"abc"}`))
+		if err != nil {
+			t.Fatalf("OverwriteFile failed: %v", err)
+		}
+
+		data, err := os.ReadFile(filepath.Join(baseDir, "claude-code", ".claude", ".credentials.json"))
+		if err != nil {
+			t.Fatalf("expected written file: %v", err)
+		}
+		if string(data) != `{"token":"abc"}` {
+			t.Fatalf("unexpected content: %s", data)
+		}
+	})
+
+	t.Run("overwrites existing file", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		// Pre-create the file with original content.
+		dst := filepath.Join(baseDir, "claude-code", ".claude", ".credentials.json")
+		if err := os.MkdirAll(filepath.Dir(dst), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(dst, []byte("original"), 0600); err != nil {
+			t.Fatal(err)
+		}
+
+		err := store.OverwriteFile("claude-code", ".claude/.credentials.json", []byte("replacement"))
+		if err != nil {
+			t.Fatalf("OverwriteFile failed: %v", err)
+		}
+
+		data, err := os.ReadFile(dst)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(data) != "replacement" {
+			t.Fatalf("expected overwritten content, got: %s", data)
+		}
+	})
+
+	t.Run("rejects invalid agent name", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		err := store.OverwriteFile("../evil", ".claude/.credentials.json", []byte("x"))
+		if err == nil {
+			t.Fatal("expected error for invalid agent name")
+		}
+	})
+
+	t.Run("rejects path traversal", func(t *testing.T) {
+		t.Parallel()
+		baseDir := t.TempDir()
+		store := NewFSStore(baseDir, logger)
+
+		err := store.OverwriteFile("claude-code", "../escape/creds.json", []byte("evil"))
+		if err == nil {
+			t.Fatal("expected error for path traversal")
+		}
+	})
 }
 
 func TestContainedPath(t *testing.T) {

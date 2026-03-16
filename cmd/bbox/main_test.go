@@ -104,6 +104,17 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				"adds review exclude patterns: **/*.go, secrets/",
 			),
 		},
+		// --- Auth seed_host_credentials ---
+		{
+			name: "auth.seed_host_credentials ignored warning",
+			local: &domainconfig.Config{
+				Auth: domainconfig.AuthConfig{SeedHostCredentials: boolPtr(true)},
+			},
+			global: defaultGlobal,
+			expected: wrapWarnings(
+				"auth.seed_host_credentials is ignored in workspace config — use --seed-credentials flag or global config",
+			),
+		},
 		// --- Defaults ---
 		{
 			name: "defaults egress profile tightens",
@@ -346,6 +357,10 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 					Enabled:         boolPtr(true),
 					ExcludePatterns: []string{"*.log"},
 				},
+				Auth: domainconfig.AuthConfig{
+					SaveCredentials:     boolPtr(true),
+					SeedHostCredentials: boolPtr(true),
+				},
 				Defaults: domainconfig.DefaultsConfig{
 					EgressProfile: "locked",
 					CPUs:          8,
@@ -377,6 +392,8 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 			global: defaultGlobal,
 			expected: wrapWarnings(
 				"review.enabled (interactive review) is ignored for security — use --review or global config",
+				"auth.save_credentials is ignored in workspace config — use --no-save-credentials flag or global config",
+				"auth.seed_host_credentials is ignored in workspace config — use --seed-credentials flag or global config",
 				"adds review exclude patterns: *.log",
 				"sets default egress profile: locked",
 				"sets default CPUs: 8",

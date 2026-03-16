@@ -309,6 +309,130 @@ func (s *FSStore) extractFile(src, dst, agentDir string) error {
 	return nil
 }
 
+// resolvePath validates agentName and relPath, then returns the resolved
+// filesystem path. Returns an error for invalid names or path traversal.
+func (s *FSStore) resolvePath(agentName, relPath string) (string, error) {
+	if !isSafeName(agentName) {
+		return "", fmt.Errorf("invalid agent name: %q", agentName)
+	}
+
+	for _, part := range strings.Split(relPath, "/") {
+		if part == "" {
+			continue
+		}
+		if !isSafeName(part) {
+			return "", fmt.Errorf("invalid path component %q in %q", part, relPath)
+		}
+	}
+
+	resolved := filepath.Join(s.baseDir, agentName, relPath)
+
+	agentDir := filepath.Join(s.baseDir, agentName)
+	if _, err := containedPath(agentDir, resolved); err != nil {
+		return "", fmt.Errorf("path containment: %w", err)
+	}
+
+	return resolved, nil
+}
+
+// SeedFile writes a file into the credential store for an agent if it does
+// not already exist. relPath is relative to the agent's home directory
+// (e.g. ".claude/.credentials.json").
+func (s *FSStore) SeedFile(agentName, relPath string, content []byte) error {
+	dst, err := s.resolvePath(agentName, relPath)
+	if err != nil {
+		return err
+	}
+
+	// No-op if the file already exists.
+	if _, err := os.Stat(dst); err == nil {
+		s.logger.Debug("credential file already exists, skipping seed",
+			"agent", agentName, "path", relPath)
+		return nil
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dst), dirPerm); err != nil {
+		return fmt.Errorf("creating parent dirs: %w", err)
+	}
+
+	// Atomic write: temp file + rename to avoid partial files on crash,
+	// matching the OverwriteFile and extractFile patterns.
+	tmpPath, err := tempFilePath(filepath.Dir(dst))
+	if err != nil {
+		return fmt.Errorf("generating temp path: %w", err)
+	}
+
+	if err := os.WriteFile(tmpPath, content, filePerm); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("writing temp file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, dst); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("atomic rename: %w", err)
+	}
+
+	s.logger.Info("seeded credential file",
+		"agent", agentName, "path", relPath)
+	return nil
+}
+
+// ReadFile reads a file from the credential store for an agent. relPath is
+// relative to the agent's home directory (e.g. ".claude/.credentials.json").
+// Returns os.ErrNotExist if the file does not exist.
+func (s *FSStore) ReadFile(agentName, relPath string) ([]byte, error) {
+	src, err := s.resolvePath(agentName, relPath)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return nil, fmt.Errorf("reading credential file: %w", err)
+	}
+
+	if int64(len(data)) > credential.MaxFileSize {
+		return nil, fmt.Errorf("credential file exceeds max size (%d bytes)", credential.MaxFileSize)
+	}
+
+	return data, nil
+}
+
+// OverwriteFile writes a file into the credential store for an agent,
+// replacing any existing content. relPath is relative to the agent's home
+// directory (e.g. ".claude/.credentials.json").
+func (s *FSStore) OverwriteFile(agentName, relPath string, content []byte) error {
+	dst, err := s.resolvePath(agentName, relPath)
+	if err != nil {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dst), dirPerm); err != nil {
+		return fmt.Errorf("creating parent dirs: %w", err)
+	}
+
+	// Atomic write: temp file + rename to avoid data-loss window and
+	// TOCTOU symlink risk, matching the extractFile pattern.
+	tmpPath, err := tempFilePath(filepath.Dir(dst))
+	if err != nil {
+		return fmt.Errorf("generating temp path: %w", err)
+	}
+
+	if err := os.WriteFile(tmpPath, content, filePerm); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("writing temp file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, dst); err != nil {
+		_ = os.Remove(tmpPath)
+		return fmt.Errorf("atomic rename: %w", err)
+	}
+
+	s.logger.Info("overwrote credential file",
+		"agent", agentName, "path", relPath)
+	return nil
+}
+
 // isSafeName rejects path components that could cause traversal or injection.
 func isSafeName(name string) bool {
 	if name == "" || name == "." || name == ".." {

@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package credential defines the Store interface for persisting agent
+// Package credential defines interfaces for persisting and seeding agent
 // authentication credentials across sandbox VM sessions.
 package credential
 
@@ -23,4 +23,31 @@ type Store interface {
 	// Extract copies credential files from the guest rootfs after the
 	// session ends, saving them for the next boot.
 	Extract(rootfsPath, agentName string, credentialPaths []string) error
+}
+
+// FileStore provides CRUD access to individual credential files in the store.
+// Used by Seeder implementations to read and write credential files
+// independently of the VM lifecycle.
+type FileStore interface {
+	// SeedFile writes a file into the credential store for an agent.
+	// relPath is relative to the agent's home (e.g. ".claude/.credentials.json").
+	// No-op if the file already exists in the store.
+	SeedFile(agentName, relPath string, content []byte) error
+
+	// ReadFile reads a file from the credential store for an agent.
+	// relPath is relative to the agent's home (e.g. ".claude/.credentials.json").
+	// Returns os.ErrNotExist if the file does not exist.
+	ReadFile(agentName, relPath string) ([]byte, error)
+
+	// OverwriteFile writes a file into the credential store for an agent,
+	// replacing any existing content. relPath is relative to the agent's
+	// home (e.g. ".claude/.credentials.json"). Unlike SeedFile, this
+	// always writes regardless of whether the file already exists.
+	OverwriteFile(agentName, relPath string, content []byte) error
+}
+
+// Seeder seeds fresh credentials from the host into the file store
+// before VM boot. Each agent has a different implementation.
+type Seeder interface {
+	Seed(store FileStore) error
 }
