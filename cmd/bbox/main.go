@@ -582,6 +582,12 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		CredentialStore: credentialStore,
 	}
 
+	// Validate MCP authz profile flag early (before wiring).
+	if flags.mcpAuthzProfile != "" && !domainconfig.IsValidMCPAuthzProfile(flags.mcpAuthzProfile) {
+		return fmt.Errorf("invalid --mcp-authz-profile %q: valid values are %v",
+			flags.mcpAuthzProfile, domainconfig.ValidMCPAuthzProfiles())
+	}
+
 	// Wire MCP proxy (enabled by default, --no-mcp to disable).
 	mcpEnabled := !flags.noMCP
 	if mcpEnabled && cfg != nil && cfg.MCP.Enabled != nil && !*cfg.MCP.Enabled {
@@ -666,12 +672,6 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	if flags.egressProfile != "" && !egress.ProfileName(flags.egressProfile).IsValid() {
 		return fmt.Errorf("invalid --egress-profile %q: valid values are %v",
 			flags.egressProfile, egress.ValidProfiles())
-	}
-
-	// Validate MCP authz profile flag early.
-	if flags.mcpAuthzProfile != "" && !domainconfig.IsValidMCPAuthzProfile(flags.mcpAuthzProfile) {
-		return fmt.Errorf("invalid --mcp-authz-profile %q: valid values are %v",
-			flags.mcpAuthzProfile, domainconfig.ValidMCPAuthzProfiles())
 	}
 
 	var parsedAllowHosts []egress.Host

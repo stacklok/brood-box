@@ -467,6 +467,10 @@ func MergeConfigs(global, local *Config) *Config {
 	result.MCP.Authz = mergeMCPAuthzConfig(global.MCP.Authz, local.MCP.Authz)
 
 	// Agents: local extends/overrides global per key.
+	// MCP.Config and MCP.Authz are stripped from local overrides — workspace
+	// config must not inject Cedar policies, aggregation settings, or authz
+	// profiles through per-agent overrides (same security pattern as top-level
+	// MCP.Authz tighten-only and Auth ignore).
 	if len(local.Agents) > 0 {
 		if result.Agents == nil {
 			result.Agents = make(map[string]AgentOverride)
@@ -479,6 +483,12 @@ func MergeConfigs(global, local *Config) *Config {
 			result.Agents = merged
 		}
 		for k, v := range local.Agents {
+			if v.MCP != nil && (v.MCP.Config != nil || v.MCP.Authz != nil) {
+				sanitized := *v.MCP
+				sanitized.Config = nil
+				sanitized.Authz = nil
+				v.MCP = &sanitized
+			}
 			result.Agents[k] = v
 		}
 	}

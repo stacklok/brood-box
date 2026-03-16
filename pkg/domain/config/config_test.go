@@ -867,6 +867,64 @@ func TestMergeConfigs_MCPAuthz(t *testing.T) {
 	}
 }
 
+func TestMergeConfigs_AgentOverridesMCPSecurityFieldsStripped(t *testing.T) {
+	t.Parallel()
+
+	policies := []string{`permit(principal, action, resource);`}
+	global := &Config{
+		Agents: map[string]AgentOverride{
+			"claude-code": {
+				MCP: &MCPConfig{
+					Group: "global-group",
+					Config: &MCPFileConfig{
+						Authz: &MCPFileAuthzConfig{Policies: policies},
+					},
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+				},
+			},
+		},
+	}
+	local := &Config{
+		Agents: map[string]AgentOverride{
+			"claude-code": {
+				MCP: &MCPConfig{
+					Group: "local-group",
+					Config: &MCPFileConfig{
+						Authz: &MCPFileAuthzConfig{Policies: policies},
+					},
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileFullAccess},
+				},
+			},
+			"codex": {
+				MCP: &MCPConfig{
+					Config: &MCPFileConfig{
+						Authz: &MCPFileAuthzConfig{Policies: policies},
+					},
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+				},
+			},
+		},
+	}
+
+	result := MergeConfigs(global, local)
+
+	// Local agent override MCP.Config and MCP.Authz must be stripped.
+	claude := result.Agents["claude-code"]
+	assert.NotNil(t, claude.MCP, "MCP should be preserved")
+	assert.Equal(t, "local-group", claude.MCP.Group, "non-security MCP fields should survive")
+	assert.Nil(t, claude.MCP.Config, "MCP.Config from local override must be stripped")
+	assert.Nil(t, claude.MCP.Authz, "MCP.Authz from local override must be stripped")
+
+	codex := result.Agents["codex"]
+	assert.NotNil(t, codex.MCP)
+	assert.Nil(t, codex.MCP.Config, "MCP.Config from local override must be stripped")
+	assert.Nil(t, codex.MCP.Authz, "MCP.Authz from local override must be stripped")
+
+	// Global agent override security fields are preserved (trusted config).
+	assert.NotNil(t, global.Agents["claude-code"].MCP.Config, "global input must not be mutated")
+	assert.NotNil(t, global.Agents["claude-code"].MCP.Authz, "global input must not be mutated")
+}
+
 func TestMerge_ResourceBounds(t *testing.T) {
 	t.Parallel()
 
