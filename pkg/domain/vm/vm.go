@@ -69,6 +69,10 @@ type VMConfig struct {
 
 	// LogLevel sets the hypervisor log verbosity (0=off, 5=trace).
 	LogLevel uint32
+
+	// TmpSizeMiB is the size of the /tmp tmpfs inside the guest in MiB.
+	// Zero uses the propolis default (256 MiB).
+	TmpSizeMiB uint32
 }
 
 // HostService describes an HTTP service exposed from host to guest.

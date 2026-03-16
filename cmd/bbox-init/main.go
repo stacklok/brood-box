@@ -21,6 +21,7 @@ import (
 	"github.com/stacklok/propolis/guest/boot"
 	"github.com/stacklok/propolis/guest/harden"
 	"github.com/stacklok/propolis/guest/reaper"
+	"github.com/stacklok/propolis/guest/vmconfig"
 )
 
 // lockPath is used to ensure only one bbox-init instance runs.
@@ -60,7 +61,15 @@ func main() {
 	stopReaper := reaper.Start(logger)
 	defer stopReaper()
 
-	shutdown, err := boot.Run(logger, boot.WithSSHAgentForwarding(true))
+	vmCfg, vmCfgErr := vmconfig.Read()
+	if vmCfgErr != nil {
+		logger.Warn("failed to read vm config, using defaults", "error", vmCfgErr)
+	}
+
+	shutdown, err := boot.Run(logger,
+		boot.WithSSHAgentForwarding(true),
+		boot.WithTmpSize(vmCfg.TmpSizeMiB),
+	)
 	if err != nil {
 		logger.Error("boot failed", "error", err)
 		halt()

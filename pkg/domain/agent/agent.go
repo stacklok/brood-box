@@ -86,6 +86,10 @@ type Agent struct {
 	// whose contents are persisted between sessions for authentication.
 	// Only built-in agents should set this field.
 	CredentialPaths []string
+
+	// DefaultTmpSize is the default /tmp tmpfs size in MiB for this agent.
+	// Zero means use the propolis default (256 MiB).
+	DefaultTmpSize uint32
 }
 
 // Registry provides access to known agents by name.

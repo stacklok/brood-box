@@ -322,6 +322,9 @@ const (
 
 	// MaxMemory is the upper bound for RAM allocation in MiB (128 GiB).
 	MaxMemory uint32 = 131072
+
+	// MaxTmpSize is the upper bound for /tmp tmpfs size (64 GiB).
+	MaxTmpSize ByteSize = 65536
 )
 
 // DefaultsConfig specifies default VM resource limits.
@@ -331,6 +334,11 @@ type DefaultsConfig struct {
 
 	// Memory is the default RAM in MiB.
 	Memory uint32 `yaml:"memory"`
+
+	// TmpSize is the default /tmp tmpfs size. Accepts human-readable values
+	// like "512m" or "2g". Bare integers are treated as MiB for backward
+	// compatibility. Zero uses the propolis default (256 MiB).
+	TmpSize ByteSize `yaml:"tmp_size,omitempty"`
 
 	// EgressProfile is the default egress restriction level.
 	EgressProfile string `yaml:"egress_profile,omitempty"`
@@ -366,6 +374,10 @@ type AgentOverride struct {
 	// Memory overrides the RAM in MiB.
 	Memory uint32 `yaml:"memory,omitempty"`
 
+	// TmpSize overrides the /tmp tmpfs size for this agent. Accepts
+	// human-readable values like "512m" or "2g".
+	TmpSize ByteSize `yaml:"tmp_size,omitempty"`
+
 	// EgressProfile overrides the agent's default egress profile.
 	EgressProfile string `yaml:"egress_profile,omitempty"`
 
@@ -376,7 +388,7 @@ type AgentOverride struct {
 	MCP *MCPConfig `yaml:"mcp,omitempty"`
 }
 
-// clampResources caps CPU and memory values to the configured maximums.
+// clampResources caps CPU and memory values to their maximums.
 // Zero values are passed through (they mean "use default").
 func clampResources(cpus, memory uint32) (uint32, uint32) {
 	if cpus > MaxCPUs {
@@ -386,6 +398,14 @@ func clampResources(cpus, memory uint32) (uint32, uint32) {
 		memory = MaxMemory
 	}
 	return cpus, memory
+}
+
+// clampTmpSize caps the /tmp tmpfs size to MaxTmpSize.
+func clampTmpSize(s ByteSize) ByteSize {
+	if s > MaxTmpSize {
+		return MaxTmpSize
+	}
+	return s
 }
 
 // MergeConfigs merges a local (per-workspace) config into a global config.
@@ -412,11 +432,15 @@ func MergeConfigs(global, local *Config) *Config {
 	if local.Defaults.Memory > 0 {
 		result.Defaults.Memory = local.Defaults.Memory
 	}
+	if local.Defaults.TmpSize > 0 {
+		result.Defaults.TmpSize = local.Defaults.TmpSize
+	}
 
 	// Clamp resource values to configured maximums.
 	result.Defaults.CPUs, result.Defaults.Memory = clampResources(
 		result.Defaults.CPUs, result.Defaults.Memory,
 	)
+	result.Defaults.TmpSize = clampTmpSize(result.Defaults.TmpSize)
 
 	// EgressProfile: local can only tighten (use Stricter).
 	// Treat empty global as "permissive" — the implicit default for all built-in agents.
@@ -529,10 +553,21 @@ func Merge(a agent.Agent, override AgentOverride, defaults DefaultsConfig) agent
 		result.DefaultMemory = defaults.Memory
 	}
 
+	// TmpSize: override > agent default > global default
+	if override.TmpSize > 0 {
+		result.DefaultTmpSize = override.TmpSize.MiB()
+	}
+	if result.DefaultTmpSize == 0 && defaults.TmpSize > 0 {
+		result.DefaultTmpSize = defaults.TmpSize.MiB()
+	}
+
 	// Clamp resource values to configured maximums.
 	result.DefaultCPUs, result.DefaultMemory = clampResources(
 		result.DefaultCPUs, result.DefaultMemory,
 	)
+	if result.DefaultTmpSize > MaxTmpSize.MiB() {
+		result.DefaultTmpSize = MaxTmpSize.MiB()
+	}
 
 	// EgressProfile: override can only tighten the agent's built-in profile.
 	// Treat empty as "permissive" — the default for all agents.
