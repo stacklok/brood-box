@@ -98,6 +98,9 @@ func ParseByteSize(s string) (ByteSize, error) {
 	case "", "m", "mi", "mib":
 		mib = n
 	case "g", "gi", "gib":
+		if n > math.MaxUint64/1024 {
+			return 0, fmt.Errorf("invalid byte size %q: exceeds maximum (%d MiB)", s, uint64(math.MaxUint32))
+		}
 		mib = n * 1024
 	default:
 		return 0, fmt.Errorf("invalid byte size %q: unknown suffix %q (use m or g)", s, suffix)

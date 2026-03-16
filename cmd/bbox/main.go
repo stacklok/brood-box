@@ -85,6 +85,7 @@ func rootCmd() *cobra.Command {
 		noGitSSHAgent     bool
 		noSaveCredentials bool
 		seedCredentials   bool
+		tmpSize           string
 		noFirmwareDL      bool
 		noImageCache      bool
 		timings           bool
@@ -126,6 +127,7 @@ Example:
 			return run(cmd.Context(), args[0], runFlags{
 				cpus:              cpus,
 				memory:            memory,
+				tmpSize:           tmpSize,
 				workspace:         wsPath,
 				sshPort:           sshPort,
 				cfgPath:           cfgPath,
@@ -158,6 +160,7 @@ Example:
 
 	cmd.Flags().Uint32Var(&cpus, "cpus", 0, "Number of vCPUs (0 = agent default)")
 	cmd.Flags().Uint32Var(&memory, "memory", 0, "RAM in MiB (0 = agent default)")
+	cmd.Flags().StringVar(&tmpSize, "tmp-size", "", "Size of /tmp tmpfs inside the VM, e.g. 512m or 2g (0 = agent default)")
 	cmd.Flags().StringVar(&wsPath, "workspace", "", "Workspace directory to mount (default: current directory)")
 	cmd.Flags().Uint16Var(&sshPort, "ssh-port", 0, "Host SSH port (0 = auto-pick)")
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/broodbox/config.yaml)")
@@ -271,6 +274,7 @@ func authClearCmd() *cobra.Command {
 type runFlags struct {
 	cpus              uint32
 	memory            uint32
+	tmpSize           string
 	workspace         string
 	sshPort           uint16
 	cfgPath           string
@@ -694,6 +698,16 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		commandOverride = []string{flags.exec}
 	}
 
+	// Parse --tmp-size flag (human-readable string → MiB).
+	var tmpSizeMiB uint32
+	if flags.tmpSize != "" {
+		parsed, parseErr := domainconfig.ParseByteSize(flags.tmpSize)
+		if parseErr != nil {
+			return fmt.Errorf("--tmp-size: %w", parseErr)
+		}
+		tmpSizeMiB = parsed.MiB()
+	}
+
 	// Enable libkrun trace logging when --debug is set so vm.log
 	// captures hypervisor-level diagnostics.
 	var logLevel uint32
@@ -704,6 +718,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	opts := sandbox.RunOpts{
 		CPUs:            flags.cpus,
 		Memory:          flags.memory,
+		TmpSizeMiB:      tmpSizeMiB,
 		Workspace:       ws,
 		SSHPort:         flags.sshPort,
 		ImageOverride:   flags.image,

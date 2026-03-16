@@ -64,6 +64,7 @@ func main() {
 	vmCfg, vmCfgErr := vmconfig.Read()
 	if vmCfgErr != nil {
 		logger.Warn("failed to read vm config, using defaults", "error", vmCfgErr)
+		vmCfg = vmconfig.Config{}
 	}
 
 	shutdown, err := boot.Run(logger,

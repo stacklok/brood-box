@@ -433,7 +433,10 @@ func MergeConfigs(global, local *Config) *Config {
 		result.Defaults.Memory = local.Defaults.Memory
 	}
 	if local.Defaults.TmpSize > 0 {
-		result.Defaults.TmpSize = local.Defaults.TmpSize
+		// TmpSize: local can only reduce (not inflate) the global default.
+		if result.Defaults.TmpSize == 0 || local.Defaults.TmpSize < result.Defaults.TmpSize {
+			result.Defaults.TmpSize = local.Defaults.TmpSize
+		}
 	}
 
 	// Clamp resource values to configured maximums.

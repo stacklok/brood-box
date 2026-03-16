@@ -48,6 +48,7 @@ func TestParseByteSize(t *testing.T) {
 		{name: "letters only", input: "abc", wantErr: "no numeric value"},
 		{name: "negative rejected by ParseUint", input: "-1m", wantErr: "no numeric value"},
 		{name: "overflow gib", input: "99999999g", wantErr: "exceeds maximum"},
+		{name: "overflow gib wrap", input: "18014398509481985g", wantErr: "exceeds maximum"},
 	}
 
 	for _, tt := range tests {
