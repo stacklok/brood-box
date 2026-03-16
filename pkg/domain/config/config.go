@@ -7,6 +7,7 @@ package config
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
@@ -121,19 +122,104 @@ type MCPConfig struct {
 	// Port is the TCP port on the gateway IP. Default: 4483.
 	Port uint16 `yaml:"port,omitempty"`
 
-	// ConfigPath is an optional path to a vmcp config YAML for advanced
-	// customization (tool filtering, conflict resolution, composite workflows).
-	ConfigPath string `yaml:"config,omitempty"`
+	// Config is an optional inline MCP config for Cedar authorization
+	// policies and tool aggregation settings. Can also be loaded from
+	// a file via --mcp-config.
+	//
+	// NOTE: MCP.Config is intentionally NOT merged from workspace-local
+	// config (.broodbox.yaml). Same security constraint as the "custom"
+	// profile — untrusted repos must not inject Cedar policies.
+	Config *MCPFileConfig `yaml:"config,omitempty"`
 
 	// Authz configures authorization for the MCP proxy.
 	Authz *MCPAuthzConfig `yaml:"authz,omitempty"`
+}
+
+// MCPFileConfig is the user-facing MCP configuration format.
+// It abstracts away vmcp internals (groupRef, auth type, etc.) and exposes
+// only the two sections brood-box uses: authorization policies and
+// tool aggregation settings.
+type MCPFileConfig struct {
+	// Authz configures Cedar authorization policies.
+	Authz *MCPFileAuthzConfig `yaml:"authz,omitempty"`
+
+	// Aggregation configures tool conflict resolution and filtering.
+	Aggregation *MCPAggregationConfig `yaml:"aggregation,omitempty"`
+}
+
+// Validate checks the MCPFileConfig for structural correctness.
+func (c *MCPFileConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.Authz != nil && len(c.Authz.Policies) == 0 {
+		return fmt.Errorf("authz.policies must be non-empty when authz is specified")
+	}
+	if c.Aggregation != nil && c.Aggregation.ConflictResolution != "" {
+		switch strings.ToLower(c.Aggregation.ConflictResolution) {
+		case "prefix", "priority", "manual":
+			// valid
+		default:
+			return fmt.Errorf("aggregation.conflict_resolution must be one of: prefix, priority, manual; got %q",
+				c.Aggregation.ConflictResolution)
+		}
+	}
+	return nil
+}
+
+// MCPFileAuthzConfig configures Cedar authorization policies.
+type MCPFileAuthzConfig struct {
+	// Policies is a list of Cedar policy strings.
+	Policies []string `yaml:"policies"`
+}
+
+// MCPAggregationConfig configures tool conflict resolution and filtering.
+type MCPAggregationConfig struct {
+	// ConflictResolution is the strategy: "prefix", "priority", or "manual".
+	ConflictResolution string `yaml:"conflict_resolution,omitempty"`
+
+	// PrefixFormat defines the prefix format for the "prefix" strategy.
+	PrefixFormat string `yaml:"prefix_format,omitempty"`
+
+	// PriorityOrder defines workload priority for the "priority" strategy.
+	PriorityOrder []string `yaml:"priority_order,omitempty"`
+
+	// ExcludeAllTools hides all backend tools from MCP clients.
+	ExcludeAllTools bool `yaml:"exclude_all_tools,omitempty"`
+
+	// Tools defines per-workload tool filtering and overrides.
+	Tools []MCPWorkloadToolConfig `yaml:"tools,omitempty"`
+}
+
+// MCPWorkloadToolConfig defines tool filtering and overrides for a workload.
+type MCPWorkloadToolConfig struct {
+	// Workload is the backend workload name.
+	Workload string `yaml:"workload"`
+
+	// Filter is an allow-list of tool names to advertise.
+	Filter []string `yaml:"filter,omitempty"`
+
+	// Overrides maps original tool names to override settings.
+	Overrides map[string]*MCPToolOverride `yaml:"overrides,omitempty"`
+
+	// ExcludeAll hides all tools from this workload.
+	ExcludeAll bool `yaml:"exclude_all,omitempty"`
+}
+
+// MCPToolOverride defines name and description overrides for a tool.
+type MCPToolOverride struct {
+	// Name is the new tool name.
+	Name string `yaml:"name,omitempty"`
+
+	// Description is the new tool description.
+	Description string `yaml:"description,omitempty"`
 }
 
 // MCPAuthzConfig configures authorization for the MCP proxy.
 type MCPAuthzConfig struct {
 	// Profile is the authorization profile: "full-access" (default), "observe",
 	// "safe-tools", or "custom". The "custom" profile delegates to Cedar policies
-	// defined in the vmcp config YAML (--mcp-config) and cannot be set from
+	// defined in the MCP config YAML (--mcp-config) and cannot be set from
 	// workspace-local config.
 	Profile string `yaml:"profile,omitempty"`
 }
@@ -150,9 +236,9 @@ const (
 	MCPAuthzProfileSafeTools = "safe-tools"
 
 	// MCPAuthzProfileCustom delegates authorization to Cedar policies defined in
-	// the vmcp config YAML (--mcp-config incomingAuth.authz.policies). Requires
-	// --mcp-config to be set with valid Cedar policies. Cannot be set from
-	// workspace-local config for security.
+	// the MCP config YAML (--mcp-config authz.policies). Inferred automatically
+	// when --mcp-config has Cedar policies. Cannot be set from workspace-local
+	// config for security.
 	MCPAuthzProfileCustom = "custom"
 )
 
@@ -381,6 +467,10 @@ func MergeConfigs(global, local *Config) *Config {
 	result.MCP.Authz = mergeMCPAuthzConfig(global.MCP.Authz, local.MCP.Authz)
 
 	// Agents: local extends/overrides global per key.
+	// MCP.Config and MCP.Authz are stripped from local overrides — workspace
+	// config must not inject Cedar policies, aggregation settings, or authz
+	// profiles through per-agent overrides (same security pattern as top-level
+	// MCP.Authz tighten-only and Auth ignore).
 	if len(local.Agents) > 0 {
 		if result.Agents == nil {
 			result.Agents = make(map[string]AgentOverride)
@@ -393,6 +483,12 @@ func MergeConfigs(global, local *Config) *Config {
 			result.Agents = merged
 		}
 		for k, v := range local.Agents {
+			if v.MCP != nil && (v.MCP.Config != nil || v.MCP.Authz != nil) {
+				sanitized := *v.MCP
+				sanitized.Config = nil
+				sanitized.Authz = nil
+				v.MCP = &sanitized
+			}
 			result.Agents[k] = v
 		}
 	}
@@ -486,7 +582,7 @@ func mergeMCPAuthzConfig(global, local *MCPAuthzConfig) *MCPAuthzConfig {
 		return global
 	}
 	// "custom" is not allowed from workspace-local config — it would let a
-	// repository supply its own Cedar policies via a vmcp YAML it controls.
+	// repository supply its own Cedar policies via an MCP config it controls.
 	if local.Profile == MCPAuthzProfileCustom {
 		return global
 	}

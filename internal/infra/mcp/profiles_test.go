@@ -158,7 +158,7 @@ func TestResolveProfileReturns(t *testing.T) {
 		{
 			name:    "custom profile returns error",
 			cfg:     &config.MCPAuthzConfig{Profile: config.MCPAuthzProfileCustom},
-			wantErr: "custom profile must be resolved from vmcp config",
+			wantErr: "custom profile must be resolved from MCP config",
 		},
 		{
 			name:    "unknown profile returns error",

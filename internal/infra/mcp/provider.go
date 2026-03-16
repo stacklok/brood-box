@@ -28,7 +28,7 @@ import (
 	vmcpserver "github.com/stacklok/toolhive/pkg/vmcp/server"
 	workloadsmgr "github.com/stacklok/toolhive/pkg/workloads"
 
-	"github.com/stacklok/brood-box/pkg/domain/config"
+	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
 	"github.com/stacklok/brood-box/pkg/domain/hostservice"
 )
 
@@ -36,8 +36,8 @@ import (
 type VMCPProvider struct {
 	group       string
 	port        uint16
-	configPath  string
-	authzConfig *config.MCPAuthzConfig
+	mcpConfig   *domainconfig.MCPFileConfig
+	authzConfig *domainconfig.MCPAuthzConfig
 	server      *vmcpserver.Server
 	logger      *slog.Logger
 	logWriter   io.Writer
@@ -45,14 +45,15 @@ type VMCPProvider struct {
 
 // NewVMCPProvider creates a new provider that will proxy MCP traffic to
 // backends discovered in the given ToolHive group.
+// mcpConfig provides Cedar policies and aggregation settings (nil = no custom config).
 // authzConfig controls MCP authorization (nil = full-access, no restrictions).
 // logWriter receives toolhive's zap logs (typically the bbox log file).
 // If nil, toolhive logs are discarded.
-func NewVMCPProvider(group string, port uint16, configPath string, authzConfig *config.MCPAuthzConfig, logger *slog.Logger, logWriter io.Writer) *VMCPProvider {
+func NewVMCPProvider(group string, port uint16, mcpConfig *domainconfig.MCPFileConfig, authzConfig *domainconfig.MCPAuthzConfig, logger *slog.Logger, logWriter io.Writer) *VMCPProvider {
 	return &VMCPProvider{
 		group:       group,
 		port:        port,
-		configPath:  configPath,
+		mcpConfig:   mcpConfig,
 		authzConfig: authzConfig,
 		logger:      logger,
 		logWriter:   logWriter,
@@ -86,17 +87,12 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 		workloadsmgr.NewDiscovererAdapter(wlMgr), groupsMgr, nil,
 	)
 
-	// Load optional vmcp config for advanced customization.
+	// Translate brood-box MCP config to vmcp types.
 	var aggConfig *vmcpconfig.AggregationConfig
 	var vmcpIncomingAuth *vmcpconfig.IncomingAuthConfig
-	if p.configPath != "" {
-		loader := vmcpconfig.NewYAMLLoader(p.configPath, &env.OSReader{})
-		cfg, loadErr := loader.Load()
-		if loadErr != nil {
-			return nil, fmt.Errorf("loading vmcp config %s: %w", p.configPath, loadErr)
-		}
-		aggConfig = cfg.Aggregation
-		vmcpIncomingAuth = cfg.IncomingAuth
+	if p.mcpConfig != nil {
+		aggConfig = translateAggregation(p.mcpConfig.Aggregation)
+		vmcpIncomingAuth = translateAuthz(p.mcpConfig.Authz)
 	}
 
 	// Discover backends in the group.
@@ -230,13 +226,13 @@ func (p *VMCPProvider) resolveAuthMiddleware(
 	err error,
 ) {
 	// Handle the "custom" profile: read Cedar policies from the vmcp config YAML.
-	if p.authzConfig != nil && p.authzConfig.Profile == config.MCPAuthzProfileCustom {
+	if p.authzConfig != nil && p.authzConfig.Profile == domainconfig.MCPAuthzProfileCustom {
 		if vmcpIncomingAuth == nil ||
 			vmcpIncomingAuth.Authz == nil ||
 			len(vmcpIncomingAuth.Authz.Policies) == 0 {
 			return nil, nil, nil, fmt.Errorf(
 				"MCP authz profile %q requires Cedar policies in --mcp-config "+
-					"(incomingAuth.authz.policies)", config.MCPAuthzProfileCustom)
+					"(authz.policies)", domainconfig.MCPAuthzProfileCustom)
 		}
 		authMw, authzMw, authInfoH, err = vmcpauthfactory.NewIncomingAuthMiddleware(
 			ctx, vmcpIncomingAuth,

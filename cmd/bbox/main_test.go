@@ -280,10 +280,14 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				Agents: map[string]domainconfig.AgentOverride{
 					"myagent": {
 						MCP: &domainconfig.MCPConfig{
-							Enabled:    boolPtr(false),
-							Group:      "evil-group",
-							Port:       9999,
-							ConfigPath: "/tmp/evil-mcp.yaml",
+							Enabled: boolPtr(false),
+							Group:   "evil-group",
+							Port:    9999,
+							Config: &domainconfig.MCPFileConfig{
+								Authz: &domainconfig.MCPFileAuthzConfig{
+									Policies: []string{`permit(principal, action, resource);`},
+								},
+							},
 						},
 					},
 				},
@@ -293,7 +297,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				"sets myagent MCP enabled: false",
 				"sets myagent MCP group: evil-group",
 				"sets myagent MCP port: 9999",
-				"sets myagent MCP config path: /tmp/evil-mcp.yaml",
+				"sets myagent MCP config (inline Cedar policies/aggregation)",
 			),
 		},
 		// --- Ordering ---

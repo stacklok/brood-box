@@ -867,6 +867,64 @@ func TestMergeConfigs_MCPAuthz(t *testing.T) {
 	}
 }
 
+func TestMergeConfigs_AgentOverridesMCPSecurityFieldsStripped(t *testing.T) {
+	t.Parallel()
+
+	policies := []string{`permit(principal, action, resource);`}
+	global := &Config{
+		Agents: map[string]AgentOverride{
+			"claude-code": {
+				MCP: &MCPConfig{
+					Group: "global-group",
+					Config: &MCPFileConfig{
+						Authz: &MCPFileAuthzConfig{Policies: policies},
+					},
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+				},
+			},
+		},
+	}
+	local := &Config{
+		Agents: map[string]AgentOverride{
+			"claude-code": {
+				MCP: &MCPConfig{
+					Group: "local-group",
+					Config: &MCPFileConfig{
+						Authz: &MCPFileAuthzConfig{Policies: policies},
+					},
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileFullAccess},
+				},
+			},
+			"codex": {
+				MCP: &MCPConfig{
+					Config: &MCPFileConfig{
+						Authz: &MCPFileAuthzConfig{Policies: policies},
+					},
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+				},
+			},
+		},
+	}
+
+	result := MergeConfigs(global, local)
+
+	// Local agent override MCP.Config and MCP.Authz must be stripped.
+	claude := result.Agents["claude-code"]
+	assert.NotNil(t, claude.MCP, "MCP should be preserved")
+	assert.Equal(t, "local-group", claude.MCP.Group, "non-security MCP fields should survive")
+	assert.Nil(t, claude.MCP.Config, "MCP.Config from local override must be stripped")
+	assert.Nil(t, claude.MCP.Authz, "MCP.Authz from local override must be stripped")
+
+	codex := result.Agents["codex"]
+	assert.NotNil(t, codex.MCP)
+	assert.Nil(t, codex.MCP.Config, "MCP.Config from local override must be stripped")
+	assert.Nil(t, codex.MCP.Authz, "MCP.Authz from local override must be stripped")
+
+	// Global agent override security fields are preserved (trusted config).
+	assert.NotNil(t, global.Agents["claude-code"].MCP.Config, "global input must not be mutated")
+	assert.NotNil(t, global.Agents["claude-code"].MCP.Authz, "global input must not be mutated")
+}
+
 func TestMerge_ResourceBounds(t *testing.T) {
 	t.Parallel()
 
@@ -959,6 +1017,116 @@ func TestMerge_ResourceBounds(t *testing.T) {
 			got := Merge(tt.agent, tt.override, tt.defaults)
 			assert.Equal(t, tt.wantCPUs, got.DefaultCPUs, "CPUs")
 			assert.Equal(t, tt.wantMemory, got.DefaultMemory, "Memory")
+		})
+	}
+}
+
+func TestMCPFileConfig_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     *MCPFileConfig
+		wantErr string
+	}{
+		{
+			name: "nil config is valid",
+			cfg:  nil,
+		},
+		{
+			name: "empty config is valid",
+			cfg:  &MCPFileConfig{},
+		},
+		{
+			name: "authz with policies is valid",
+			cfg: &MCPFileConfig{
+				Authz: &MCPFileAuthzConfig{
+					Policies: []string{`permit(principal, action, resource);`},
+				},
+			},
+		},
+		{
+			name: "authz with empty policies is invalid",
+			cfg: &MCPFileConfig{
+				Authz: &MCPFileAuthzConfig{
+					Policies: []string{},
+				},
+			},
+			wantErr: "authz.policies must be non-empty",
+		},
+		{
+			name: "authz with nil policies is invalid",
+			cfg: &MCPFileConfig{
+				Authz: &MCPFileAuthzConfig{},
+			},
+			wantErr: "authz.policies must be non-empty",
+		},
+		{
+			name: "valid conflict_resolution prefix",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "prefix",
+				},
+			},
+		},
+		{
+			name: "valid conflict_resolution priority",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "priority",
+				},
+			},
+		},
+		{
+			name: "valid conflict_resolution manual",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "manual",
+				},
+			},
+		},
+		{
+			name: "invalid conflict_resolution",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "invalid",
+				},
+			},
+			wantErr: "conflict_resolution must be one of",
+		},
+		{
+			name: "empty conflict_resolution is valid (optional)",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{},
+			},
+		},
+		{
+			name: "full config is valid",
+			cfg: &MCPFileConfig{
+				Authz: &MCPFileAuthzConfig{
+					Policies: []string{`permit(principal, action, resource);`},
+				},
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "prefix",
+					PrefixFormat:       "{workload}_",
+					Tools: []MCPWorkloadToolConfig{
+						{Workload: "github", Filter: []string{"search_code"}},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.cfg.Validate()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
 		})
 	}
 }
