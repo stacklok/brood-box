@@ -23,8 +23,16 @@ var observePolicies = []string{
 // safeToolsPolicies extend observe with annotation-based tool call permits.
 // Tools with readOnlyHint=true are allowed. Tools that are both non-destructive
 // (destructiveHint=false) and closed-world (openWorldHint=false) are also allowed.
-// Missing annotations cause the when clause to fail, resulting in Cedar's
-// default-deny — matching MCP spec conservative defaults without custom code.
+//
+// Each when clause uses Cedar's `has` operator to guard attribute access.
+// Without `has`, accessing a missing attribute is an evaluation error — Cedar
+// treats errors as "policy not satisfied", but toolhive's pre-flight check
+// treats ANY error as a hard deny for the tool. Many MCP servers (GitHub,
+// context7) set only some annotations, so unguarded access would incorrectly
+// block tools that have readOnlyHint=true but omit destructiveHint.
+//
+// Tools that omit all annotation attributes are still denied (none of the
+// `has` guards pass), preserving the conservative default-deny posture.
 var safeToolsPolicies = []string{
 	// All observe permits.
 	`permit(principal, action == Action::"list_tools", resource);`,
@@ -33,9 +41,9 @@ var safeToolsPolicies = []string{
 	`permit(principal, action == Action::"get_prompt", resource);`,
 	`permit(principal, action == Action::"read_resource", resource);`,
 	// Allow read-only tools.
-	`permit(principal, action == Action::"call_tool", resource) when { resource.readOnlyHint == true };`,
+	`permit(principal, action == Action::"call_tool", resource) when { resource has readOnlyHint && resource.readOnlyHint == true };`,
 	// Allow non-destructive AND closed-world tools.
-	`permit(principal, action == Action::"call_tool", resource) when { resource.destructiveHint == false && resource.openWorldHint == false };`,
+	`permit(principal, action == Action::"call_tool", resource) when { resource has destructiveHint && resource.destructiveHint == false && resource has openWorldHint && resource.openWorldHint == false };`,
 }
 
 // ResolveProfile returns Cedar policy strings for the given authz config.
