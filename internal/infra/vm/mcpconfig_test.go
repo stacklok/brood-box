@@ -140,7 +140,25 @@ func TestInjectClaudeCodeMCP(t *testing.T) {
 	}
 }
 
-func TestInjectClaudeCodeMCP_SetsOnboardingFlag(t *testing.T) {
+func TestInjectClaudeCodeMCP_SetsOnboardingFlag_WhenCredentialsExist(t *testing.T) {
+	t.Parallel()
+
+	rootfs := setupRootfsWithCredentials(t)
+	chown, _ := recordingChown()
+	err := injectClaudeCodeMCP(rootfs, "192.168.127.1", 4483, chown)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(rootfs, sandboxHome, ".claude.json"))
+	require.NoError(t, err)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+
+	assert.Contains(t, raw, "hasCompletedOnboarding")
+	assert.JSONEq(t, "true", string(raw["hasCompletedOnboarding"]))
+}
+
+func TestInjectClaudeCodeMCP_NoOnboardingFlag_WhenNoCredentials(t *testing.T) {
 	t.Parallel()
 
 	rootfs := setupRootfs(t)
@@ -154,8 +172,8 @@ func TestInjectClaudeCodeMCP_SetsOnboardingFlag(t *testing.T) {
 	var raw map[string]json.RawMessage
 	require.NoError(t, json.Unmarshal(data, &raw))
 
-	assert.Contains(t, raw, "hasCompletedOnboarding")
-	assert.JSONEq(t, "true", string(raw["hasCompletedOnboarding"]))
+	assert.NotContains(t, raw, "hasCompletedOnboarding",
+		"onboarding flag should not be set without credentials")
 }
 
 func TestInjectClaudeCodeMCP_CustomPort(t *testing.T) {
@@ -191,10 +209,8 @@ func TestInjectClaudeCodeMCP_NoExtraFields(t *testing.T) {
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(data, &raw))
 
-	assert.Len(t, raw, 2, "top-level should have mcpServers and hasCompletedOnboarding")
+	assert.Len(t, raw, 1, "top-level should have only mcpServers when no credentials")
 	assert.Contains(t, raw, "mcpServers")
-	assert.Contains(t, raw, "hasCompletedOnboarding")
-	assert.Equal(t, true, raw["hasCompletedOnboarding"])
 
 	servers := raw["mcpServers"].(map[string]any)
 	assert.Len(t, servers, 1, "should have only sandbox-tools")
@@ -509,5 +525,21 @@ func setupRootfs(t *testing.T) string {
 	t.Helper()
 	rootfs := t.TempDir()
 	require.NoError(t, os.MkdirAll(filepath.Join(rootfs, sandboxHome), 0o755))
+	return rootfs
+}
+
+// setupRootfsWithCredentials creates a rootfs with a dummy credentials file
+// at /home/sandbox/.claude/.credentials.json, simulating what the credential
+// injection hook produces before the MCP hook runs.
+func setupRootfsWithCredentials(t *testing.T) string {
+	t.Helper()
+	rootfs := setupRootfs(t)
+	claudeDir := filepath.Join(rootfs, sandboxHome, ".claude")
+	require.NoError(t, os.MkdirAll(claudeDir, 0o700))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(claudeDir, ".credentials.json"),
+		[]byte(`{"claudeAiOauth":{"accessToken":"test"}}`),
+		0o600,
+	))
 	return rootfs
 }

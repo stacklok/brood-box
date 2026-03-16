@@ -54,8 +54,10 @@ type claudeCodeServer struct {
 
 // injectClaudeCodeMCP merges an MCP server entry into ~/.claude.json,
 // preserving any pre-existing keys (auth tokens, onboarding flags, etc.).
-// It also sets hasCompletedOnboarding so Claude Code skips the interactive
-// setup wizard, which cannot complete inside a headless VM.
+// If credentials were already injected into the rootfs (by the credential
+// hook that runs earlier), it also sets hasCompletedOnboarding so Claude
+// Code skips the interactive setup wizard. Without credentials the wizard
+// must run so the user can sign in.
 func injectClaudeCodeMCP(rootfsPath, gatewayIP string, port uint16, chown ChownFunc) error {
 	servers := map[string]claudeCodeServer{
 		"sandbox-tools": {
@@ -73,7 +75,17 @@ func injectClaudeCodeMCP(rootfsPath, gatewayIP string, port uint16, chown ChownF
 		return err
 	}
 
-	return mergeJSONKey(homeDir, ".claude.json", "hasCompletedOnboarding", true, chown)
+	// Only skip the onboarding wizard when credentials are available.
+	// The credential injection hook runs before this hook, so the file
+	// will be present if the store had saved credentials to inject.
+	credFile := filepath.Join(homeDir, ".claude", ".credentials.json")
+	if _, err := os.Stat(credFile); err == nil {
+		slog.Debug("credentials found in rootfs, setting hasCompletedOnboarding")
+		return mergeJSONKey(homeDir, ".claude.json", "hasCompletedOnboarding", true, chown)
+	}
+
+	slog.Debug("no credentials in rootfs, leaving onboarding wizard enabled")
+	return nil
 }
 
 // --- Codex ---
