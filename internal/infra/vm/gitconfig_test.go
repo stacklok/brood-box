@@ -36,6 +36,8 @@ func TestInjectGitConfig_FullIdentityAndToken(t *testing.T) {
 	assert.Contains(t, content, "email = alice@example.com")
 	assert.Contains(t, content, "[credential]")
 	assert.Contains(t, content, "helper = /usr/local/bin/git-credential-bbox")
+	assert.Contains(t, content, "[safe]")
+	assert.Contains(t, content, "directory = /workspace")
 
 	// Verify credential helper exists.
 	helperPath := filepath.Join(rootfs, "usr", "local", "bin", "git-credential-bbox")
@@ -70,6 +72,8 @@ func TestInjectGitConfig_IdentityOnly(t *testing.T) {
 	assert.Contains(t, content, "name = Bob")
 	assert.Contains(t, content, "email = bob@example.com")
 	assert.NotContains(t, content, "[credential]")
+	assert.Contains(t, content, "[safe]")
+	assert.Contains(t, content, "directory = /workspace")
 
 	// Verify no credential helper.
 	helperPath := filepath.Join(rootfs, "usr", "local", "bin", "git-credential-bbox")
@@ -95,6 +99,8 @@ func TestInjectGitConfig_TokenOnly(t *testing.T) {
 	assert.NotContains(t, content, "[user]")
 	assert.Contains(t, content, "[credential]")
 	assert.Contains(t, content, "helper = /usr/local/bin/git-credential-bbox")
+	assert.Contains(t, content, "[safe]")
+	assert.Contains(t, content, "directory = /workspace")
 
 	// Verify credential helper exists.
 	helperPath := filepath.Join(rootfs, "usr", "local", "bin", "git-credential-bbox")
@@ -102,26 +108,38 @@ func TestInjectGitConfig_TokenOnly(t *testing.T) {
 	assert.NoError(t, err)
 }
 
-func TestInjectGitConfig_NoOp(t *testing.T) {
+func TestInjectGitConfig_SafeDirectoryOnly(t *testing.T) {
 	t.Parallel()
 
 	rootfs := setupRootfs(t)
 	chown, getCalls := recordingChown()
-	identity := domaingit.Identity{} // empty
+	identity := domaingit.Identity{} // empty — not complete
 
 	hook := InjectGitConfig(identity, false, chown)
 	err := hook(rootfs, nil)
 	require.NoError(t, err)
 
-	// No .gitconfig should be written.
-	_, err = os.Stat(filepath.Join(rootfs, sandboxHome, ".gitconfig"))
-	assert.True(t, os.IsNotExist(err), ".gitconfig should not exist")
+	// .gitconfig should be created with only [safe] section.
+	data, err := os.ReadFile(filepath.Join(rootfs, sandboxHome, ".gitconfig"))
+	require.NoError(t, err)
+
+	content := string(data)
+	assert.NotContains(t, content, "[user]")
+	assert.NotContains(t, content, "[credential]")
+	assert.Contains(t, content, "[safe]")
+	assert.Contains(t, content, "directory = /workspace")
 
 	// No credential helper should be written.
 	_, err = os.Stat(filepath.Join(rootfs, "usr", "local", "bin", "git-credential-bbox"))
 	assert.True(t, os.IsNotExist(err), "credential helper should not exist")
 
-	assert.Empty(t, getCalls(), "chown should not be called for no-op")
+	// Chown should still be called for the .gitconfig file.
+	calls := getCalls()
+	require.NotEmpty(t, calls, "chown must be called")
+	for _, c := range calls {
+		assert.Equal(t, sandboxUID, c.UID)
+		assert.Equal(t, sandboxGID, c.GID)
+	}
 }
 
 func TestCredentialHelper_Executable(t *testing.T) {

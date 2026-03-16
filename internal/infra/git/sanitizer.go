@@ -83,8 +83,96 @@ func (s *ConfigSanitizer) Process(_ context.Context, originalPath, snapshotPath 
 	}
 
 	dstPath := filepath.Join(dstDir, "config")
-	if err := os.WriteFile(dstPath, []byte(sanitized), 0o600); err != nil {
+	if err := os.WriteFile(dstPath, []byte(sanitized), 0o644); err != nil {
 		return fmt.Errorf("writing sanitized git config: %w", err)
+	}
+
+	// For worktree snapshots, create minimal git directory structure
+	// so that git recognizes this as a valid repository.
+	if isWorktree(originalPath) {
+		if err := initWorktreeGitDir(originalPath, dstDir); err != nil {
+			s.logger.Warn("could not initialize worktree git structure",
+				"path", originalPath, "error", err)
+		}
+	}
+
+	return nil
+}
+
+// isWorktree returns true if the workspace is a git worktree
+// (i.e. .git is a regular file, not a directory).
+func isWorktree(workspacePath string) bool {
+	info, err := os.Lstat(filepath.Join(workspacePath, ".git"))
+	if err != nil {
+		return false
+	}
+	return !info.IsDir()
+}
+
+// resolveWorktreeGitDir parses the gitdir path from a worktree's .git file.
+func resolveWorktreeGitDir(workspacePath string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(workspacePath, ".git"))
+	if err != nil {
+		return "", fmt.Errorf("reading .git file: %w", err)
+	}
+
+	content := strings.TrimSpace(string(data))
+	if !strings.HasPrefix(content, "gitdir: ") {
+		return "", fmt.Errorf("malformed .git file: missing 'gitdir: ' prefix")
+	}
+
+	gitdir := strings.TrimPrefix(content, "gitdir: ")
+	if !filepath.IsAbs(gitdir) {
+		gitdir = filepath.Join(workspacePath, gitdir)
+	}
+	gitdir = filepath.Clean(gitdir)
+
+	// Defense-in-depth: verify the resolved path looks like a git
+	// directory. Without this, a malicious .git file could point to
+	// an arbitrary path and leak file contents into the snapshot.
+	if _, err := os.Stat(filepath.Join(gitdir, "HEAD")); err != nil {
+		return "", fmt.Errorf("resolved gitdir %q does not contain HEAD: %w", gitdir, err)
+	}
+
+	return gitdir, nil
+}
+
+// initWorktreeGitDir creates the minimal git directory structure
+// (HEAD, objects/, refs/) needed for git to recognize a worktree
+// snapshot as a valid repository.
+func initWorktreeGitDir(originalPath, dstDir string) error {
+	// Create objects/ and refs/ directories.
+	for _, sub := range []string{"objects", "refs"} {
+		if err := os.MkdirAll(filepath.Join(dstDir, sub), 0o755); err != nil {
+			return fmt.Errorf("creating %s directory: %w", sub, err)
+		}
+	}
+
+	// Resolve the worktree's gitdir to read its HEAD.
+	gitdir, err := resolveWorktreeGitDir(originalPath)
+	if err != nil {
+		return fmt.Errorf("resolving worktree gitdir: %w", err)
+	}
+
+	headContent, err := os.ReadFile(filepath.Join(gitdir, "HEAD"))
+	if err != nil {
+		// Fallback if HEAD is unreadable.
+		headContent = []byte("ref: refs/heads/main\n")
+	}
+
+	head := strings.TrimSpace(string(headContent))
+
+	// If HEAD is not a well-formed symbolic ref, use a safe fallback.
+	// A raw SHA with empty objects/ causes git errors; a symbolic ref
+	// to a missing branch works fine (same as git init). We require
+	// "ref: refs/" (not just "ref: ") to prevent leaking content from
+	// non-git files that happen to start with "ref: ".
+	if !strings.HasPrefix(head, "ref: refs/") {
+		head = "ref: refs/heads/main"
+	}
+
+	if err := os.WriteFile(filepath.Join(dstDir, "HEAD"), []byte(head+"\n"), 0o644); err != nil {
+		return fmt.Errorf("writing HEAD: %w", err)
 	}
 
 	return nil

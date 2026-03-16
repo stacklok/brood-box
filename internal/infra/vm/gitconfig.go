@@ -19,11 +19,6 @@ import (
 // and credential helper scripts into the guest rootfs.
 func InjectGitConfig(identity domaingit.Identity, hasGitToken bool, chown ChownFunc) func(string, *image.OCIConfig) error {
 	return func(rootfsPath string, _ *image.OCIConfig) error {
-		// No-op if nothing to inject.
-		if !identity.IsComplete() && !hasGitToken {
-			return nil
-		}
-
 		// Write credential helper script (if token available).
 		if hasGitToken {
 			if err := writeCredentialHelper(rootfsPath); err != nil {
@@ -31,7 +26,7 @@ func InjectGitConfig(identity domaingit.Identity, hasGitToken bool, chown ChownF
 			}
 		}
 
-		// Write .gitconfig.
+		// Write .gitconfig (always — at minimum for safe.directory).
 		return writeGitConfig(rootfsPath, identity, hasGitToken, chown)
 	}
 }
@@ -102,9 +97,11 @@ func writeGitConfig(rootfsPath string, identity domaingit.Identity, hasGitToken 
 		b.WriteString("\thelper = /usr/local/bin/git-credential-bbox\n")
 	}
 
-	if b.Len() == 0 {
-		return nil
-	}
+	// Always mark /workspace as safe to prevent "dubious ownership" errors.
+	// The host workspace is mounted at /workspace with a different UID than
+	// the sandbox user — git 2.36+ rejects this without safe.directory.
+	b.WriteString("[safe]\n")
+	b.WriteString("\tdirectory = /workspace\n")
 
 	gitconfigPath := filepath.Join(homeDir, ".gitconfig")
 	if err := os.WriteFile(gitconfigPath, []byte(b.String()), 0o600); err != nil {
