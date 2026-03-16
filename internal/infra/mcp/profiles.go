@@ -68,7 +68,7 @@ func ResolveProfile(cfg *config.MCPAuthzConfig) ([]string, error) {
 		// Custom is resolved by the provider from the vmcp config YAML.
 		// Return an error here because the caller should handle custom
 		// before reaching this point.
-		return nil, fmt.Errorf("custom profile must be resolved from vmcp config (--mcp-config incomingAuth.authz.policies)")
+		return nil, fmt.Errorf("custom profile must be resolved from MCP config (--mcp-config authz.policies)")
 	default:
 		return nil, fmt.Errorf("unknown MCP authz profile: %q (valid: %s)",
 			cfg.Profile, strings.Join(config.ValidMCPAuthzProfiles(), ", "))

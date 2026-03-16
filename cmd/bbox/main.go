@@ -171,7 +171,7 @@ Example:
 	cmd.Flags().BoolVar(&noMCP, "no-mcp", false, "Disable MCP tool proxy (enabled by default, discovers servers from ToolHive)")
 	cmd.Flags().StringVar(&mcpGroup, "mcp-group", "default", "ToolHive group to discover MCP servers from")
 	cmd.Flags().Uint16Var(&mcpPort, "mcp-port", 4483, "Port for MCP proxy on VM gateway")
-	cmd.Flags().StringVar(&mcpConfig, "mcp-config", "", "Path to custom vmcp config YAML")
+	cmd.Flags().StringVar(&mcpConfig, "mcp-config", "", "Path to MCP config YAML (Cedar policies and aggregation settings)")
 	cmd.Flags().StringVar(&mcpAuthzProfile, "mcp-authz-profile", "", "MCP authorization profile: full-access, observe, safe-tools, custom (default: full-access)")
 	cmd.Flags().BoolVar(&noGitToken, "no-git-token", false, "Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM")
 	cmd.Flags().BoolVar(&noGitSSHAgent, "no-git-ssh-agent", false, "Disable SSH agent forwarding into the VM")
@@ -590,7 +590,6 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	if mcpEnabled {
 		mcpGroup := flags.mcpGroup
 		mcpPort := flags.mcpPort
-		mcpConfigPath := flags.mcpConfig
 		if cfg != nil {
 			if mcpGroup == "default" && cfg.MCP.Group != "" {
 				mcpGroup = cfg.MCP.Group
@@ -598,9 +597,18 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			if mcpPort == 4483 && cfg.MCP.Port != 0 {
 				mcpPort = cfg.MCP.Port
 			}
-			if mcpConfigPath == "" && cfg.MCP.ConfigPath != "" {
-				mcpConfigPath = cfg.MCP.ConfigPath
+		}
+
+		// Resolve MCP file config: CLI --mcp-config flag overrides config file.
+		var mcpFileConfig *domainconfig.MCPFileConfig
+		if flags.mcpConfig != "" {
+			var loadErr error
+			mcpFileConfig, loadErr = inframcp.LoadMCPFileConfig(flags.mcpConfig)
+			if loadErr != nil {
+				return loadErr
 			}
+		} else if cfg != nil && cfg.MCP.Config != nil {
+			mcpFileConfig = cfg.MCP.Config
 		}
 
 		// Resolve MCP authz config: CLI flag overrides config file.
@@ -611,7 +619,14 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			authzCfg = cfg.MCP.Authz
 		}
 
-		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpConfigPath, authzCfg, logger, logFile)
+		// Implicit custom profile: if config has policies but no explicit
+		// profile, infer custom so the user doesn't have to specify both.
+		if mcpFileConfig != nil && mcpFileConfig.Authz != nil &&
+			len(mcpFileConfig.Authz.Policies) > 0 && authzCfg == nil {
+			authzCfg = &domainconfig.MCPAuthzConfig{Profile: domainconfig.MCPAuthzProfileCustom}
+		}
+
+		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpFileConfig, authzCfg, logger, logFile)
 		deps.MCPProvider = mcpProvider
 		defer func() { _ = mcpProvider.Close() }()
 		// Ensure sandbox config reflects MCP enabled state for the application layer.
@@ -619,7 +634,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		sandboxCfg.MCP.Enabled = &enabled
 		sandboxCfg.MCP.Group = mcpGroup
 		sandboxCfg.MCP.Port = mcpPort
-		sandboxCfg.MCP.ConfigPath = mcpConfigPath
+		sandboxCfg.MCP.Config = mcpFileConfig
 		sandboxCfg.MCP.Authz = authzCfg
 	}
 
@@ -995,8 +1010,8 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 			if override.MCP.Port != 0 {
 				warnings = append(warnings, fmt.Sprintf("sets %s MCP port: %d", safeName, override.MCP.Port))
 			}
-			if override.MCP.ConfigPath != "" {
-				warnings = append(warnings, fmt.Sprintf("sets %s MCP config path: %s", safeName, sanitizeValue(override.MCP.ConfigPath)))
+			if override.MCP.Config != nil {
+				warnings = append(warnings, fmt.Sprintf("sets %s MCP config (inline Cedar policies/aggregation)", safeName))
 			}
 		}
 	}

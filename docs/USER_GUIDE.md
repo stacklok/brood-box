@@ -71,7 +71,7 @@ bbox <agent-name> [flags] [-- <agent-args...>]
 | `--no-mcp` | `false` | Disable MCP tool proxy |
 | `--mcp-group` | `default` | ToolHive group to discover MCP servers from |
 | `--mcp-port` | `4483` | Port for MCP proxy on VM gateway |
-| `--mcp-config` | (none) | Path to custom vmcp config YAML |
+| `--mcp-config` | (none) | Path to MCP config YAML (Cedar policies and aggregation settings) |
 | `--mcp-authz-profile` | `full-access` | MCP authorization profile: `full-access`, `observe`, `safe-tools`, `custom` |
 | `--no-git-token` | `false` | Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM |
 | `--no-git-ssh-agent` | `false` | Disable SSH agent forwarding into the VM |
@@ -150,7 +150,11 @@ mcp:
   enabled: true
   group: "default"
   port: 4483
-  config: "/path/to/vmcp-config.yaml"  # optional advanced config
+  # Optional inline MCP config (Cedar policies and aggregation)
+  # config:
+  #   authz:
+  #     policies:
+  #       - 'permit(principal, action, resource);'
   authz:
     profile: "full-access"  # observe, safe-tools, custom
 
@@ -324,6 +328,20 @@ When [ToolHive](https://github.com/stacklok/toolhive) is running, Brood Box
 automatically discovers MCP servers and proxies them into the VM so the
 agent can use external tools.
 
+Brood Box does this by running an embedded instance of ToolHive's
+[Virtual MCP Server](https://github.com/stacklok/toolhive) (vMCP) — the
+same component that aggregates and authorizes MCP traffic in ToolHive's
+Kubernetes operator. The vMCP instance runs in-process on the host, discovers
+backends from ToolHive groups, and exposes a single MCP endpoint inside the
+VM. This gives the guest agent access to all the tools in the group through
+one connection, with authorization enforced on the host side before requests
+reach any backend.
+
+The `--mcp-config` flag accepts an MCP config YAML file with a simple,
+brood-box-native format. It supports two sections: `authz` for Cedar
+authorization policies, and `aggregation` for tool conflict resolution
+when multiple backends expose tools with the same name.
+
 ```bash
 # Disable MCP proxy
 bbox claude-code --no-mcp
@@ -348,7 +366,7 @@ restrict what the agent can do with authorization profiles:
 | `full-access` (default) | All MCP operations — no restrictions |
 | `observe` | List and read tools, prompts, and resources — cannot call tools |
 | `safe-tools` | Observe + call tools annotated as read-only or non-destructive and closed-world |
-| `custom` | Operator-defined Cedar policies from vmcp config YAML |
+| `custom` | Operator-defined Cedar policies from MCP config YAML |
 
 ```bash
 # Agent can only list and read MCP capabilities
@@ -357,8 +375,8 @@ bbox claude-code --mcp-authz-profile observe
 # Agent can call safe tools (read-only or non-destructive + closed-world)
 bbox claude-code --mcp-authz-profile safe-tools
 
-# Use custom Cedar policies from a vmcp config file
-bbox claude-code --mcp-authz-profile custom --mcp-config /path/to/vmcp.yaml
+# Use custom Cedar policies from an MCP config file
+bbox claude-code --mcp-authz-profile custom --mcp-config /path/to/mcp-config.yaml
 ```
 
 Or set it in the global config file:
@@ -374,24 +392,97 @@ allow. Tools with `readOnlyHint: true` are permitted. Tools with both
 `destructiveHint: false` and `openWorldHint: false` are also permitted.
 Tools without annotations are denied by default (Cedar default-deny).
 
-The `custom` profile reads Cedar policies from the vmcp config YAML's
-`incomingAuth.authz.policies` section:
+The `custom` profile reads [Cedar](https://www.cedarpolicy.com/) policies
+from the MCP config YAML's `authz.policies` section. Use it when the
+built-in profiles don't match your needs — for example, allowing a specific
+set of tools by name, or combining annotation-based rules with explicit
+tool allow-lists. When an MCP config with policies is provided, the
+`custom` profile is inferred automatically (no need to pass
+`--mcp-authz-profile custom` explicitly).
+
+Cedar is default-deny: if no `permit` policy matches a request, the request
+is denied. Each policy is evaluated independently; a request is allowed if
+**any** permit matches and **no** forbid matches.
+
+#### Cedar vocabulary
+
+Policies reference three entity types that map to MCP protocol concepts:
+
+| Entity | Cedar syntax | Description |
+|---|---|---|
+| **Actions** | `Action::"list_tools"`, `Action::"call_tool"`, `Action::"list_prompts"`, `Action::"get_prompt"`, `Action::"list_resources"`, `Action::"read_resource"` | MCP operations the agent can perform |
+| **Resources** | `Tool::"tool_name"`, `Prompt::"prompt_name"`, `Resource::"resource_uri"` | Specific tools, prompts, or resources being accessed |
+| **Attributes** | `resource.readOnlyHint`, `resource.destructiveHint`, `resource.openWorldHint` | MCP tool annotations (booleans, may be absent) |
+
+Protocol-level methods (`initialize`, `ping`, notifications) are always
+allowed regardless of policies.
+
+> **Important**: Tool annotations are optional — many MCP servers only set
+> some of them. Always guard attribute access with `resource has <attr> &&`
+> to avoid Cedar evaluation errors on tools that omit annotations.
+
+#### Examples
+
+**Allow listing + only specific tools by name:**
 
 ```yaml
-# vmcp.yaml (passed via --mcp-config)
-groupRef: default
-incomingAuth:
-  type: anonymous
-  authz:
-    type: cedar
-    policies:
-      - 'permit(principal, action == Action::"list_tools", resource);'
-      - 'permit(principal, action == Action::"call_tool", resource == Tool::"search_code");'
+# mcp-config.yaml
+authz:
+  policies:
+    # Let the agent discover what's available
+    - 'permit(principal, action == Action::"list_tools", resource);'
+    - 'permit(principal, action == Action::"list_prompts", resource);'
+    - 'permit(principal, action == Action::"list_resources", resource);'
+    # Allow only these specific tools
+    - 'permit(principal, action == Action::"call_tool", resource == Tool::"search_code");'
+    - 'permit(principal, action == Action::"call_tool", resource == Tool::"get_file_contents");'
+```
+
+**Start from safe-tools and add a specific destructive tool:**
+
+```yaml
+authz:
+  policies:
+    # Observe (list + read)
+    - 'permit(principal, action == Action::"list_tools", resource);'
+    - 'permit(principal, action == Action::"list_prompts", resource);'
+    - 'permit(principal, action == Action::"list_resources", resource);'
+    - 'permit(principal, action == Action::"get_prompt", resource);'
+    - 'permit(principal, action == Action::"read_resource", resource);'
+    # Safe tools (same as built-in safe-tools profile)
+    - |
+      permit(principal, action == Action::"call_tool", resource)
+        when { resource has readOnlyHint && resource.readOnlyHint == true };
+    - |
+      permit(principal, action == Action::"call_tool", resource)
+        when { resource has destructiveHint && resource.destructiveHint == false
+            && resource has openWorldHint && resource.openWorldHint == false };
+    # Plus: allow create_pull_request even though it's destructive
+    - 'permit(principal, action == Action::"call_tool", resource == Tool::"create_pull_request");'
+```
+
+**Block a specific tool while allowing everything else:**
+
+```yaml
+authz:
+  policies:
+    # Allow all operations
+    - 'permit(principal, action, resource);'
+    # But explicitly deny this one tool (forbid overrides permit)
+    - 'forbid(principal, action == Action::"call_tool", resource == Tool::"delete_repository");'
+```
+
+#### Usage
+
+```bash
+bbox claude-code --mcp-config ./mcp-config.yaml
 ```
 
 **Security**: Per-workspace `.broodbox.yaml` can only tighten the authz
 profile (e.g. from `safe-tools` to `observe`), never widen it. The
-`custom` profile cannot be set from workspace config.
+`custom` profile cannot be set from workspace config — this prevents a
+repository from supplying its own Cedar policies that could escalate
+permissions.
 
 ## Git Integration
 

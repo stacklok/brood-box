@@ -148,18 +148,24 @@ mcp:
 
 ### Custom profile
 
-The `custom` profile delegates to Cedar policies defined in the vmcp config YAML's `incomingAuth.authz.policies` section. Requires `--mcp-config` pointing to a YAML with valid Cedar policies:
+The `custom` profile delegates to Cedar policies defined in the MCP config YAML's `authz.policies` section. When `--mcp-config` points to a YAML with Cedar policies, the `custom` profile is inferred automatically:
 
 ```yaml
-# vmcp.yaml
-groupRef: default
-incomingAuth:
-  type: anonymous
-  authz:
-    type: cedar
-    policies:
-      - 'permit(principal, action == Action::"list_tools", resource);'
-      - 'permit(principal, action == Action::"call_tool", resource == Tool::"search_code");'
+# mcp-config.yaml
+authz:
+  policies:
+    - 'permit(principal, action == Action::"list_tools", resource);'
+    - 'permit(principal, action == Action::"call_tool", resource == Tool::"search_code");'
+```
+
+The same config can be inlined in the global config file:
+
+```yaml
+mcp:
+  config:
+    authz:
+      policies:
+        - 'permit(principal, action == Action::"list_tools", resource);'
 ```
 
 ### Security constraints

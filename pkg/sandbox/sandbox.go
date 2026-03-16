@@ -699,8 +699,8 @@ func (s *SandboxRunner) resolveMCPConfig(cfg *SandboxConfig, agentName string) c
 		if override.MCP.Port != 0 {
 			mcpCfg.Port = override.MCP.Port
 		}
-		if override.MCP.ConfigPath != "" {
-			mcpCfg.ConfigPath = override.MCP.ConfigPath
+		if override.MCP.Config != nil {
+			mcpCfg.Config = override.MCP.Config
 		}
 	}
 

@@ -962,3 +962,113 @@ func TestMerge_ResourceBounds(t *testing.T) {
 		})
 	}
 }
+
+func TestMCPFileConfig_Validate(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		cfg     *MCPFileConfig
+		wantErr string
+	}{
+		{
+			name: "nil config is valid",
+			cfg:  nil,
+		},
+		{
+			name: "empty config is valid",
+			cfg:  &MCPFileConfig{},
+		},
+		{
+			name: "authz with policies is valid",
+			cfg: &MCPFileConfig{
+				Authz: &MCPFileAuthzConfig{
+					Policies: []string{`permit(principal, action, resource);`},
+				},
+			},
+		},
+		{
+			name: "authz with empty policies is invalid",
+			cfg: &MCPFileConfig{
+				Authz: &MCPFileAuthzConfig{
+					Policies: []string{},
+				},
+			},
+			wantErr: "authz.policies must be non-empty",
+		},
+		{
+			name: "authz with nil policies is invalid",
+			cfg: &MCPFileConfig{
+				Authz: &MCPFileAuthzConfig{},
+			},
+			wantErr: "authz.policies must be non-empty",
+		},
+		{
+			name: "valid conflict_resolution prefix",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "prefix",
+				},
+			},
+		},
+		{
+			name: "valid conflict_resolution priority",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "priority",
+				},
+			},
+		},
+		{
+			name: "valid conflict_resolution manual",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "manual",
+				},
+			},
+		},
+		{
+			name: "invalid conflict_resolution",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "invalid",
+				},
+			},
+			wantErr: "conflict_resolution must be one of",
+		},
+		{
+			name: "empty conflict_resolution is valid (optional)",
+			cfg: &MCPFileConfig{
+				Aggregation: &MCPAggregationConfig{},
+			},
+		},
+		{
+			name: "full config is valid",
+			cfg: &MCPFileConfig{
+				Authz: &MCPFileAuthzConfig{
+					Policies: []string{`permit(principal, action, resource);`},
+				},
+				Aggregation: &MCPAggregationConfig{
+					ConflictResolution: "prefix",
+					PrefixFormat:       "{workload}_",
+					Tools: []MCPWorkloadToolConfig{
+						{Workload: "github", Filter: []string{"search_code"}},
+					},
+				},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := tt.cfg.Validate()
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+			} else {
+				assert.NoError(t, err)
+			}
+		})
+	}
+}
