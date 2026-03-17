@@ -67,6 +67,18 @@ type Agent struct {
 	// Supports exact match ("ANTHROPIC_API_KEY") and glob suffix ("CLAUDE_*").
 	EnvForward []string
 
+	// DefaultEnv contains environment variables that are always set in the VM.
+	// These are applied before forwarded variables, so a forwarded variable
+	// with the same name takes precedence (user overrides default).
+	DefaultEnv map[string]string
+
+	// NodeHeapPercent sets NODE_OPTIONS --max-old-space-size to this
+	// percentage of the effective VM memory. Zero disables the cap.
+	// This mitigates known memory leaks in Node.js-based agents by
+	// letting V8's GC manage memory within bounds rather than growing
+	// until the guest OOM killer fires.
+	NodeHeapPercent uint32
+
 	// DefaultCPUs is the default number of vCPUs for this agent.
 	DefaultCPUs uint32
 
