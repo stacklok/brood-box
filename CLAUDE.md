@@ -53,6 +53,7 @@ This project follows DDD layered architecture with dependency injection **strict
 - `pkg/domain/workspace/` — WorkspaceCloner interface, Snapshot type
 - `pkg/domain/snapshot/` — FileChange, ExcludeConfig, Matcher, Differ, Reviewer, Flusher
 - `pkg/domain/credential/` — Store, FileStore, Seeder interfaces
+- `pkg/domain/settings/` — Entry, Manifest, FieldFilter, Injector interface for host-to-guest settings injection
 - `pkg/domain/egress/` — DNS-aware egress Policy, Host, ProfileName, Resolve()
 - `pkg/domain/git/` — Identity, IdentityProvider interface
 - `pkg/domain/hostservice/` — Service, Provider for HTTP services exposed to guest
@@ -75,6 +76,7 @@ This project follows DDD layered architecture with dependency injection **strict
 - `internal/infra/diff/` — SHA-256 based file diff engine
 - `internal/infra/review/` — Interactive per-file terminal review, auto-accept reviewer, flusher with hash verification
 - `internal/infra/credential/` — FS-based credential store, Claude credential seeder
+- `internal/infra/settings/` — FSInjector for host-to-guest settings injection (file copy, dir recursion, merge-file with field filtering, JSONC support)
 - `internal/infra/git/` — Host identity provider, `.git/config` credential sanitizer
 - `internal/infra/logging/` — Custom slog file handler
 - `internal/infra/terminal/` — OS terminal wrapper (raw mode, SIGWINCH)

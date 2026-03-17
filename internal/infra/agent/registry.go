@@ -81,11 +81,9 @@ func builtinAgents() map[string]domainagent.Agent {
 						"permissions", "hooks", "model", "preferredNotifChannel", "hasCompletedOnboarding",
 						"autoUpdaterStatus", "bypassPermissions", "enableAllProjectMcpServers",
 					}}},
-				{Category: "settings", HostPath: ".claude.json", GuestPath: ".claude.json", Kind: settings.KindMergeFile, Optional: true,
-					Format: "json", Filter: &settings.FieldFilter{
-						AllowKeys:   []string{"mcpServers"},
-						DenySubKeys: map[string][]string{"mcpServers": {"*.env", "*.headers", "*.apiKey", "*.token"}},
-					}},
+				// NOTE: .claude.json mcpServers are NOT injected. The VM cannot reach
+				// host MCP servers — only the toolhive-proxied sandbox-tools endpoint
+				// (injected by the MCP config hook) should be present.
 				{Category: "instructions", HostPath: ".claude/CLAUDE.md", GuestPath: ".claude/CLAUDE.md", Kind: settings.KindFile, Optional: true},
 				{Category: "rules", HostPath: ".claude/rules", GuestPath: ".claude/rules", Kind: settings.KindDirectory, Optional: true},
 				{Category: "agents", HostPath: ".claude/agents", GuestPath: ".claude/agents", Kind: settings.KindDirectory, Optional: true},
@@ -108,15 +106,15 @@ func builtinAgents() map[string]domainagent.Agent {
 				egress.ProfileLocked:   codexLockedHosts,
 				egress.ProfileStandard: append(codexLockedHosts, devInfraHosts...),
 			},
+			// NOTE: mcp_servers is excluded from AllowKeys — the VM cannot reach host
+			// MCP servers. Only the toolhive-proxied sandbox-tools (injected by the
+			// MCP config hook) should be present in the guest config.
 			SettingsManifest: &settings.Manifest{Entries: []settings.Entry{
 				{Category: "settings", HostPath: ".codex/config.toml", GuestPath: ".codex/config.toml", Kind: settings.KindMergeFile, Optional: true,
-					Format: "toml", Filter: &settings.FieldFilter{
-						AllowKeys: []string{
-							"model", "provider", "approval_mode", "features", "mcp_servers", "profiles", "tui",
-							"disable_response_storage", "full_auto_error_mode",
-						},
-						DenySubKeys: map[string][]string{"mcp_servers": {"*.env", "*.headers", "*.apiKey", "*.token"}},
-					}},
+					Format: "toml", Filter: &settings.FieldFilter{AllowKeys: []string{
+						"model", "provider", "approval_mode", "features", "profiles", "tui",
+						"disable_response_storage", "full_auto_error_mode",
+					}}},
 				{Category: "instructions", HostPath: ".codex/AGENTS.md", GuestPath: ".codex/AGENTS.md", Kind: settings.KindFile, Optional: true},
 				{Category: "instructions", HostPath: ".codex/AGENTS.override.md", GuestPath: ".codex/AGENTS.override.md", Kind: settings.KindFile, Optional: true},
 				{Category: "skills", HostPath: ".agents/skills", GuestPath: ".agents/skills", Kind: settings.KindDirectory, Optional: true},
@@ -141,7 +139,9 @@ func builtinAgents() map[string]domainagent.Agent {
 			SettingsManifest: &settings.Manifest{Entries: []settings.Entry{
 				{Category: "settings", HostPath: ".config/opencode/opencode.json", GuestPath: ".config/opencode/opencode.json", Kind: settings.KindMergeFile, Optional: true,
 					Format: "jsonc", Filter: &settings.FieldFilter{
-						AllowKeys: []string{"providers", "models", "mcp", "agent", "tools", "plugin", "theme", "command", "instructions", "formatter", "shell", "permission"},
+						// NOTE: "mcp" is excluded — the VM cannot reach host MCP servers.
+						// Only the toolhive-proxied sandbox-tools should be present.
+						AllowKeys: []string{"providers", "models", "agent", "tools", "plugin", "theme", "command", "instructions", "formatter", "shell", "permission"},
 						DenySubKeys: map[string][]string{"providers": {
 							"*.api_key", "*.apiKey", "*.secret", "*.token",
 							"*.password", "*.credentials", "*.accessToken",

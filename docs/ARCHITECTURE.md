@@ -18,6 +18,7 @@ cmd/bbox-init/main.go        (guest PID 1 init binary)
 pkg/domain/agent/   pkg/domain/config/  pkg/domain/vm/   pkg/domain/session/
 pkg/domain/snapshot/ pkg/domain/workspace/ pkg/domain/egress/
 pkg/domain/git/     pkg/domain/hostservice/ pkg/domain/progress/
+pkg/domain/settings/
    (pure domain — no imports from infra, public SDK)
    │
    │    ┌────────────────┬────────────────┬──────────────┐
@@ -26,9 +27,10 @@ infra/vm/         infra/ssh/        infra/config/   infra/agent/
 (go-microvm)      (PTY terminal)    (YAML loader)   (built-in registry)
 infra/exclude/    infra/workspace/  infra/diff/     infra/review/
 (pattern match)   (COW cloning)     (SHA-256 diff)  (reviewer+flusher)
-infra/git/        infra/mcp/        infra/terminal/ infra/progress/
-(identity+sanitize)(MCP proxy)      (OS terminal)   (spinner+log)
-infra/logging/
+infra/credential/ infra/settings/   infra/terminal/ infra/progress/
+(cred store)      (settings inject) (OS terminal)   (spinner+log)
+infra/git/        infra/mcp/        infra/logging/
+(identity+sanitize)(MCP proxy)
 (slog file handler)
 
 guest/boot/  guest/mount/  guest/network/  guest/env/  guest/sshd/  guest/reaper/
@@ -60,6 +62,10 @@ defines the core types and interfaces.
   `Differ`, `Reviewer`, `Flusher`.
 - **`snapshot/exclude.go`** -- `ExcludeConfig` with security patterns
   (non-overridable) and performance patterns (overridable).
+- **`settings/settings.go`** -- `Entry`, `Manifest`, `FieldFilter`,
+  `EntryKind`, `Injector` interface. Declares what host settings to
+  inject into the guest VM per agent (rules, skills, config files).
+  `FilterEntries()` filters by category predicate.
 - **`egress/egress.go`** -- DNS-aware egress firewall policies.
   `ProfileName` (`permissive`, `standard`, `locked`), `Host` (name,
   ports, protocol), `Policy` (allowed hosts). `Resolve()` maps a
@@ -139,6 +145,11 @@ Concrete implementations of domain interfaces and system integration.
   MCP proxy as an HTTP host service. Includes Cedar-based authorization
   profile resolver (`profiles.go`) with built-in profiles (`observe`,
   `safe-tools`) and support for custom Cedar policies from vmcp config.
+- **`settings/`** -- `FSInjector` implements `settings.Injector`.
+  Copies files, recursively copies directories, and merge-filters
+  config files (JSON/TOML/JSONC) from the host into the guest rootfs.
+  Enforces safety limits (file size, count, depth) and uses O_NOFOLLOW
+  to prevent symlink TOCTOU attacks.
 - **`terminal/`** -- `OSTerminal` wraps real terminal I/O with raw
   mode, SIGWINCH, and dimension queries.
 - **`progress/`** -- `SpinnerObserver` (animated spinner for
@@ -222,8 +233,10 @@ bbox claude-code
         │
         ▼
    Run rootfs hooks:
-     1. InjectInitBinary → /bbox-init (compiled Go binary)
-     2. InjectMCPConfig  → agent-specific MCP config (if MCP enabled)
+     1. InjectInitBinary    → /bbox-init (compiled Go binary)
+     2. InjectCredentials   → saved agent credentials (if any)
+     3. InjectSettings      → host agent settings (rules, skills, config)
+     4. InjectMCPConfig     → agent-specific MCP config (deep-merges)
    go-microvm options inject:
      - SSH keys          → /home/sandbox/.ssh/authorized_keys
      - Env file          → /etc/sandbox-env
@@ -325,6 +338,12 @@ Inside the VM:
 - **VM stopped before review**: The VM is explicitly stopped before
   diff/review/flush, preventing the agent from modifying files during
   the review phase.
+- **Settings injection filtering**: Host agent config files are
+  filtered through allowlists (only listed keys are copied) and
+  deny-subkey patterns (secrets like API keys, tokens, and env vars
+  are stripped from MCP server configs). O_NOFOLLOW prevents symlink
+  TOCTOU attacks during host reads. Source and destination paths are
+  validated with `filepath.EvalSymlinks` containment checks.
 - **MCP authorization profiles**: Opt-in Cedar-based authorization
   restricts what MCP operations the agent can perform. Profiles follow
   tighten-only merge semantics (workspace config can only restrict, not

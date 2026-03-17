@@ -75,6 +75,7 @@ bbox <agent-name> [flags] [-- <agent-args...>]
 | `--mcp-authz-profile` | `full-access` | MCP authorization profile: `full-access`, `observe`, `safe-tools`, `custom` |
 | `--no-git-token` | `false` | Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM |
 | `--no-git-ssh-agent` | `false` | Disable SSH agent forwarding into the VM |
+| `--no-settings` | `false` | Disable injecting host agent settings (rules, skills, etc.) into the VM |
 | `--no-save-credentials` | `false` | Disable saving agent credentials between sessions |
 | `--seed-credentials` | `false` | Seed agent credentials from host (e.g. macOS Keychain) into the VM |
 | `--no-firmware-download` | `false` | Disable firmware download (use system libkrunfw only) |
@@ -509,6 +510,71 @@ bbox claude-code --no-git-ssh-agent
 
 When snapshot isolation is enabled, the `.git/config` is sanitized to
 remove sensitive values (credentials, tokens) before copying.
+
+## Agent Settings Injection
+
+By default, Brood Box copies your host agent settings (rules, skills,
+commands, instructions, and config files) into the guest VM so the coding
+agent starts with your customizations. Each agent has a declarative manifest
+of what gets injected.
+
+### What Gets Injected
+
+**Claude Code** (`~/.claude/`):
+- `settings.json` — Global settings (filtered: permissions, hooks, model only)
+- `.claude.json` — User MCP servers (secrets stripped)
+- `CLAUDE.md` — Global instructions
+- `rules/`, `agents/`, `skills/`, `commands/` — Directories copied recursively
+
+**Codex** (`~/.codex/`):
+- `config.toml` — Settings (filtered: `[auth]` section excluded)
+- `AGENTS.md`, `AGENTS.override.md` — Instructions
+- `~/.agents/skills/`, `prompts/` — Skills and commands
+
+**OpenCode** (`~/.config/opencode/`):
+- `opencode.json` — Settings (JSONC; provider API keys stripped)
+- `tui.json` — TUI config
+- `AGENTS.md` — Instructions (+ Claude Code `CLAUDE.md` as fallback)
+- `agents/`, `skills/`, `commands/`, `tools/`, `plugins/`, `themes/` — Directories
+
+### Security
+
+- **Allowlist filtering**: Only explicitly listed config keys are copied.
+  New unknown keys in agent config updates are safely ignored.
+- **Secret stripping**: MCP server definitions have `env`, `headers`, `token`,
+  etc. stripped. OpenCode provider configs have API keys stripped.
+- **Size limits**: 1 MiB per file, 50 MiB aggregate, 500 files max, 8 levels depth.
+- **Symlink rejection**: Symlinks are never followed during injection.
+
+### Disabling Settings Injection
+
+```bash
+# Disable all settings injection
+bbox claude-code --no-settings
+```
+
+Or in the config file:
+
+```yaml
+# ~/.config/broodbox/config.yaml
+settings_import:
+  enabled: false
+
+# Or disable specific categories:
+settings_import:
+  categories:
+    skills: false    # Disable skills injection only
+
+# Per-agent override:
+agents:
+  claude-code:
+    settings_import:
+      categories:
+        skills: false
+```
+
+Per-workspace `.broodbox.yaml` can only **disable** settings import
+(tighten-only) — it cannot enable injection that was globally disabled.
 
 ## Signals and Cleanup
 
