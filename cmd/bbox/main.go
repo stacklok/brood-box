@@ -188,6 +188,7 @@ Example:
 	// Add subcommands.
 	cmd.AddCommand(listCmd())
 	cmd.AddCommand(authCmd())
+	cmd.AddCommand(configCmd())
 
 	return cmd
 }
@@ -269,6 +270,43 @@ func authClearCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func configCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "config",
+		Short: "Manage Brood Box configuration",
+	}
+	cmd.AddCommand(configInitCmd())
+	return cmd
+}
+
+func configInitCmd() *cobra.Command {
+	var cfgPath string
+	var force bool
+	cmd := &cobra.Command{
+		Use:   "init",
+		Short: "Create a default config file with all options documented",
+		Long: `Creates ~/.config/broodbox/config.yaml (or the path given by --config)
+with all configuration options documented as YAML comments.
+
+If the file already exists the command fails unless --force is passed.`,
+		Args: cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			path := cfgPath
+			if path == "" {
+				path = infraconfig.NewLoader("").Path()
+			}
+			if err := infraconfig.WriteDefault(path, force); err != nil {
+				return err
+			}
+			fmt.Printf("Config written to %s\n", path)
+			return nil
+		},
+	}
+	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/broodbox/config.yaml)")
+	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite the config file if it already exists")
+	return cmd
 }
 
 type runFlags struct {
