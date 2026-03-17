@@ -171,6 +171,7 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 			InjectInitBinary(),
 			hooks.InjectEnvFile("/etc/sandbox-env", cfg.EnvVars),
 			InjectGitConfig(cfg.GitIdentity, cfg.HasGitToken, bestEffortLchown),
+			InjectSSHKnownHosts(bestEffortLchown),
 		),
 		microvm.WithInitOverride("/bbox-init"),
 		microvm.WithPostBoot(func(ctx context.Context, _ *microvm.VM) error {

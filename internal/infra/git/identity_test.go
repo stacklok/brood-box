@@ -91,6 +91,85 @@ func TestHostIdentityProvider(t *testing.T) {
 	}
 }
 
+func TestHostIdentityProvider_URLRewrites(t *testing.T) {
+	t.Parallel()
+
+	homeDir := t.TempDir()
+	err := os.WriteFile(filepath.Join(homeDir, ".gitconfig"), []byte(`[user]
+	name = Alice
+	email = alice@example.com
+[url "git@github.com:"]
+	insteadOf = https://github.com/
+[url "git@gitlab.com:"]
+	insteadOf = https://gitlab.com/
+`), 0o644)
+	require.NoError(t, err)
+
+	provider := NewHostIdentityProvider(homeDir)
+	id, err := provider.GetIdentity()
+	require.NoError(t, err)
+
+	assert.Equal(t, "Alice", id.Name)
+	assert.Equal(t, "alice@example.com", id.Email)
+	require.Len(t, id.URLRewrites, 2)
+	assert.Equal(t, "git@github.com:", id.URLRewrites[0].Base)
+	assert.Equal(t, "https://github.com/", id.URLRewrites[0].InsteadOf)
+	assert.Equal(t, "git@gitlab.com:", id.URLRewrites[1].Base)
+	assert.Equal(t, "https://gitlab.com/", id.URLRewrites[1].InsteadOf)
+}
+
+func TestParseURLRewrites(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name  string
+		input string
+		want  []domaingit.URLRewrite
+	}{
+		{
+			name:  "no rewrites",
+			input: "[core]\n\tautocrlf = input\n",
+			want:  nil,
+		},
+		{
+			name:  "single rewrite",
+			input: "[url \"git@github.com:\"]\n\tinsteadOf = https://github.com/\n",
+			want: []domaingit.URLRewrite{
+				{Base: "git@github.com:", InsteadOf: "https://github.com/"},
+			},
+		},
+		{
+			name: "multiple rewrites",
+			input: "[url \"git@github.com:\"]\n\tinsteadOf = https://github.com/\n" +
+				"[url \"git@gitlab.com:\"]\n\tinsteadOf = https://gitlab.com/\n",
+			want: []domaingit.URLRewrite{
+				{Base: "git@github.com:", InsteadOf: "https://github.com/"},
+				{Base: "git@gitlab.com:", InsteadOf: "https://gitlab.com/"},
+			},
+		},
+		{
+			name:  "non-url section ignored",
+			input: "[remote \"origin\"]\n\turl = https://github.com/org/repo.git\n",
+			want:  nil,
+		},
+		{
+			name:  "case insensitive insteadOf key",
+			input: "[url \"git@github.com:\"]\n\tInsteadOf = https://github.com/\n",
+			want: []domaingit.URLRewrite{
+				{Base: "git@github.com:", InsteadOf: "https://github.com/"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := parseURLRewrites(tt.input)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestParseUserIdentity(t *testing.T) {
 	t.Parallel()
 

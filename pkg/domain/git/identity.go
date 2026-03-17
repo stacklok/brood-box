@@ -5,10 +5,27 @@
 // and environment variable forwarding.
 package git
 
-// Identity holds the git user identity (name and email).
+// Identity holds the git user identity (name and email) and any URL
+// rewrite rules from the host's git configuration.
 type Identity struct {
 	Name  string
 	Email string
+
+	// URLRewrites are [url "..."].insteadOf rules from the host's
+	// global gitconfig. These allow the guest to resolve HTTPS remote
+	// URLs to SSH (or vice versa) the same way the host does.
+	// Common example: [url "git@github.com:"].insteadOf = https://github.com/
+	URLRewrites []URLRewrite
+}
+
+// URLRewrite represents a git [url "<base>"].insteadOf rewrite rule.
+// When git encounters a remote URL starting with InsteadOf, it replaces
+// that prefix with Base before connecting.
+type URLRewrite struct {
+	// Base is the replacement URL prefix (the subsection of [url "..."]).
+	Base string
+	// InsteadOf is the URL prefix to match and replace.
+	InsteadOf string
 }
 
 // IsComplete returns true if both Name and Email are set.

@@ -138,6 +138,30 @@ func TestSanitizeConfig(t *testing.T) {
 			}, "\n"),
 		},
 		{
+			name: "ssh scheme URL with username preserved",
+			input: strings.Join([]string{
+				`[remote "origin"]`,
+				"\turl = ssh://git@github.com/org/repo.git",
+				"\tfetch = +refs/heads/*:refs/remotes/origin/*",
+			}, "\n"),
+			expected: strings.Join([]string{
+				`[remote "origin"]`,
+				"\turl = ssh://git@github.com/org/repo.git",
+				"\tfetch = +refs/heads/*:refs/remotes/origin/*",
+			}, "\n"),
+		},
+		{
+			name: "ssh scheme URL with password stripped",
+			input: strings.Join([]string{
+				`[remote "origin"]`,
+				"\turl = ssh://deploy:token@github.com/org/repo.git",
+			}, "\n"),
+			expected: strings.Join([]string{
+				`[remote "origin"]`,
+				"\turl = ssh://github.com/org/repo.git",
+			}, "\n"),
+		},
+		{
 			name: "malformed HTTPS URL with credentials fail closed",
 			input: strings.Join([]string{
 				`[remote "origin"]`,

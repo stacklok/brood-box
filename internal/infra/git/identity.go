@@ -29,8 +29,9 @@ func NewHostIdentityProvider(homeDir string) *HostIdentityProvider {
 	return &HostIdentityProvider{homeDir: homeDir}
 }
 
-// GetIdentity returns the git user identity from the host's ~/.gitconfig.
-// Returns a zero Identity (not an error) if no .gitconfig exists.
+// GetIdentity returns the git user identity and URL rewrite rules from
+// the host's ~/.gitconfig. Returns a zero Identity (not an error) if
+// no .gitconfig exists.
 func (p *HostIdentityProvider) GetIdentity() (domaingit.Identity, error) {
 	home := p.homeDir
 	if home == "" {
@@ -49,7 +50,9 @@ func (p *HostIdentityProvider) GetIdentity() (domaingit.Identity, error) {
 		return domaingit.Identity{}, fmt.Errorf("reading .gitconfig: %w", err)
 	}
 
-	return parseUserIdentity(string(data)), nil
+	id := parseUserIdentity(string(data))
+	id.URLRewrites = parseURLRewrites(string(data))
+	return id, nil
 }
 
 // parseUserIdentity extracts the user.name and user.email values from
@@ -90,6 +93,48 @@ func parseUserIdentity(content string) domaingit.Identity {
 	}
 
 	return id
+}
+
+// parseURLRewrites extracts [url "base"].insteadOf rules from a git
+// config file. These rules tell git to replace URL prefixes when
+// connecting to remotes (e.g. rewriting HTTPS to SSH for authentication).
+func parseURLRewrites(content string) []domaingit.URLRewrite {
+	var rewrites []domaingit.URLRewrite
+	var currentBase string
+
+	scanner := bufio.NewScanner(strings.NewReader(content))
+	for scanner.Scan() {
+		line := scanner.Text()
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "[") {
+			section := parseSectionName(trimmed)
+			if section == "url" {
+				currentBase = parseSubsection(trimmed)
+			} else {
+				currentBase = ""
+			}
+			continue
+		}
+
+		if currentBase == "" {
+			continue
+		}
+
+		key, value, ok := parseKeyValue(trimmed)
+		if !ok {
+			continue
+		}
+
+		if strings.ToLower(key) == "insteadof" && value != "" {
+			rewrites = append(rewrites, domaingit.URLRewrite{
+				Base:      currentBase,
+				InsteadOf: value,
+			})
+		}
+	}
+
+	return rewrites
 }
 
 // parseKeyValue splits a git config line into key and value.

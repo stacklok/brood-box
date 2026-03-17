@@ -528,8 +528,14 @@ func sanitizeURL(value string) string {
 	u, err := url.Parse(trimmed)
 	if err == nil && u.Scheme != "" {
 		if u.User != nil {
-			u.User = nil
-			return u.String()
+			_, hasPassword := u.User.Password()
+			if hasPassword {
+				// Strip embedded credentials (user:token@host).
+				u.User = nil
+				return u.String()
+			}
+			// Username-only (e.g. ssh://git@host) — SSH key auth, not a secret.
+			return trimmed
 		}
 		return trimmed
 	}

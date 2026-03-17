@@ -97,6 +97,21 @@ func writeGitConfig(rootfsPath string, identity domaingit.Identity, hasGitToken 
 		b.WriteString("\thelper = /usr/local/bin/git-credential-bbox\n")
 	}
 
+	// Write URL rewrite rules from the host's global gitconfig.
+	// These are [url "base"].insteadOf directives that git uses to
+	// rewrite remote URLs (e.g. HTTPS → SSH for push authentication).
+	// Without them, repos whose .git/config uses HTTPS URLs with a
+	// host-side insteadOf rewrite to SSH will not use SSH agent
+	// forwarding inside the guest.
+	for _, rw := range identity.URLRewrites {
+		base := sanitizeGitValue(rw.Base)
+		insteadOf := sanitizeGitValue(rw.InsteadOf)
+		if base != "" && insteadOf != "" {
+			b.WriteString("[url \"" + base + "\"]\n")
+			b.WriteString("\tinsteadOf = " + insteadOf + "\n")
+		}
+	}
+
 	// Always mark /workspace as safe to prevent "dubious ownership" errors.
 	// The host workspace is mounted at /workspace with a different UID than
 	// the sandbox user — git 2.36+ rejects this without safe.directory.
