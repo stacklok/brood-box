@@ -320,8 +320,8 @@ const (
 	// MaxCPUs is the upper bound for vCPU allocation.
 	MaxCPUs uint32 = 128
 
-	// MaxMemory is the upper bound for RAM allocation in MiB (128 GiB).
-	MaxMemory uint32 = 131072
+	// MaxMemory is the upper bound for RAM allocation (128 GiB).
+	MaxMemory ByteSize = 131072
 
 	// MaxTmpSize is the upper bound for /tmp tmpfs size (64 GiB).
 	MaxTmpSize ByteSize = 65536
@@ -332,8 +332,10 @@ type DefaultsConfig struct {
 	// CPUs is the default number of vCPUs.
 	CPUs uint32 `yaml:"cpus"`
 
-	// Memory is the default RAM in MiB.
-	Memory uint32 `yaml:"memory"`
+	// Memory is the default RAM for the VM. Accepts human-readable values
+	// like "4g" or "512m". Bare integers are treated as MiB for backward
+	// compatibility. Zero uses the agent default.
+	Memory ByteSize `yaml:"memory"`
 
 	// TmpSize is the default /tmp tmpfs size. Accepts human-readable values
 	// like "512m" or "2g". Bare integers are treated as MiB for backward
@@ -371,8 +373,9 @@ type AgentOverride struct {
 	// CPUs overrides the vCPU count.
 	CPUs uint32 `yaml:"cpus,omitempty"`
 
-	// Memory overrides the RAM in MiB.
-	Memory uint32 `yaml:"memory,omitempty"`
+	// Memory overrides the RAM for this agent. Accepts human-readable
+	// values like "4g" or "512m".
+	Memory ByteSize `yaml:"memory,omitempty"`
 
 	// TmpSize overrides the /tmp tmpfs size for this agent. Accepts
 	// human-readable values like "512m" or "2g".
@@ -390,7 +393,7 @@ type AgentOverride struct {
 
 // clampResources caps CPU and memory values to their maximums.
 // Zero values are passed through (they mean "use default").
-func clampResources(cpus, memory uint32) (uint32, uint32) {
+func clampResources(cpus uint32, memory ByteSize) (uint32, ByteSize) {
 	if cpus > MaxCPUs {
 		cpus = MaxCPUs
 	}
@@ -550,10 +553,10 @@ func Merge(a agent.Agent, override AgentOverride, defaults DefaultsConfig) agent
 
 	// Memory: override > agent default > global default
 	if override.Memory > 0 {
-		result.DefaultMemory = override.Memory
+		result.DefaultMemory = override.Memory.MiB()
 	}
 	if result.DefaultMemory == 0 && defaults.Memory > 0 {
-		result.DefaultMemory = defaults.Memory
+		result.DefaultMemory = defaults.Memory.MiB()
 	}
 
 	// TmpSize: override > agent default > global default
@@ -565,9 +568,11 @@ func Merge(a agent.Agent, override AgentOverride, defaults DefaultsConfig) agent
 	}
 
 	// Clamp resource values to configured maximums.
-	result.DefaultCPUs, result.DefaultMemory = clampResources(
-		result.DefaultCPUs, result.DefaultMemory,
+	clampedCPUs, clampedMem := clampResources(
+		result.DefaultCPUs, ByteSize(result.DefaultMemory),
 	)
+	result.DefaultCPUs = clampedCPUs
+	result.DefaultMemory = clampedMem.MiB()
 	if result.DefaultTmpSize > MaxTmpSize.MiB() {
 		result.DefaultTmpSize = MaxTmpSize.MiB()
 	}

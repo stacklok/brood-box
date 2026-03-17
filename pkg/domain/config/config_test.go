@@ -48,15 +48,15 @@ func TestMergeConfigs(t *testing.T) {
 	}{
 		{
 			name:   "nil local returns global unchanged",
-			global: &Config{Defaults: DefaultsConfig{CPUs: 2, Memory: 1024}},
+			global: &Config{Defaults: DefaultsConfig{CPUs: 2, Memory: ByteSize(1024)}},
 			local:  nil,
-			want:   &Config{Defaults: DefaultsConfig{CPUs: 2, Memory: 1024}},
+			want:   &Config{Defaults: DefaultsConfig{CPUs: 2, Memory: ByteSize(1024)}},
 		},
 		{
 			name:   "local scalars override global when non-zero",
-			global: &Config{Defaults: DefaultsConfig{CPUs: 2, Memory: 1024}},
+			global: &Config{Defaults: DefaultsConfig{CPUs: 2, Memory: ByteSize(1024)}},
 			local:  &Config{Defaults: DefaultsConfig{CPUs: 4}},
-			want:   &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: 1024}},
+			want:   &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: ByteSize(1024)}},
 		},
 		{
 			name: "review.enabled from local is ignored",
@@ -345,7 +345,7 @@ func TestMerge(t *testing.T) {
 			agent: baseAgent,
 			override: AgentOverride{
 				CPUs:   4,
-				Memory: 4096,
+				Memory: ByteSize(4096),
 			},
 			defaults: DefaultsConfig{},
 			want: agent.Agent{
@@ -368,7 +368,7 @@ func TestMerge(t *testing.T) {
 			override: AgentOverride{},
 			defaults: DefaultsConfig{
 				CPUs:   2,
-				Memory: 1024,
+				Memory: ByteSize(1024),
 			},
 			want: agent.Agent{
 				Name:                 "minimal",
@@ -384,11 +384,11 @@ func TestMerge(t *testing.T) {
 			agent: agent.Agent{Name: "a", Image: "i:l", Command: []string{"c"}},
 			override: AgentOverride{
 				CPUs:   8,
-				Memory: 8192,
+				Memory: ByteSize(8192),
 			},
 			defaults: DefaultsConfig{
 				CPUs:   2,
-				Memory: 1024,
+				Memory: ByteSize(1024),
 			},
 			want: agent.Agent{
 				Name:                 "a",
@@ -405,7 +405,7 @@ func TestMerge(t *testing.T) {
 			override: AgentOverride{},
 			defaults: DefaultsConfig{
 				CPUs:   1,
-				Memory: 512,
+				Memory: ByteSize(512),
 			},
 			want: baseAgent,
 		},
@@ -681,42 +681,42 @@ func TestMergeConfigs_ResourceBounds(t *testing.T) {
 		global     *Config
 		local      *Config
 		wantCPUs   uint32
-		wantMemory uint32
+		wantMemory ByteSize
 	}{
 		{
 			name:       "normal values pass through",
-			global:     &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: 4096}},
-			local:      &Config{Defaults: DefaultsConfig{CPUs: 8, Memory: 8192}},
+			global:     &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: ByteSize(4096)}},
+			local:      &Config{Defaults: DefaultsConfig{CPUs: 8, Memory: ByteSize(8192)}},
 			wantCPUs:   8,
-			wantMemory: 8192,
+			wantMemory: ByteSize(8192),
 		},
 		{
 			name:       "local CPUs exceed max — clamped",
-			global:     &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: 2048}},
+			global:     &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: ByteSize(2048)}},
 			local:      &Config{Defaults: DefaultsConfig{CPUs: 256}},
 			wantCPUs:   MaxCPUs,
-			wantMemory: 2048,
+			wantMemory: ByteSize(2048),
 		},
 		{
 			name:       "local memory exceeds max — clamped",
-			global:     &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: 2048}},
-			local:      &Config{Defaults: DefaultsConfig{Memory: 999999}},
+			global:     &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: ByteSize(2048)}},
+			local:      &Config{Defaults: DefaultsConfig{Memory: ByteSize(999999)}},
 			wantCPUs:   4,
 			wantMemory: MaxMemory,
 		},
 		{
 			name:       "both exceed max — both clamped",
 			global:     &Config{},
-			local:      &Config{Defaults: DefaultsConfig{CPUs: 500, Memory: 500000}},
+			local:      &Config{Defaults: DefaultsConfig{CPUs: 500, Memory: ByteSize(500000)}},
 			wantCPUs:   MaxCPUs,
 			wantMemory: MaxMemory,
 		},
 		{
 			name:       "zero local does not override global",
-			global:     &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: 2048}},
+			global:     &Config{Defaults: DefaultsConfig{CPUs: 4, Memory: ByteSize(2048)}},
 			local:      &Config{Defaults: DefaultsConfig{}},
 			wantCPUs:   4,
-			wantMemory: 2048,
+			wantMemory: ByteSize(2048),
 		},
 		{
 			name:       "at boundary — exactly max passes through",
@@ -727,7 +727,7 @@ func TestMergeConfigs_ResourceBounds(t *testing.T) {
 		},
 		{
 			name:       "global exceeds max — clamped even without local override",
-			global:     &Config{Defaults: DefaultsConfig{CPUs: 200, Memory: 200000}},
+			global:     &Config{Defaults: DefaultsConfig{CPUs: 200, Memory: ByteSize(200000)}},
 			local:      &Config{},
 			wantCPUs:   MaxCPUs,
 			wantMemory: MaxMemory,
@@ -735,14 +735,14 @@ func TestMergeConfigs_ResourceBounds(t *testing.T) {
 		{
 			name:       "one over one under — only over is clamped",
 			global:     &Config{Defaults: DefaultsConfig{CPUs: 4}},
-			local:      &Config{Defaults: DefaultsConfig{Memory: 999999}},
+			local:      &Config{Defaults: DefaultsConfig{Memory: ByteSize(999999)}},
 			wantCPUs:   4,
 			wantMemory: MaxMemory,
 		},
 		{
 			name:       "MaxUint32 values are clamped",
 			global:     &Config{},
-			local:      &Config{Defaults: DefaultsConfig{CPUs: math.MaxUint32, Memory: math.MaxUint32}},
+			local:      &Config{Defaults: DefaultsConfig{CPUs: math.MaxUint32, Memory: ByteSize(math.MaxUint32)}},
 			wantCPUs:   MaxCPUs,
 			wantMemory: MaxMemory,
 		},
@@ -998,7 +998,7 @@ func TestMerge_ResourceBounds(t *testing.T) {
 		{
 			name:       "normal values pass through",
 			agent:      baseAgent,
-			override:   AgentOverride{CPUs: 4, Memory: 4096},
+			override:   AgentOverride{CPUs: 4, Memory: ByteSize(4096)},
 			defaults:   DefaultsConfig{},
 			wantCPUs:   4,
 			wantMemory: 4096,
@@ -1014,18 +1014,18 @@ func TestMerge_ResourceBounds(t *testing.T) {
 		{
 			name:       "override memory exceeds max — clamped",
 			agent:      baseAgent,
-			override:   AgentOverride{Memory: 999999},
+			override:   AgentOverride{Memory: ByteSize(999999)},
 			defaults:   DefaultsConfig{},
 			wantCPUs:   2,
-			wantMemory: MaxMemory,
+			wantMemory: MaxMemory.MiB(),
 		},
 		{
 			name:       "global defaults exceed max — clamped",
 			agent:      agent.Agent{Name: "a", Image: "i:l", Command: []string{"c"}, DefaultEgressProfile: "standard"},
 			override:   AgentOverride{},
-			defaults:   DefaultsConfig{CPUs: 500, Memory: 500000},
+			defaults:   DefaultsConfig{CPUs: 500, Memory: ByteSize(500000)},
 			wantCPUs:   MaxCPUs,
-			wantMemory: MaxMemory,
+			wantMemory: MaxMemory.MiB(),
 		},
 		{
 			name:       "agent defaults exceed max — clamped",
@@ -1033,7 +1033,7 @@ func TestMerge_ResourceBounds(t *testing.T) {
 			override:   AgentOverride{},
 			defaults:   DefaultsConfig{},
 			wantCPUs:   MaxCPUs,
-			wantMemory: MaxMemory,
+			wantMemory: MaxMemory.MiB(),
 		},
 		{
 			name:       "zero override uses agent defaults",
@@ -1049,15 +1049,15 @@ func TestMerge_ResourceBounds(t *testing.T) {
 			override:   AgentOverride{CPUs: MaxCPUs, Memory: MaxMemory},
 			defaults:   DefaultsConfig{},
 			wantCPUs:   MaxCPUs,
-			wantMemory: MaxMemory,
+			wantMemory: MaxMemory.MiB(),
 		},
 		{
 			name:       "MaxUint32 values are clamped",
 			agent:      baseAgent,
-			override:   AgentOverride{CPUs: math.MaxUint32, Memory: math.MaxUint32},
+			override:   AgentOverride{CPUs: math.MaxUint32, Memory: ByteSize(math.MaxUint32)},
 			defaults:   DefaultsConfig{},
 			wantCPUs:   MaxCPUs,
-			wantMemory: MaxMemory,
+			wantMemory: MaxMemory.MiB(),
 		},
 	}
 

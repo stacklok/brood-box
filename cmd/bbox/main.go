@@ -65,7 +65,7 @@ func main() {
 func rootCmd() *cobra.Command {
 	var (
 		cpus              uint32
-		memory            uint32
+		memory            string
 		wsPath            string
 		sshPort           uint16
 		cfgPath           string
@@ -107,7 +107,7 @@ Supported agents: claude-code, codex, opencode
 
 Example:
   bbox claude-code
-  bbox codex --cpus 4 --memory 4096
+  bbox codex --cpus 4 --memory 4g
   bbox opencode --workspace /path/to/project
   bbox claude-code --review
   bbox claude-code --review --exclude "*.log" --exclude "tmp/"
@@ -159,7 +159,7 @@ Example:
 	}
 
 	cmd.Flags().Uint32Var(&cpus, "cpus", 0, "Number of vCPUs (0 = agent default)")
-	cmd.Flags().Uint32Var(&memory, "memory", 0, "RAM in MiB (0 = agent default)")
+	cmd.Flags().StringVar(&memory, "memory", "", "RAM for the VM, e.g. 4g or 512m (0 = agent default)")
 	cmd.Flags().StringVar(&tmpSize, "tmp-size", "", "Size of /tmp tmpfs inside the VM, e.g. 512m or 2g (0 = agent default)")
 	cmd.Flags().StringVar(&wsPath, "workspace", "", "Workspace directory to mount (default: current directory)")
 	cmd.Flags().Uint16Var(&sshPort, "ssh-port", 0, "Host SSH port (0 = auto-pick)")
@@ -273,7 +273,7 @@ func authClearCmd() *cobra.Command {
 
 type runFlags struct {
 	cpus              uint32
-	memory            uint32
+	memory            string
 	tmpSize           string
 	workspace         string
 	sshPort           uint16
@@ -422,7 +422,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 						Command:       override.Command,
 						EnvForward:    override.EnvForward,
 						DefaultCPUs:   override.CPUs,
-						DefaultMemory: override.Memory,
+						DefaultMemory: override.Memory.MiB(),
 					}); addErr != nil {
 						_, _ = fmt.Fprintf(os.Stderr, "Warning: skipping custom agent %q: %s\n", name, addErr)
 					}
@@ -698,6 +698,16 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		commandOverride = []string{flags.exec}
 	}
 
+	// Parse --memory flag (human-readable string → MiB).
+	var memoryMiB uint32
+	if flags.memory != "" {
+		parsed, parseErr := domainconfig.ParseByteSize(flags.memory)
+		if parseErr != nil {
+			return fmt.Errorf("--memory: %w", parseErr)
+		}
+		memoryMiB = parsed.MiB()
+	}
+
 	// Parse --tmp-size flag (human-readable string → MiB).
 	var tmpSizeMiB uint32
 	if flags.tmpSize != "" {
@@ -717,7 +727,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	opts := sandbox.RunOpts{
 		CPUs:            flags.cpus,
-		Memory:          flags.memory,
+		Memory:          memoryMiB,
 		TmpSizeMiB:      tmpSizeMiB,
 		Workspace:       ws,
 		SSHPort:         flags.sshPort,
@@ -931,10 +941,10 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 	}
 	if localCfg.Defaults.Memory > 0 {
 		if localCfg.Defaults.Memory > domainconfig.MaxMemory {
-			warnings = append(warnings, fmt.Sprintf("sets default memory: %d MiB (clamped to %d MiB)",
+			warnings = append(warnings, fmt.Sprintf("sets default memory: %s (clamped to %s)",
 				localCfg.Defaults.Memory, domainconfig.MaxMemory))
 		} else {
-			warnings = append(warnings, fmt.Sprintf("sets default memory: %d MiB", localCfg.Defaults.Memory))
+			warnings = append(warnings, fmt.Sprintf("sets default memory: %s", localCfg.Defaults.Memory))
 		}
 	}
 
@@ -1009,10 +1019,10 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 		}
 		if override.Memory > 0 {
 			if override.Memory > domainconfig.MaxMemory {
-				warnings = append(warnings, fmt.Sprintf("sets %s memory: %d MiB (clamped to %d MiB)",
+				warnings = append(warnings, fmt.Sprintf("sets %s memory: %s (clamped to %s)",
 					safeName, override.Memory, domainconfig.MaxMemory))
 			} else {
-				warnings = append(warnings, fmt.Sprintf("sets %s memory: %d MiB", safeName, override.Memory))
+				warnings = append(warnings, fmt.Sprintf("sets %s memory: %s", safeName, override.Memory))
 			}
 		}
 		if override.MCP != nil {

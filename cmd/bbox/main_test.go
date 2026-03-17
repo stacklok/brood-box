@@ -147,10 +147,10 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 		{
 			name: "defaults memory",
 			local: &domainconfig.Config{
-				Defaults: domainconfig.DefaultsConfig{Memory: 131072},
+				Defaults: domainconfig.DefaultsConfig{Memory: domainconfig.ByteSize(131072)},
 			},
 			global:   defaultGlobal,
-			expected: wrapWarnings("sets default memory: 131072 MiB"),
+			expected: wrapWarnings("sets default memory: 128g"),
 		},
 		{
 			name: "defaults CPUs clamped",
@@ -164,11 +164,11 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 		{
 			name: "defaults memory clamped",
 			local: &domainconfig.Config{
-				Defaults: domainconfig.DefaultsConfig{Memory: 999999},
+				Defaults: domainconfig.DefaultsConfig{Memory: domainconfig.ByteSize(999999)},
 			},
 			global: defaultGlobal,
-			expected: wrapWarnings(fmt.Sprintf("sets default memory: 999999 MiB (clamped to %d MiB)",
-				domainconfig.MaxMemory)),
+			expected: wrapWarnings(fmt.Sprintf("sets default memory: %s (clamped to %s)",
+				domainconfig.ByteSize(999999), domainconfig.MaxMemory)),
 		},
 		// --- Git ---
 		{
@@ -251,26 +251,26 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 			name: "agent CPUs and memory",
 			local: &domainconfig.Config{
 				Agents: map[string]domainconfig.AgentOverride{
-					"myagent": {CPUs: 128, Memory: 99999},
+					"myagent": {CPUs: 128, Memory: domainconfig.ByteSize(99999)},
 				},
 			},
 			global: defaultGlobal,
 			expected: wrapWarnings(
 				"sets myagent CPUs: 128",
-				"sets myagent memory: 99999 MiB",
+				fmt.Sprintf("sets myagent memory: %s", domainconfig.ByteSize(99999)),
 			),
 		},
 		{
 			name: "agent CPUs and memory clamped",
 			local: &domainconfig.Config{
 				Agents: map[string]domainconfig.AgentOverride{
-					"myagent": {CPUs: 256, Memory: 999999},
+					"myagent": {CPUs: 256, Memory: domainconfig.ByteSize(999999)},
 				},
 			},
 			global: defaultGlobal,
 			expected: wrapWarnings(
 				fmt.Sprintf("sets myagent CPUs: 256 (clamped to %d)", domainconfig.MaxCPUs),
-				fmt.Sprintf("sets myagent memory: 999999 MiB (clamped to %d MiB)", domainconfig.MaxMemory),
+				fmt.Sprintf("sets myagent memory: %s (clamped to %s)", domainconfig.ByteSize(999999), domainconfig.MaxMemory),
 			),
 		},
 		// --- Agent MCP override (CRITICAL-1 fix) ---
@@ -368,7 +368,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				Defaults: domainconfig.DefaultsConfig{
 					EgressProfile: "locked",
 					CPUs:          8,
-					Memory:        4096,
+					Memory:        domainconfig.ByteSize(4096),
 				},
 				Network: domainconfig.NetworkConfig{
 					AllowHosts: []domainconfig.EgressHostConfig{
@@ -401,7 +401,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				"adds review exclude patterns: *.log",
 				"sets default egress profile: locked",
 				"sets default CPUs: 8",
-				"sets default memory: 4096 MiB",
+				"sets default memory: 4g",
 				"adds egress hosts: global-extra.com",
 				"sets git token forwarding: false",
 				"overrides myagent image: custom:v1",

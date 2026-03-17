@@ -248,7 +248,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		override.CPUs = opts.CPUs
 	}
 	if opts.Memory > 0 {
-		override.Memory = opts.Memory
+		override.Memory = config.ByteSize(opts.Memory)
 	}
 	if opts.TmpSizeMiB > 0 {
 		override.TmpSize = config.ByteSize(opts.TmpSizeMiB)

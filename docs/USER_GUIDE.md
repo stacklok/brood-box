@@ -12,7 +12,7 @@ and you get a live interactive terminal session.
 bbox claude-code
 
 # Run Codex with more resources
-bbox codex --cpus 4 --memory 4096
+bbox codex --cpus 4 --memory 4g
 
 # Run OpenCode on a specific project
 bbox opencode --workspace /path/to/project
@@ -59,7 +59,7 @@ bbox <agent-name> [flags] [-- <agent-args...>]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--cpus` | Agent default (2) | Number of vCPUs for the VM |
-| `--memory` | Agent default (4096) | RAM in MiB |
+| `--memory` | Agent default (4g) | RAM for the VM (e.g. `4g`, `512m`) |
 | `--workspace` | Current directory | Host directory mounted as `/workspace` |
 | `--ssh-port` | Auto-pick | Host port forwarded to guest SSH (port 22) |
 | `--config` | `~/.config/broodbox/config.yaml` | Config file path |
@@ -137,7 +137,7 @@ override built-in agents, or define custom agents.
 # Global resource defaults (applied when agent doesn't specify its own)
 defaults:
   cpus: 4
-  memory: 4096
+  memory: "4g"
   egress_profile: "permissive"
 
 # Workspace snapshot review settings
@@ -192,7 +192,7 @@ agents:
     env_forward:
       - MY_API_KEY
     cpus: 2
-    memory: 1024
+    memory: "1g"
 ```
 
 ### Config Resolution Order
@@ -289,7 +289,7 @@ defaults:
 ```yaml
 defaults:
   cpus: 4
-  memory: 4096
+  memory: "4g"
 review:
   exclude_patterns:
     - "*.log"
