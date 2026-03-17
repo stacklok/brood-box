@@ -312,12 +312,29 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		)
 	}
 
-	// 3. Collect env vars (merge common git patterns when token forwarding is enabled).
+	// 3. Collect env vars: agent defaults → forwarded host vars → git identity.
+	// Agent defaults are applied first so host-side overrides take precedence.
+	envVars := make(map[string]string)
+	for k, v := range ag.DefaultEnv {
+		envVars[k] = v
+	}
+
+	// Cap Node.js heap to a percentage of VM memory if configured.
+	// This mitigates known memory leaks in Node.js agents (e.g. Claude Code)
+	// by letting V8's GC manage memory within bounds rather than growing
+	// until the guest OOM killer SIGKILLs the process.
+	if ag.NodeHeapPercent > 0 {
+		heapMiB := ag.DefaultMemory * ag.NodeHeapPercent / 100
+		envVars["NODE_OPTIONS"] = fmt.Sprintf("--max-old-space-size=%d", heapMiB)
+	}
+
 	allPatterns := ag.EnvForward
 	if opts.GitTokenEnabled {
 		allPatterns = mergeEnvPatterns(allPatterns, domaingit.CommonEnvPatterns())
 	}
-	envVars := agent.ForwardEnv(allPatterns, s.envProvider)
+	for k, v := range agent.ForwardEnv(allPatterns, s.envProvider) {
+		envVars[k] = v
+	}
 	if len(envVars) > 0 {
 		keys := make([]string, 0, len(envVars))
 		for k := range envVars {
@@ -339,9 +356,6 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 
 	// Inject git identity into env vars as fallback when not already present.
 	if gitIdentity.Name != "" {
-		if envVars == nil {
-			envVars = make(map[string]string)
-		}
 		if _, ok := envVars["GIT_AUTHOR_NAME"]; !ok {
 			envVars["GIT_AUTHOR_NAME"] = gitIdentity.Name
 		}
@@ -350,9 +364,6 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		}
 	}
 	if gitIdentity.Email != "" {
-		if envVars == nil {
-			envVars = make(map[string]string)
-		}
 		if _, ok := envVars["GIT_AUTHOR_EMAIL"]; !ok {
 			envVars["GIT_AUTHOR_EMAIL"] = gitIdentity.Email
 		}
@@ -363,9 +374,6 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 
 	// Prevent git from hanging on interactive credential prompts inside the VM.
 	// Public repos work anonymously; private repos fail cleanly without a token.
-	if envVars == nil {
-		envVars = make(map[string]string)
-	}
 	envVars["GIT_TERMINAL_PROMPT"] = "0"
 
 	// Determine if a GitHub token is available for credential helper injection.
