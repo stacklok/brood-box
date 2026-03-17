@@ -71,7 +71,12 @@ func injectClaudeCodeMCP(rootfsPath, gatewayIP string, port uint16, chown ChownF
 		return err
 	}
 
-	if err := mergeJSONKey(homeDir, ".claude.json", "mcpServers", servers, chown); err != nil {
+	// Deep-merge to preserve user MCP servers injected by settings hook.
+	serversMap := make(map[string]any, len(servers))
+	for k, v := range servers {
+		serversMap[k] = v
+	}
+	if err := mergeJSONMapEntries(homeDir, ".claude.json", "mcpServers", serversMap, chown); err != nil {
 		return err
 	}
 
@@ -102,7 +107,7 @@ func injectCodexMCP(rootfsPath, gatewayIP string, port uint16, chown ChownFunc) 
 		return fmt.Errorf("creating ~/.codex dir: %w", err)
 	}
 
-	return mergeTOMLKey(codexDir, "config.toml", "mcp_servers", map[string]any{
+	return mergeTOMLMapEntries(codexDir, "config.toml", "mcp_servers", map[string]any{
 		"sandbox-tools": map[string]any{
 			"url": mcpURL,
 		},
@@ -141,7 +146,12 @@ func injectOpenCodeMCP(rootfsPath, gatewayIP string, port uint16, chown ChownFun
 		return fmt.Errorf("creating ~/.config/opencode dir: %w", err)
 	}
 
-	return mergeJSONKey(opencodeDir, "opencode.json", "mcp", servers, chown)
+	// Deep-merge to preserve user MCP servers injected by settings hook.
+	serversMap := make(map[string]any, len(servers))
+	for k, v := range servers {
+		serversMap[k] = v
+	}
+	return mergeJSONMapEntries(opencodeDir, "opencode.json", "mcp", serversMap, chown)
 }
 
 // --- helpers ---
@@ -184,10 +194,61 @@ func mergeJSONKey(dir, filename, key string, value any, chown ChownFunc) error {
 	return chown(path, sandboxUID, sandboxGID)
 }
 
-// mergeTOMLKey reads an existing TOML file (if any) at dir/filename, sets
-// the given top-level key to value, and writes the result back. If the file
-// does not exist, a new document with just [key] is created.
-func mergeTOMLKey(dir, filename, key string, value any, chown ChownFunc) error {
+// mergeJSONMapEntries reads an existing JSON file, merges entries from value
+// into the map at key, and writes back. Individual map entries from value
+// override existing entries with the same name, but other entries are preserved.
+// This is a single-level merge: each map entry is replaced atomically (not
+// recursively). This is correct for MCP server maps where each server entry
+// is an independent unit.
+func mergeJSONMapEntries(dir, filename, key string, value map[string]any, chown ChownFunc) error {
+	path := filepath.Join(dir, filename)
+
+	existing := make(map[string]json.RawMessage)
+	if data, err := os.ReadFile(path); err == nil {
+		if err := json.Unmarshal(data, &existing); err != nil {
+			return fmt.Errorf("parsing existing %s: %w", filename, err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading existing %s: %w", filename, err)
+	}
+
+	// Parse existing map at key (if any).
+	existingMap := make(map[string]any)
+	if raw, ok := existing[key]; ok {
+		if err := json.Unmarshal(raw, &existingMap); err != nil {
+			// Not a map — replace entirely.
+			existingMap = make(map[string]any)
+		}
+	}
+
+	// Merge new entries into existing map.
+	for k, v := range value {
+		existingMap[k] = v
+	}
+
+	raw, err := json.Marshal(existingMap)
+	if err != nil {
+		return fmt.Errorf("marshaling %s value for %s: %w", key, filename, err)
+	}
+	existing[key] = raw
+
+	merged, err := json.MarshalIndent(existing, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling merged %s: %w", filename, err)
+	}
+
+	if err := os.WriteFile(path, append(merged, '\n'), 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", filename, err)
+	}
+
+	return chown(path, sandboxUID, sandboxGID)
+}
+
+// mergeTOMLMapEntries reads an existing TOML file, merges entries from value
+// into the table at key, and writes back. Individual entries from value
+// override existing entries with the same name, but other entries are preserved.
+// This is a single-level merge (see mergeJSONMapEntries for rationale).
+func mergeTOMLMapEntries(dir, filename, key string, value map[string]any, chown ChownFunc) error {
 	path := filepath.Join(dir, filename)
 
 	existing := make(map[string]any)
@@ -199,7 +260,19 @@ func mergeTOMLKey(dir, filename, key string, value any, chown ChownFunc) error {
 		return fmt.Errorf("reading existing %s: %w", filename, err)
 	}
 
-	existing[key] = value
+	// Parse existing map at key (if any).
+	existingMap := make(map[string]any)
+	if raw, ok := existing[key]; ok {
+		if m, ok := raw.(map[string]any); ok {
+			existingMap = m
+		}
+	}
+
+	// Merge new entries into existing map.
+	for k, v := range value {
+		existingMap[k] = v
+	}
+	existing[key] = existingMap
 
 	merged, err := toml.Marshal(existing)
 	if err != nil {

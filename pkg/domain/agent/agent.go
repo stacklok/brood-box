@@ -9,6 +9,7 @@ import (
 	"regexp"
 
 	"github.com/stacklok/brood-box/pkg/domain/egress"
+	"github.com/stacklok/brood-box/pkg/domain/settings"
 )
 
 // MaxNameLength is the maximum allowed length for an agent name.
@@ -102,6 +103,10 @@ type Agent struct {
 	// DefaultTmpSize is the default /tmp tmpfs size in MiB for this agent.
 	// Zero means use the go-microvm default (256 MiB). Built-in agents default to 512 MiB.
 	DefaultTmpSize uint32
+
+	// SettingsManifest declares host settings to inject into the VM.
+	// Nil means no settings injection for this agent.
+	SettingsManifest *settings.Manifest
 }
 
 // Registry provides access to known agents by name.

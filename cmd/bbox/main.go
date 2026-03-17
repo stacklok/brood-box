@@ -36,6 +36,7 @@ import (
 	inframcp "github.com/stacklok/brood-box/internal/infra/mcp"
 	infraprogress "github.com/stacklok/brood-box/internal/infra/progress"
 	"github.com/stacklok/brood-box/internal/infra/review"
+	infrasettings "github.com/stacklok/brood-box/internal/infra/settings"
 	infrassh "github.com/stacklok/brood-box/internal/infra/ssh"
 	infraterminal "github.com/stacklok/brood-box/internal/infra/terminal"
 	infravm "github.com/stacklok/brood-box/internal/infra/vm"
@@ -86,6 +87,7 @@ func rootCmd() *cobra.Command {
 		noSaveCredentials bool
 		seedCredentials   bool
 		tmpSize           string
+		noSettings        bool
 		noFirmwareDL      bool
 		noImageCache      bool
 		timings           bool
@@ -147,6 +149,7 @@ Example:
 				noGitSSHAgent:     noGitSSHAgent,
 				noSaveCredentials: noSaveCredentials,
 				seedCredentials:   seedCredentials,
+				noSettings:        noSettings,
 				noFirmwareDL:      noFirmwareDL,
 				noImageCache:      noImageCache,
 				timings:           timings,
@@ -180,6 +183,7 @@ Example:
 	cmd.Flags().BoolVar(&noGitSSHAgent, "no-git-ssh-agent", false, "Disable SSH agent forwarding into the VM")
 	cmd.Flags().BoolVar(&noSaveCredentials, "no-save-credentials", false, "Disable saving agent credentials between sessions (enabled by default)")
 	cmd.Flags().BoolVar(&seedCredentials, "seed-credentials", false, "Seed agent credentials from host (e.g. macOS Keychain) into the VM")
+	cmd.Flags().BoolVar(&noSettings, "no-settings", false, "Disable injecting host agent settings (rules, skills, etc.) into the VM")
 	cmd.Flags().BoolVar(&noFirmwareDL, "no-firmware-download", false, "Disable firmware download (use system libkrunfw only)")
 	cmd.Flags().BoolVar(&noImageCache, "no-image-cache", false, "Disable OCI image caching (fresh pull every run)")
 	cmd.Flags().BoolVar(&timings, "timings", false, "Print per-phase timing summary after run")
@@ -294,6 +298,7 @@ type runFlags struct {
 	noGitSSHAgent     bool
 	noSaveCredentials bool
 	seedCredentials   bool
+	noSettings        bool
 	noFirmwareDL      bool
 	noImageCache      bool
 	timings           bool
@@ -470,6 +475,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		AgentOverrides:   cfg.Agents,
 		ExtraEgressHosts: configEgressHosts,
 		MCP:              cfg.MCP,
+		SettingsImport:   cfg.SettingsImport,
 	}
 
 	firmwareDownloadEnabled := true
@@ -572,6 +578,17 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	if credentialStore != nil {
 		vmRunnerOpts = append(vmRunnerOpts, infravm.WithCredentialStore(credentialStore))
+	}
+
+	// Wire settings injector (enabled by default, --no-settings to disable).
+	settingsEnabled := cfg.SettingsImport.IsEnabled() && !flags.noSettings
+	if settingsEnabled {
+		settingsInjector := infrasettings.NewFSInjector(logger)
+		vmRunnerOpts = append(vmRunnerOpts, infravm.WithSettingsInjector(settingsInjector))
+	} else if flags.noSettings {
+		// Ensure sandbox config reflects disabled state for the application layer.
+		disabled := false
+		sandboxCfg.SettingsImport.Enabled = &disabled
 	}
 
 	// Wire dependencies.
@@ -963,6 +980,18 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 		} else {
 			warnings = append(warnings, fmt.Sprintf("sets firmware download: %t", *localCfg.Runtime.FirmwareDownload))
 		}
+	}
+
+	// SettingsImport — local can only disable (tighten).
+	if localCfg.SettingsImport.Enabled != nil {
+		if *localCfg.SettingsImport.Enabled {
+			warnings = append(warnings, "settings_import.enabled=true is ignored — local config can only disable settings import")
+		} else {
+			warnings = append(warnings, "disables agent settings import (rules, skills, etc.)")
+		}
+	}
+	if localCfg.SettingsImport.Categories != nil {
+		warnings = append(warnings, "modifies settings import categories (can only disable)")
 	}
 
 	// MCP authz profile — local can only tighten (tighten-only merge).

@@ -26,6 +26,7 @@ import (
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/credential"
+	"github.com/stacklok/brood-box/pkg/domain/settings"
 	domvm "github.com/stacklok/brood-box/pkg/domain/vm"
 )
 
@@ -34,14 +35,15 @@ var _ domvm.VMRunner = (*MicroVMRunner)(nil)
 
 // MicroVMRunner implements VMRunner using the go-microvm library.
 type MicroVMRunner struct {
-	runnerPath      string
-	libDir          string
-	runtimeSource   extract.Source
-	firmwareSource  extract.Source
-	cacheDir        string
-	imageCacheDir   string
-	credentialStore credential.Store
-	logger          *slog.Logger
+	runnerPath       string
+	libDir           string
+	runtimeSource    extract.Source
+	firmwareSource   extract.Source
+	cacheDir         string
+	imageCacheDir    string
+	credentialStore  credential.Store
+	settingsInjector settings.Injector
+	logger           *slog.Logger
 }
 
 // RunnerOption configures a PropolisRunner.
@@ -79,6 +81,12 @@ func WithCacheDir(dir string) RunnerOption {
 // agent credentials into the guest rootfs before boot.
 func WithCredentialStore(store credential.Store) RunnerOption {
 	return func(r *MicroVMRunner) { r.credentialStore = store }
+}
+
+// WithSettingsInjector sets the injector used to copy agent settings
+// (rules, skills, commands, config files) into the guest rootfs.
+func WithSettingsInjector(injector settings.Injector) RunnerOption {
+	return func(r *MicroVMRunner) { r.settingsInjector = injector }
 }
 
 // WithImageCacheDir sets a shared OCI image cache directory. When set, the
@@ -229,6 +237,15 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 	if r.credentialStore != nil && len(cfg.CredentialPaths) > 0 {
 		opts = append(opts, microvm.WithRootFSHook(
 			InjectCredentials(r.credentialStore, cfg.AgentName, cfg.CredentialPaths),
+		))
+	}
+
+	// Add settings injection hook if injector and manifest are configured.
+	// Runs after credentials (which creates base config files) and before
+	// MCP config (which deep-merges sandbox-tools on top of user servers).
+	if r.settingsInjector != nil && cfg.SettingsManifest != nil {
+		opts = append(opts, microvm.WithRootFSHook(
+			InjectSettings(r.settingsInjector, cfg.SettingsManifest),
 		))
 	}
 

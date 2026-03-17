@@ -33,6 +33,9 @@ type Config struct {
 	// Git configures git identity and auth forwarding.
 	Git GitConfig `yaml:"git"`
 
+	// SettingsImport configures agent settings injection into the VM.
+	SettingsImport SettingsImportConfig `yaml:"settings_import"`
+
 	// Auth configures credential persistence.
 	Auth AuthConfig `yaml:"auth"`
 
@@ -83,6 +86,72 @@ func (a AuthConfig) SeedHostCredentialsEnabled() bool {
 		return false
 	}
 	return *a.SeedHostCredentials
+}
+
+// SettingsImportConfig configures agent settings injection into the VM.
+type SettingsImportConfig struct {
+	// Enabled controls whether settings injection is active. nil = default true.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// Categories controls which categories to import. nil = all enabled.
+	Categories *SettingsCategoryConfig `yaml:"categories,omitempty"`
+}
+
+// IsEnabled returns whether settings import is enabled.
+// Defaults to true when Enabled is nil.
+func (s SettingsImportConfig) IsEnabled() bool {
+	if s.Enabled == nil {
+		return true
+	}
+	return *s.Enabled
+}
+
+// SettingsCategoryConfig controls which settings categories are imported.
+type SettingsCategoryConfig struct {
+	Settings     *bool `yaml:"settings,omitempty"`
+	Instructions *bool `yaml:"instructions,omitempty"`
+	Rules        *bool `yaml:"rules,omitempty"`
+	Agents       *bool `yaml:"agents,omitempty"`
+	Skills       *bool `yaml:"skills,omitempty"`
+	Commands     *bool `yaml:"commands,omitempty"`
+	Tools        *bool `yaml:"tools,omitempty"`
+	Plugins      *bool `yaml:"plugins,omitempty"`
+	Themes       *bool `yaml:"themes,omitempty"`
+}
+
+// IsCategoryEnabled returns whether the named category is enabled.
+// nil receiver = all enabled. nil field = enabled.
+func (c *SettingsCategoryConfig) IsCategoryEnabled(category string) bool {
+	if c == nil {
+		return true
+	}
+	var field *bool
+	switch category {
+	case "settings":
+		field = c.Settings
+	case "instructions":
+		field = c.Instructions
+	case "rules":
+		field = c.Rules
+	case "agents":
+		field = c.Agents
+	case "skills":
+		field = c.Skills
+	case "commands":
+		field = c.Commands
+	case "tools":
+		field = c.Tools
+	case "plugins":
+		field = c.Plugins
+	case "themes":
+		field = c.Themes
+	default:
+		return true
+	}
+	if field == nil {
+		return true
+	}
+	return *field
 }
 
 // RuntimeConfig configures host runtime dependency handling.
@@ -386,6 +455,9 @@ type AgentOverride struct {
 
 	// MCP overrides the global MCP proxy settings for this agent.
 	MCP *MCPConfig `yaml:"mcp,omitempty"`
+
+	// SettingsImport overrides the global settings import for this agent.
+	SettingsImport *SettingsImportConfig `yaml:"settings_import,omitempty"`
 }
 
 // clampResources caps CPU and memory values to their maximums.
@@ -485,6 +557,9 @@ func MergeConfigs(global, local *Config) *Config {
 		SaveCredentials:     global.Auth.SaveCredentials,
 		SeedHostCredentials: global.Auth.SeedHostCredentials,
 	}
+
+	// SettingsImport: local can only disable (tighten), not enable.
+	result.SettingsImport = mergeSettingsImportConfig(global.SettingsImport, local.SettingsImport)
 
 	// Runtime: local overrides global when explicitly set.
 	result.Runtime = mergeRuntimeConfig(global.Runtime, local.Runtime)
@@ -640,6 +715,58 @@ func mergeRuntimeConfig(global, local RuntimeConfig) RuntimeConfig {
 		return RuntimeConfig{FirmwareDownload: local.FirmwareDownload}
 	}
 	return global
+}
+
+// mergeSettingsImportConfig merges local into global with tighten-only semantics.
+// Local can only disable settings import or individual categories, never enable them.
+func mergeSettingsImportConfig(global, local SettingsImportConfig) SettingsImportConfig {
+	result := global
+
+	// Local can only disable, not enable.
+	if local.Enabled != nil && !*local.Enabled {
+		result.Enabled = local.Enabled
+	}
+
+	// Merge categories: local can only disable individual categories.
+	if local.Categories != nil {
+		result.Categories = TightenSettingsCategories(result.Categories, local.Categories)
+	}
+
+	return result
+}
+
+// TightenSettingsCategories merges local categories into global with tighten-only
+// semantics. Local can only set categories to false (disable), never to true (enable).
+// Exported so the application layer can apply per-agent overrides with the same
+// security policy without reimplementing the tighten logic.
+func TightenSettingsCategories(global, local *SettingsCategoryConfig) *SettingsCategoryConfig {
+	if local == nil {
+		return global
+	}
+
+	// Start from global (or empty if nil).
+	var result SettingsCategoryConfig
+	if global != nil {
+		result = *global
+	}
+
+	tightenBool := func(dst **bool, src *bool) {
+		if src != nil && !*src {
+			*dst = src
+		}
+	}
+
+	tightenBool(&result.Settings, local.Settings)
+	tightenBool(&result.Instructions, local.Instructions)
+	tightenBool(&result.Rules, local.Rules)
+	tightenBool(&result.Agents, local.Agents)
+	tightenBool(&result.Skills, local.Skills)
+	tightenBool(&result.Commands, local.Commands)
+	tightenBool(&result.Tools, local.Tools)
+	tightenBool(&result.Plugins, local.Plugins)
+	tightenBool(&result.Themes, local.Themes)
+
+	return &result
 }
 
 // ToEgressHosts converts config host entries to domain egress hosts.

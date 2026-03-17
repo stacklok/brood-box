@@ -13,6 +13,7 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/git"
+	"github.com/stacklok/brood-box/pkg/domain/settings"
 )
 
 // VMConfig holds the parameters needed to start a sandbox VM.
@@ -73,6 +74,9 @@ type VMConfig struct {
 	// TmpSizeMiB is the size of the /tmp tmpfs inside the guest in MiB.
 	// Zero uses the go-microvm default (256 MiB).
 	TmpSizeMiB uint32
+
+	// SettingsManifest declares agent settings to inject into the rootfs.
+	SettingsManifest *settings.Manifest
 }
 
 // HostService describes an HTTP service exposed from host to guest.

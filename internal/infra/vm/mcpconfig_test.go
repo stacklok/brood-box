@@ -428,16 +428,16 @@ func TestInjectClaudeCodeMCP_PreservesExistingKeys(t *testing.T) {
 	assert.JSONEq(t, `"dark"`, string(raw["theme"]))
 }
 
-func TestInjectClaudeCodeMCP_OverwritesExistingMCPServers(t *testing.T) {
+func TestInjectClaudeCodeMCP_PreservesExistingMCPServers(t *testing.T) {
 	t.Parallel()
 
 	rootfs := setupRootfs(t)
 	chown, _ := recordingChown()
 	configPath := filepath.Join(rootfs, sandboxHome, ".claude.json")
 
-	// Pre-populate with a stale MCP server entry.
-	stale := `{"mcpServers": {"old-server": {"type": "http", "url": "http://old:1234/mcp"}}}`
-	require.NoError(t, os.WriteFile(configPath, []byte(stale), 0o644))
+	// Pre-populate with a user MCP server entry.
+	existing := `{"mcpServers": {"user-server": {"type": "http", "url": "http://user:1234/mcp"}}}`
+	require.NoError(t, os.WriteFile(configPath, []byte(existing), 0o644))
 
 	err := injectClaudeCodeMCP(rootfs, "192.168.127.1", 4483, chown)
 	require.NoError(t, err)
@@ -449,8 +449,9 @@ func TestInjectClaudeCodeMCP_OverwritesExistingMCPServers(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &cfg))
 
 	assert.Contains(t, cfg.MCPServers, "sandbox-tools", "new entry must be present")
-	assert.NotContains(t, cfg.MCPServers, "old-server", "stale entry must be replaced")
+	assert.Contains(t, cfg.MCPServers, "user-server", "existing user entry must be preserved")
 	assert.Equal(t, "http://192.168.127.1:4483/mcp", cfg.MCPServers["sandbox-tools"].URL)
+	assert.Equal(t, "http://user:1234/mcp", cfg.MCPServers["user-server"].URL)
 }
 
 func TestInjectOpenCodeMCP_PreservesExistingKeys(t *testing.T) {
@@ -517,6 +518,119 @@ func TestInjectCodexMCP_PreservesExistingSections(t *testing.T) {
 	sandboxTools, ok := mcpServers["sandbox-tools"].(map[string]any)
 	require.True(t, ok, "sandbox-tools must be present")
 	assert.Equal(t, "http://192.168.127.1:4483/mcp", sandboxTools["url"])
+}
+
+func TestInjectCodexMCP_PreservesExistingMCPServers(t *testing.T) {
+	t.Parallel()
+
+	rootfs := setupRootfs(t)
+	chown, _ := recordingChown()
+	codexDir := filepath.Join(rootfs, sandboxHome, ".codex")
+	require.NoError(t, os.MkdirAll(codexDir, 0o755))
+	configPath := filepath.Join(codexDir, "config.toml")
+
+	// Pre-populate with a user MCP server entry.
+	existing := "[mcp_servers.user-tool]\nurl = 'http://user:1234/mcp'\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(existing), 0o644))
+
+	err := injectCodexMCP(rootfs, "192.168.127.1", 4483, chown)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, toml.Unmarshal(data, &parsed))
+
+	mcpServers, ok := parsed["mcp_servers"].(map[string]any)
+	require.True(t, ok, "mcp_servers must be present")
+
+	// Verify sandbox-tools was injected.
+	sandboxTools, ok := mcpServers["sandbox-tools"].(map[string]any)
+	require.True(t, ok, "sandbox-tools must be present")
+	assert.Equal(t, "http://192.168.127.1:4483/mcp", sandboxTools["url"])
+
+	// Verify user-tool is preserved.
+	userTool, ok := mcpServers["user-tool"].(map[string]any)
+	require.True(t, ok, "user-tool must be preserved")
+	assert.Equal(t, "http://user:1234/mcp", userTool["url"])
+}
+
+func TestInjectOpenCodeMCP_PreservesExistingMCPServers(t *testing.T) {
+	t.Parallel()
+
+	rootfs := setupRootfs(t)
+	chown, _ := recordingChown()
+	opencodeDir := filepath.Join(rootfs, sandboxHome, ".config", "opencode")
+	require.NoError(t, os.MkdirAll(opencodeDir, 0o755))
+	configPath := filepath.Join(opencodeDir, "opencode.json")
+
+	// Pre-populate with a user MCP server entry.
+	existing := `{"mcp": {"user-tool": {"type": "remote", "url": "http://user:1234"}}}`
+	require.NoError(t, os.WriteFile(configPath, []byte(existing), 0o644))
+
+	err := injectOpenCodeMCP(rootfs, "192.168.127.1", 4483, chown)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+
+	var cfg openCodeConfig
+	require.NoError(t, json.Unmarshal(data, &cfg))
+
+	// Verify sandbox-tools was injected.
+	assert.Contains(t, cfg.MCP, "sandbox-tools", "sandbox-tools must be present")
+	assert.Equal(t, "http://192.168.127.1:4483/mcp", cfg.MCP["sandbox-tools"].URL)
+
+	// Verify user-tool is preserved.
+	assert.Contains(t, cfg.MCP, "user-tool", "user-tool must be preserved")
+	assert.Equal(t, "http://user:1234", cfg.MCP["user-tool"].URL)
+}
+
+func TestMergeJSONMapEntries_CorruptFile(t *testing.T) {
+	t.Parallel()
+
+	rootfs := setupRootfs(t)
+	chown, _ := recordingChown()
+	dir := filepath.Join(rootfs, sandboxHome)
+
+	// Write invalid JSON.
+	corruptPath := filepath.Join(dir, "corrupt.json")
+	require.NoError(t, os.WriteFile(corruptPath, []byte(`{not valid json`), 0o644))
+
+	err := mergeJSONMapEntries(dir, "corrupt.json", "key", map[string]any{
+		"new-entry": map[string]any{"url": "http://localhost"},
+	}, chown)
+	assert.Error(t, err, "should fail on corrupt JSON")
+	assert.Contains(t, err.Error(), "parsing existing")
+}
+
+func TestMergeJSONMapEntries_NonMapValue(t *testing.T) {
+	t.Parallel()
+
+	rootfs := setupRootfs(t)
+	chown, _ := recordingChown()
+	dir := filepath.Join(rootfs, sandboxHome)
+
+	// Write JSON where the target key is a string, not a map.
+	filePath := filepath.Join(dir, "nonmap.json")
+	require.NoError(t, os.WriteFile(filePath, []byte(`{"key": "string_not_map"}`), 0o644))
+
+	err := mergeJSONMapEntries(dir, "nonmap.json", "key", map[string]any{
+		"new-entry": map[string]any{"url": "http://localhost"},
+	}, chown)
+	require.NoError(t, err, "should succeed by replacing the non-map value")
+
+	data, err := os.ReadFile(filePath)
+	require.NoError(t, err)
+
+	var raw map[string]json.RawMessage
+	require.NoError(t, json.Unmarshal(data, &raw))
+
+	// The key should now contain the injected map, not the old string.
+	var innerMap map[string]any
+	require.NoError(t, json.Unmarshal(raw["key"], &innerMap))
+	assert.Contains(t, innerMap, "new-entry", "new-entry must be present after replacing non-map value")
 }
 
 // setupRootfs creates a minimal rootfs with /home/sandbox/ pre-created,

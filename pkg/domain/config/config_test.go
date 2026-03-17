@@ -975,6 +975,101 @@ func TestMergeConfigs_AgentOverridesMCPSecurityFieldsStripped(t *testing.T) {
 	assert.NotNil(t, global.Agents["claude-code"].MCP.Authz, "global input must not be mutated")
 }
 
+func TestMergeConfigs_SettingsImport(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		global *Config
+		local  *Config
+		want   SettingsImportConfig
+	}{
+		{
+			name:   "both nil — defaults enabled",
+			global: &Config{},
+			local:  &Config{},
+			want:   SettingsImportConfig{},
+		},
+		{
+			name:   "global enabled, local disables — local wins",
+			global: &Config{SettingsImport: SettingsImportConfig{Enabled: boolPtr(true)}},
+			local:  &Config{SettingsImport: SettingsImportConfig{Enabled: boolPtr(false)}},
+			want:   SettingsImportConfig{Enabled: boolPtr(false)},
+		},
+		{
+			name:   "global nil, local enables — enable ignored (tighten only)",
+			global: &Config{},
+			local:  &Config{SettingsImport: SettingsImportConfig{Enabled: boolPtr(true)}},
+			want:   SettingsImportConfig{},
+		},
+		{
+			name:   "global disabled, local enables — global preserved",
+			global: &Config{SettingsImport: SettingsImportConfig{Enabled: boolPtr(false)}},
+			local:  &Config{SettingsImport: SettingsImportConfig{Enabled: boolPtr(true)}},
+			want:   SettingsImportConfig{Enabled: boolPtr(false)},
+		},
+		{
+			name:   "local disables skills category",
+			global: &Config{},
+			local:  &Config{SettingsImport: SettingsImportConfig{Categories: &SettingsCategoryConfig{Skills: boolPtr(false)}}},
+			want:   SettingsImportConfig{Categories: &SettingsCategoryConfig{Skills: boolPtr(false)}},
+		},
+		{
+			name: "local cannot re-enable disabled category",
+			global: &Config{SettingsImport: SettingsImportConfig{
+				Categories: &SettingsCategoryConfig{Skills: boolPtr(false)},
+			}},
+			local: &Config{SettingsImport: SettingsImportConfig{
+				Categories: &SettingsCategoryConfig{Skills: boolPtr(true)},
+			}},
+			want: SettingsImportConfig{Categories: &SettingsCategoryConfig{Skills: boolPtr(false)}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := MergeConfigs(tt.global, tt.local)
+			assert.Equal(t, tt.want, got.SettingsImport)
+		})
+	}
+}
+
+func TestSettingsImportConfig_IsEnabled(t *testing.T) {
+	t.Parallel()
+
+	// nil defaults to true
+	var cfg SettingsImportConfig
+	assert.True(t, cfg.IsEnabled())
+
+	// explicit true
+	cfg.Enabled = boolPtr(true)
+	assert.True(t, cfg.IsEnabled())
+
+	// explicit false
+	cfg.Enabled = boolPtr(false)
+	assert.False(t, cfg.IsEnabled())
+}
+
+func TestSettingsCategoryConfig_IsCategoryEnabled(t *testing.T) {
+	t.Parallel()
+
+	// nil receiver = all enabled
+	var c *SettingsCategoryConfig
+	assert.True(t, c.IsCategoryEnabled("settings"))
+	assert.True(t, c.IsCategoryEnabled("skills"))
+	assert.True(t, c.IsCategoryEnabled("unknown"))
+
+	// nil field = enabled
+	cfg := &SettingsCategoryConfig{}
+	assert.True(t, cfg.IsCategoryEnabled("settings"))
+
+	// explicit false
+	cfg.Skills = boolPtr(false)
+	assert.False(t, cfg.IsCategoryEnabled("skills"))
+	assert.True(t, cfg.IsCategoryEnabled("settings"))
+}
+
 func TestMerge_ResourceBounds(t *testing.T) {
 	t.Parallel()
 

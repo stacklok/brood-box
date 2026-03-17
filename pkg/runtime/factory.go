@@ -17,6 +17,7 @@ import (
 	infradiff "github.com/stacklok/brood-box/internal/infra/diff"
 	infragit "github.com/stacklok/brood-box/internal/infra/git"
 	infrareview "github.com/stacklok/brood-box/internal/infra/review"
+	infrasettings "github.com/stacklok/brood-box/internal/infra/settings"
 	infrassh "github.com/stacklok/brood-box/internal/infra/ssh"
 	infravm "github.com/stacklok/brood-box/internal/infra/vm"
 	infraworkspace "github.com/stacklok/brood-box/internal/infra/workspace"
@@ -104,6 +105,10 @@ func NewDefaultSandboxDeps(opts DefaultSandboxDepsOpts) sandbox.SandboxDeps {
 	if opts.CacheDir != "" {
 		runnerOpts = append(runnerOpts, infravm.WithCacheDir(opts.CacheDir))
 	}
+
+	// Wire default settings injector so SDK consumers get settings injection.
+	settingsInjector := infrasettings.NewFSInjector(logger)
+	runnerOpts = append(runnerOpts, infravm.WithSettingsInjector(settingsInjector))
 
 	// Resolve snapshot base directory.
 	snapDir := opts.SnapshotDir

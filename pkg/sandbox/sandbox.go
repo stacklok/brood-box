@@ -19,6 +19,7 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/hostservice"
 	"github.com/stacklok/brood-box/pkg/domain/progress"
 	"github.com/stacklok/brood-box/pkg/domain/session"
+	"github.com/stacklok/brood-box/pkg/domain/settings"
 	"github.com/stacklok/brood-box/pkg/domain/snapshot"
 	domvm "github.com/stacklok/brood-box/pkg/domain/vm"
 	"github.com/stacklok/brood-box/pkg/domain/workspace"
@@ -109,6 +110,9 @@ type SandboxConfig struct {
 
 	// MCP configures the in-process MCP proxy.
 	MCP config.MCPConfig
+
+	// SettingsImport configures agent settings injection.
+	SettingsImport config.SettingsImportConfig
 }
 
 // SandboxDeps holds all dependencies for SandboxRunner.
@@ -258,6 +262,9 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	}
 
 	ag = config.Merge(ag, override, cfg.Defaults)
+
+	// Resolve settings manifest: filter by enabled categories.
+	settingsManifest := s.resolveSettingsManifest(ag, cfg, agentName)
 
 	command, err := resolveCommand(ag.Command, opts.CommandOverride, opts.CommandArgs)
 	if err != nil {
@@ -447,23 +454,24 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	s.observer.Start(progress.PhaseStartingVM, "Starting sandbox VM...")
 
 	vmCfg := domvm.VMConfig{
-		Name:            VMName(ag.Name, workspacePath, opts.SessionID),
-		AgentName:       ag.Name,
-		Image:           ag.Image,
-		CPUs:            ag.DefaultCPUs,
-		Memory:          ag.DefaultMemory,
-		SSHPort:         opts.SSHPort,
-		WorkspacePath:   workspacePath,
-		EnvVars:         envVars,
-		EgressPolicy:    egressPolicy,
-		HostServices:    hostServices,
-		MCPConfigFormat: ag.MCPConfigFormat,
-		GitIdentity:     gitIdentity,
-		HasGitToken:     hasGitToken,
-		SSHAgentForward: opts.SSHAgentForward,
-		CredentialPaths: ag.CredentialPaths,
-		LogLevel:        opts.LogLevel,
-		TmpSizeMiB:      ag.DefaultTmpSize,
+		Name:             VMName(ag.Name, workspacePath, opts.SessionID),
+		AgentName:        ag.Name,
+		Image:            ag.Image,
+		CPUs:             ag.DefaultCPUs,
+		Memory:           ag.DefaultMemory,
+		SSHPort:          opts.SSHPort,
+		WorkspacePath:    workspacePath,
+		EnvVars:          envVars,
+		EgressPolicy:     egressPolicy,
+		HostServices:     hostServices,
+		MCPConfigFormat:  ag.MCPConfigFormat,
+		GitIdentity:      gitIdentity,
+		HasGitToken:      hasGitToken,
+		SSHAgentForward:  opts.SSHAgentForward,
+		CredentialPaths:  ag.CredentialPaths,
+		LogLevel:         opts.LogLevel,
+		TmpSizeMiB:       ag.DefaultTmpSize,
+		SettingsManifest: settingsManifest,
 	}
 
 	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)
@@ -696,6 +704,48 @@ func isHexString(s string) bool {
 		}
 	}
 	return true
+}
+
+// resolveSettingsManifest returns the agent's settings manifest filtered by
+// enabled categories. Returns nil if settings import is disabled or the agent
+// has no manifest.
+func (s *SandboxRunner) resolveSettingsManifest(
+	ag agent.Agent, cfg *SandboxConfig, agentName string,
+) *settings.Manifest {
+	if ag.SettingsManifest == nil || len(ag.SettingsManifest.Entries) == 0 {
+		return nil
+	}
+
+	// Resolve settings import config: global + per-agent override.
+	// Uses the domain's TightenSettingsCategories to ensure the same
+	// tighten-only security policy as workspace config merging.
+	importCfg := cfg.SettingsImport
+	if override, ok := cfg.AgentOverrides[agentName]; ok && override.SettingsImport != nil {
+		// Per-agent override can only disable (tighten).
+		if override.SettingsImport.Enabled != nil && !*override.SettingsImport.Enabled {
+			importCfg.Enabled = override.SettingsImport.Enabled
+		}
+		if override.SettingsImport.Categories != nil {
+			importCfg.Categories = config.TightenSettingsCategories(
+				importCfg.Categories, override.SettingsImport.Categories,
+			)
+		}
+	}
+
+	if !importCfg.IsEnabled() {
+		return nil
+	}
+
+	// Filter entries by enabled categories.
+	filtered := settings.FilterEntries(ag.SettingsManifest.Entries, func(e settings.Entry) bool {
+		return importCfg.Categories.IsCategoryEnabled(e.Category)
+	})
+
+	if len(filtered) == 0 {
+		return nil
+	}
+
+	return &settings.Manifest{Entries: filtered}
 }
 
 // resolveMCPConfig returns the effective MCP configuration by merging
