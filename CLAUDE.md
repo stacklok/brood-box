@@ -47,14 +47,22 @@ This project follows DDD layered architecture with dependency injection **strict
 
 **Domain** (`pkg/domain/`) — Pure types and interfaces. ZERO I/O, ZERO external dependencies, ZERO side effects. Domain packages define _what_ things are and _what_ operations exist, never _how_ they are performed. Public so external modules can import the shared ubiquitous language:
 - `pkg/domain/agent/` — Agent value object, env forwarding
-- `pkg/domain/config/` — Config types, merge logic
+- `pkg/domain/config/` — Config types, merge logic, ByteSize parsing
 - `pkg/domain/vm/` — VMRunner, VM, VMConfig interfaces
 - `pkg/domain/session/` — TerminalSession interface
 - `pkg/domain/workspace/` — WorkspaceCloner interface, Snapshot type
 - `pkg/domain/snapshot/` — FileChange, ExcludeConfig, Matcher, Differ, Reviewer, Flusher
+- `pkg/domain/credential/` — Store, FileStore, Seeder interfaces
+- `pkg/domain/egress/` — DNS-aware egress Policy, Host, ProfileName, Resolve()
+- `pkg/domain/git/` — Identity, IdentityProvider interface
+- `pkg/domain/hostservice/` — Service, Provider for HTTP services exposed to guest
+- `pkg/domain/progress/` — Phase enum, Observer interface for lifecycle reporting
 
 **Application** (`pkg/sandbox/`) — Orchestration only. Depends on domain interfaces, never on infrastructure. Contains no I/O implementations. Public so library consumers can drive the same SandboxRunner API:
 - `pkg/sandbox/` — SandboxRunner orchestrator (application service), SandboxConfig SDK contract
+
+**Runtime Factory** (`pkg/runtime/`) — Public helper that wires default infrastructure for SDK consumers. Keeps `internal/infra/` private while providing a supported path to construct `SandboxRunner` with standard implementations:
+- `pkg/runtime/` — `NewDefaultSandboxDeps()`, `NewDefaultSandboxRunner()`, exclude matcher builders
 
 **Infrastructure** (`internal/infra/`) — Concrete implementations of domain interfaces. This is the only layer that touches I/O, external libraries, and system calls:
 - `internal/infra/vm/` — go-microvm VMRunner implementation, rootfs hooks
@@ -66,10 +74,16 @@ This project follows DDD layered architecture with dependency injection **strict
 - `internal/infra/workspace/` — COW workspace cloning (FICLONE on Linux, clonefile on macOS, copy fallback)
 - `internal/infra/diff/` — SHA-256 based file diff engine
 - `internal/infra/review/` — Interactive per-file terminal review, auto-accept reviewer, flusher with hash verification
+- `internal/infra/credential/` — FS-based credential store, Claude credential seeder
+- `internal/infra/git/` — Host identity provider, `.git/config` credential sanitizer
+- `internal/infra/logging/` — Custom slog file handler
+- `internal/infra/terminal/` — OS terminal wrapper (raw mode, SIGWINCH)
+- `internal/infra/progress/` — Spinner, simple, and log-based progress observers
+- `internal/infra/process/` — Process management utilities
 
-**Guest VM** (`internal/guest/`, Linux only — runs inside the microVM):
-- `internal/guest/` — Boot, mount, network, env, sshd, reaper packages
-- `cmd/bbox-init/` — Guest PID 1 init binary (compiled Go)
+**Guest VM** (`internal/guest/` + `cmd/bbox-init/`, Linux only — runs inside the microVM):
+- `internal/guest/homefs/` — Writable home directory overlay (overlayfs/tmpfs)
+- `cmd/bbox-init/` — Guest PID 1 init binary (compiled Go); boot, mount, network, env, sshd, and reaper logic lives in the go-microvm module under `guest/`
 
 **CLI + Composition Root** (`cmd/`):
 - `cmd/bbox/main.go` — Composition root, wires dependencies, Cobra CLI

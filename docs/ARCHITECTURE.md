@@ -266,10 +266,18 @@ bbox claude-code
    Diff → Review → Flush (if snapshot enabled) → Cleanup
 ```
 
-## Guest Layer (`internal/guest/`)
+## Guest Layer (`internal/guest/` + go-microvm `guest/`)
 
 Code that runs inside the microVM (Linux only, compiled into
-`cmd/bbox-init/`):
+`cmd/bbox-init/`).
+
+**In this repo** (`internal/guest/`):
+
+- **`homefs/`** -- Writable home directory overlay. Detects virtiofs
+  read-only issue and mounts overlayfs (tmpfs upper + virtiofs lower)
+  or tmpfs fallback. Probes writability as sandbox user.
+
+**In go-microvm** (`github.com/stacklok/go-microvm/guest/`):
 
 - **`boot/`** -- Orchestrates guest startup: mount filesystems,
   configure networking, mount workspace, load env, start SSH server.
