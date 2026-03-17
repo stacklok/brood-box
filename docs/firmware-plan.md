@@ -12,7 +12,7 @@
 1) **Versioned firmware cache directory**
 - Add `firmwareCacheDir()` (XDG-aware): `~/.cache/broodbox/firmware`.
 - Store firmware in versioned subdirs:
-  `~/.cache/broodbox/firmware/<propolis-version>/<os>-<arch>/`.
+  `~/.cache/broodbox/firmware/<go-microvm-version>/<os>-<arch>/`.
 - Write `firmware.json` manifest in that directory with:
   `version`, `os`, `arch`, `source` (`download` or `system`), `url` (if download), `timestamp`.
 
@@ -23,7 +23,7 @@
 
 3) **Runtime download (preferred)**
 - Download firmware via raw HTTPS:
-  `https://github.com/stacklok/propolis/releases/download/<version>/propolis-firmware-<os>-<arch>.tar.gz`.
+  `https://github.com/stacklok/go-microvm/releases/download/<version>/go-microvm-firmware-<os>-<arch>.tar.gz`.
 - Use Go `net/http` with timeouts.
 - Extract tar.gz into the versioned firmware cache directory.
 - Validate that `libkrunfw.*` exists.
@@ -42,7 +42,7 @@
 
 6) **Wire firmware source**
 - Resolve firmware directory first, then pass `WithFirmwareSource(extract.Dir(dir))`.
-- Keep embedded runtime for `propolis-runner` + `libkrun` intact.
+- Keep embedded runtime for `go-microvm-runner` + `libkrun` intact.
 
 7) **Remove firmware embedding**
 - Stop embedding `libkrunfw` bytes in `embed_runtime` builds.

@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/stacklok/propolis/image"
+	"github.com/stacklok/go-microvm/image"
 
 	domaingit "github.com/stacklok/brood-box/pkg/domain/git"
 )

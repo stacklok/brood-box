@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/stacklok/brood-box/internal/guest/homefs"
-	"github.com/stacklok/propolis/guest/boot"
-	"github.com/stacklok/propolis/guest/harden"
-	"github.com/stacklok/propolis/guest/reaper"
-	"github.com/stacklok/propolis/guest/vmconfig"
+	"github.com/stacklok/go-microvm/guest/boot"
+	"github.com/stacklok/go-microvm/guest/harden"
+	"github.com/stacklok/go-microvm/guest/reaper"
+	"github.com/stacklok/go-microvm/guest/vmconfig"
 )
 
 // lockPath is used to ensure only one bbox-init instance runs.

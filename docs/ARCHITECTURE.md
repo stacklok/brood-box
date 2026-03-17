@@ -23,7 +23,7 @@ pkg/domain/git/     pkg/domain/hostservice/ pkg/domain/progress/
    │    ┌────────────────┬────────────────┬──────────────┐
     ▼    ▼                ▼                ▼              ▼
 infra/vm/         infra/ssh/        infra/config/   infra/agent/
-(propolis)        (PTY terminal)    (YAML loader)   (built-in registry)
+(go-microvm)      (PTY terminal)    (YAML loader)   (built-in registry)
 infra/exclude/    infra/workspace/  infra/diff/     infra/review/
 (pattern match)   (COW cloning)     (SHA-256 diff)  (reviewer+flusher)
 infra/git/        infra/mcp/        infra/terminal/ infra/progress/
@@ -33,7 +33,7 @@ infra/logging/
 
 guest/boot/  guest/mount/  guest/network/  guest/env/  guest/sshd/  guest/reaper/
    (guest VM packages — Linux only, runs inside microVM)
-   (note: these live in github.com/stacklok/propolis under guest/)
+   (note: these live in github.com/stacklok/go-microvm under guest/)
 ```
 
 ### Domain Layer (`pkg/domain/`)
@@ -94,7 +94,7 @@ The `SandboxRunner` orchestrates the full lifecycle:
 11. Cleanup snapshot
 
 All dependencies are injected via the `SandboxDeps` struct. The
-orchestrator has no direct dependency on propolis, SSH libraries, or
+orchestrator has no direct dependency on go-microvm, SSH libraries, or
 the filesystem — only on domain interfaces. The `SandboxConfig` type
 narrows the config surface so SDK consumers don't need the full CLI
 config schema.
@@ -103,13 +103,13 @@ config schema.
 
 Concrete implementations of domain interfaces and system integration.
 
-- **`vm/runner.go`** -- `PropolisRunner` implements `VMRunner` using
-  `propolis.Run()` with options for ports, virtio-fs, rootfs hooks,
+- **`vm/runner.go`** -- `MicroVMRunner` implements `VMRunner` using
+  `microvm.Run()` with options for ports, virtio-fs, rootfs hooks,
   init override, and post-boot SSH readiness check.
 - **`vm/hooks.go`** -- `RootFSHook` factories: `InjectInitBinary`
   (writes the compiled Go init binary) and `InjectMCPConfig` (writes
   agent-specific MCP config files). SSH keys, env files, and git
-  config are injected by the runner directly via propolis options.
+  config are injected by the runner directly via microvm options.
 - **`ssh/terminal.go`** -- `InteractiveSession` implements PTY-forwarded
   SSH sessions with raw terminal mode, SIGWINCH handling, and context
   cancellation support.
@@ -152,7 +152,7 @@ Concrete implementations of domain interfaces and system integration.
 Wires all concrete implementations together:
 
 - Creates the agent registry and registers custom agents from config
-- Creates `PropolisRunner`, `InteractiveSession`, `Loader`, `OSEnvProvider`
+- Creates `MicroVMRunner`, `InteractiveSession`, `Loader`, `OSEnvProvider`
 - Injects everything into `SandboxRunner`
 - Cobra CLI with positional agent name arg and flags
 - Signal handling (SIGINT/SIGTERM) via `signal.NotifyContext`
@@ -198,7 +198,7 @@ type SandboxDeps struct {
 }
 
 // Infra provides implementations
-// vm.PropolisRunner implements vm.VMRunner
+// vm.MicroVMRunner implements vm.VMRunner
 // ssh.InteractiveSession implements session.TerminalSession
 // agent.Registry implements agent.Registry
 ```
@@ -215,7 +215,7 @@ bbox claude-code
    Create workspace snapshot (if review enabled)
         │
         ▼
-   Pull OCI image (propolis handles caching)
+   Pull OCI image (go-microvm handles caching)
         │
         ▼
    Extract rootfs from layers
@@ -224,7 +224,7 @@ bbox claude-code
    Run rootfs hooks:
      1. InjectInitBinary → /bbox-init (compiled Go binary)
      2. InjectMCPConfig  → agent-specific MCP config (if MCP enabled)
-   Propolis options inject:
+   go-microvm options inject:
      - SSH keys          → /home/sandbox/.ssh/authorized_keys
      - Env file          → /etc/sandbox-env
      - Git config        → /home/sandbox/.gitconfig
@@ -236,7 +236,7 @@ bbox claude-code
    Start networking (in-process, gvisor-tap-vsock)
         │
         ▼
-   Spawn propolis-runner (libkrun microVM)
+   Spawn go-microvm-runner (libkrun microVM)
         │
         ▼
    Guest boots (/bbox-init as PID 1):
@@ -323,19 +323,19 @@ Inside the VM:
   widen). The `custom` profile is global/CLI only — workspace config
   cannot set it.
 
-## Relationship to Propolis
+## Relationship to go-microvm
 
-Brood Box is a consumer of the [propolis](https://github.com/stacklok/propolis)
-library. It depends on propolis as a tagged module in `go.mod` (e.g.
-`github.com/stacklok/propolis v0.0.16`). The `task build` command downloads
-pre-built propolis runtime artifacts from the matching GitHub release and
+Brood Box is a consumer of the [go-microvm](https://github.com/stacklok/go-microvm)
+library. It depends on go-microvm as a tagged module in `go.mod` (e.g.
+`github.com/stacklok/go-microvm v0.0.16`). The `task build` command downloads
+pre-built go-microvm runtime artifacts from the matching GitHub release and
 embeds them into the `bbox` binary.
 
-### Propolis APIs Used
+### go-microvm APIs Used
 
 | API | Usage |
 |-----|-------|
-| `propolis.Run()` | Orchestrate the full OCI-to-VM pipeline |
+| `microvm.Run()` | Orchestrate the full OCI-to-VM pipeline |
 | `WithName` | Name the VM `sandbox-<agent>` |
 | `WithCPUs` / `WithMemory` | Set VM resources |
 | `WithPorts` | Forward SSH (host → guest:22) |
@@ -343,7 +343,7 @@ embeds them into the `bbox` binary.
 | `WithRootFSHook` | Inject SSH keys, init binary, env file |
 | `WithInitOverride` | Replace OCI CMD with `/bbox-init` |
 | `WithPostBoot` | Wait for SSH readiness |
-| `WithRunnerPath` | Locate propolis-runner binary |
+| `WithRunnerPath` | Locate go-microvm-runner binary |
 | `ssh.GenerateKeyPair` | Create ephemeral SSH keys |
 | `ssh.GetPublicKeyContent` | Read public key for injection |
 | `ssh.NewClient` | Create SSH client for readiness check |

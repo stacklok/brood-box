@@ -337,7 +337,7 @@ type DefaultsConfig struct {
 
 	// TmpSize is the default /tmp tmpfs size. Accepts human-readable values
 	// like "512m" or "2g". Bare integers are treated as MiB for backward
-	// compatibility. Zero uses the propolis default (256 MiB).
+	// compatibility. Zero uses the go-microvm default (256 MiB).
 	TmpSize ByteSize `yaml:"tmp_size,omitempty"`
 
 	// EgressProfile is the default egress restriction level.

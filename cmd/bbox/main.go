@@ -23,8 +23,8 @@ import (
 
 	"github.com/adrg/xdg"
 	"github.com/spf13/cobra"
-	"github.com/stacklok/propolis/extract"
-	"github.com/stacklok/propolis/image"
+	"github.com/stacklok/go-microvm/extract"
+	"github.com/stacklok/go-microvm/image"
 
 	infraagent "github.com/stacklok/brood-box/internal/infra/agent"
 	infraconfig "github.com/stacklok/brood-box/internal/infra/config"
@@ -529,7 +529,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			infravm.WithRuntimeSource(infraruntime.RuntimeSource()),
 			infravm.WithCacheDir(cacheDir),
 		)
-		logger.Info("using embedded propolis runtime", "version", infraruntime.Version)
+		logger.Info("using embedded go-microvm runtime", "version", infraruntime.Version)
 	}
 
 	// Wire external OCI image cache (unless --no-image-cache is set).
@@ -577,7 +577,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Wire dependencies.
 	deps := sandbox.SandboxDeps{
 		Registry:        registry,
-		VMRunner:        infravm.NewPropolisRunner(logger, vmRunnerOpts...),
+		VMRunner:        infravm.NewMicroVMRunner(logger, vmRunnerOpts...),
 		SessionRunner:   infrassh.NewInteractiveSession(logger),
 		Config:          sandboxCfg,
 		EnvProvider:     agent.NewOSEnvProvider(os.Environ),

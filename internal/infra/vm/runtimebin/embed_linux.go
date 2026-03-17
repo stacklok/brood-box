@@ -8,10 +8,10 @@ package runtimebin
 import (
 	_ "embed"
 
-	"github.com/stacklok/propolis/extract"
+	"github.com/stacklok/go-microvm/extract"
 )
 
-//go:embed propolis-runner
+//go:embed go-microvm-runner
 var runner []byte
 
 //go:embed libkrun.so.1

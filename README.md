@@ -86,7 +86,7 @@ Release binaries are self-contained and do not require `libkrun-devel` or any sy
 task build
 ```
 
-This downloads pre-built propolis runtime artifacts and embeds them into a
+This downloads pre-built go-microvm runtime artifacts and embeds them into a
 self-contained `bbox` binary (pure Go, no CGO). No system `libkrun-devel`
 needed. The binary lands in `bin/`.
 
@@ -341,10 +341,10 @@ Detailed documentation lives in the [`docs/`](docs/) directory:
 ## Building from Source
 
 ```bash
-# Build self-contained bbox (downloads + embeds propolis runtime)
+# Build self-contained bbox (downloads + embeds go-microvm runtime)
 task build
 
-# Build bbox + propolis-runner from system libkrun (requires libkrun-devel)
+# Build bbox + go-microvm-runner from system libkrun (requires libkrun-devel)
 task build-dev-system
 
 # Build guest init binary

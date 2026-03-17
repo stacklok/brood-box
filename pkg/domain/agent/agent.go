@@ -88,7 +88,7 @@ type Agent struct {
 	CredentialPaths []string
 
 	// DefaultTmpSize is the default /tmp tmpfs size in MiB for this agent.
-	// Zero means use the propolis default (256 MiB). Built-in agents default to 512 MiB.
+	// Zero means use the go-microvm default (256 MiB). Built-in agents default to 512 MiB.
 	DefaultTmpSize uint32
 }
 

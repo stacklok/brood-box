@@ -180,7 +180,7 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 	archCandidates := firmwareArchCandidates(arch)
 	var lastErr error
 	for _, candidate := range archCandidates {
-		archiveName := fmt.Sprintf("propolis-firmware-%s-%s.tar.gz", osName, candidate)
+		archiveName := fmt.Sprintf("go-microvm-firmware-%s-%s.tar.gz", osName, candidate)
 		checksum, ok := checksums[archiveName]
 		if !ok {
 			lastErr = fmt.Errorf("no checksum for %s", archiveName)
@@ -328,7 +328,7 @@ func findFirmwareInDirs(dirs, names []string) (string, error) {
 }
 
 func firmwareURL(version, osName, arch string) string {
-	return fmt.Sprintf("https://github.com/stacklok/propolis/releases/download/%s/propolis-firmware-%s-%s.tar.gz", version, osName, arch)
+	return fmt.Sprintf("https://github.com/stacklok/go-microvm/releases/download/%s/go-microvm-firmware-%s-%s.tar.gz", version, osName, arch)
 }
 
 // setGitHubAuth adds a Bearer token to the request if GITHUB_TOKEN or GH_TOKEN
@@ -356,7 +356,7 @@ type releaseResponse struct {
 // fetchReleaseAssets queries the GitHub API to get release asset metadata.
 // Returns a map of asset name → API download URL.
 func fetchReleaseAssets(ctx context.Context, version string) (map[string]string, error) {
-	apiURL := fmt.Sprintf("https://api.github.com/repos/stacklok/propolis/releases/tags/%s", version)
+	apiURL := fmt.Sprintf("https://api.github.com/repos/stacklok/go-microvm/releases/tags/%s", version)
 	return fetchReleaseAssetsFromURL(ctx, apiURL)
 }
 

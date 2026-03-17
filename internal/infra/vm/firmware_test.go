@@ -435,7 +435,7 @@ func TestFetchReleaseAssets(t *testing.T) {
 			name: "happy path",
 			body: `{"assets":[
 				{"name":"sha256sums.txt","url":"https://api.github.com/repos/o/r/releases/assets/1","browser_download_url":"https://github.com/o/r/releases/download/v1/sha256sums.txt"},
-				{"name":"propolis-firmware-linux-amd64.tar.gz","url":"https://api.github.com/repos/o/r/releases/assets/2","browser_download_url":"https://github.com/o/r/releases/download/v1/propolis-firmware-linux-amd64.tar.gz"}
+				{"name":"go-microvm-firmware-linux-amd64.tar.gz","url":"https://api.github.com/repos/o/r/releases/assets/2","browser_download_url":"https://github.com/o/r/releases/download/v1/go-microvm-firmware-linux-amd64.tar.gz"}
 			]}`,
 			status:  http.StatusOK,
 			wantLen: 2,
@@ -817,7 +817,7 @@ func TestFirmwareURL(t *testing.T) {
 	t.Parallel()
 
 	url := firmwareURL("v0.1.0", "linux", "amd64")
-	assert.Equal(t, "https://github.com/stacklok/propolis/releases/download/v0.1.0/propolis-firmware-linux-amd64.tar.gz", url)
+	assert.Equal(t, "https://github.com/stacklok/go-microvm/releases/download/v0.1.0/go-microvm-firmware-linux-amd64.tar.gz", url)
 }
 
 // --- firmwareLibNames tests ---

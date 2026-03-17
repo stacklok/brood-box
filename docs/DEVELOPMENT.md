@@ -11,7 +11,7 @@
 For running VMs:
 - Linux with KVM support, or macOS with Hypervisor.framework (Apple Silicon)
 
-For building propolis-runner from source (optional, `task build-dev-system`):
+For building go-microvm-runner from source (optional, `task build-dev-system`):
 - `libkrun-devel` package installed (Linux) or Homebrew libkrun (macOS)
 
 ## Getting Started
@@ -31,14 +31,14 @@ task verify
 
 | Command | Description |
 |---------|-------------|
-| `task build` | Build self-contained bbox with embedded propolis runtime |
+| `task build` | Build self-contained bbox with embedded go-microvm runtime |
 | `task build-init` | Cross-compile `bbox-init` for guest VM (Linux only) |
 | `task build-dev` | Alias for `task build` (embedded runtime) |
 | `task build-dev-darwin` | Alias for `task build` on macOS |
-| `task build-dev-system` | Build bbox + `bin/propolis-runner` from system libkrun (requires libkrun-devel) |
+| `task build-dev-system` | Build bbox + `bin/go-microvm-runner` from system libkrun (requires libkrun-devel) |
 | `task build-dev-system-darwin` | Same as `build-dev-system` for macOS (requires Homebrew libkrun) |
-| `task fetch-runtime` | Download pre-built propolis runtime from GitHub Release |
-| `task fetch-firmware` | Optional: prefetch propolis firmware (runtime also downloads) |
+| `task fetch-runtime` | Download pre-built go-microvm runtime from GitHub Release |
+| `task fetch-firmware` | Optional: prefetch go-microvm firmware (runtime also downloads) |
 | `task test` | Run tests with race detector |
 | `task test-coverage` | Run tests with coverage report |
 | `task lint` | Run golangci-lint |

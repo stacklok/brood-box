@@ -9,7 +9,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/stacklok/propolis/preflight"
+	"github.com/stacklok/go-microvm/preflight"
 	"golang.org/x/sys/unix"
 )
 

@@ -563,7 +563,7 @@ The agent name doesn't match any built-in or custom agent. Run
 
 Check that:
 - `/dev/kvm` exists and is accessible
-- `propolis-runner` is built and in your PATH (or use `task build-dev`)
+- `go-microvm-runner` is built and in your PATH (or use `task build-dev`)
 - The OCI image exists and is pullable
 
 ### SSH connection refused

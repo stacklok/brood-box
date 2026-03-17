@@ -10,8 +10,8 @@ vars:
     sh: git describe --tags --always --dirty 2>/dev/null || echo "dev"
   COMMIT:
     sh: git rev-parse --short HEAD 2>/dev/null || echo "unknown"
-  PROPOLIS_VERSION:
-    sh: go list -m github.com/stacklok/propolis | awk '{print $2}'
+  GOMICROVM_VERSION:
+    sh: go list -m github.com/stacklok/go-microvm | awk '{print $2}'
   HOST_ARCH:
     sh: uname -m
   HOST_ARCH_ALT:
@@ -35,16 +35,16 @@ vars:
   LDFLAGS_EMBED: >-
     -X github.com/stacklok/brood-box/internal/version.Version={{.VERSION}}
     -X github.com/stacklok/brood-box/internal/version.Commit={{.COMMIT}}
-    -X github.com/stacklok/brood-box/internal/infra/vm/runtimebin.Version={{.PROPOLIS_VERSION}}
+    -X github.com/stacklok/brood-box/internal/infra/vm/runtimebin.Version={{.GOMICROVM_VERSION}}
 
 env:
   GOTOOLCHAIN: auto
 
 # Quick reference:
 #   task build           → Build bbox (pure Go, no CGO)
-#   task build-dev       → Build self-contained bbox with embedded propolis runtime
-#   task fetch-runtime   → Download pre-built propolis runtime from GitHub Release
-#   task fetch-firmware  → Download pre-built propolis firmware from GitHub Release
+#   task build-dev       → Build self-contained bbox with embedded go-microvm runtime
+#   task fetch-runtime   → Download pre-built go-microvm runtime from GitHub Release
+#   task fetch-firmware  → Download pre-built go-microvm firmware from GitHub Release
 #   task test            → Run tests with race detector
 #   task lint            → Run linter
 #   task verify          → fmt + lint + test
@@ -74,7 +74,7 @@ tasks:
       - internal/infra/vm/initbin/bbox-init
 
   build:
-    desc: Build self-contained bbox with embedded propolis runtime
+    desc: Build self-contained bbox with embedded go-microvm runtime
     deps: [build-init, fetch-runtime]
     env:
       CGO_ENABLED: "0"
@@ -89,46 +89,46 @@ tasks:
       - bin/{{.BINARY_NAME}}
 
   build-dev:
-    desc: Build self-contained bbox with embedded propolis runtime (alias)
+    desc: Build self-contained bbox with embedded go-microvm runtime (alias)
     platforms: [linux]
     cmds:
       - task: build
 
   build-dev-darwin:
-    desc: Build self-contained bbox with embedded propolis runtime (alias)
+    desc: Build self-contained bbox with embedded go-microvm runtime (alias)
     platforms: [darwin]
     cmds:
       - task: build
 
   build-dev-system:
-    desc: Build bbox + propolis-runner from system libkrun (requires libkrun-devel)
+    desc: Build bbox + go-microvm-runner from system libkrun (requires libkrun-devel)
     platforms: [linux]
     cmds:
       - task: build
       - mkdir -p bin
-      - CGO_ENABLED=1 go build -o bin/propolis-runner github.com/stacklok/propolis/runner/cmd/propolis-runner
+      - CGO_ENABLED=1 go build -o bin/go-microvm-runner github.com/stacklok/go-microvm/runner/cmd/go-microvm-runner
 
   build-dev-system-darwin:
-    desc: Build bbox + propolis-runner from system libkrun (macOS, requires Homebrew libkrun)
+    desc: Build bbox + go-microvm-runner from system libkrun (macOS, requires Homebrew libkrun)
     platforms: [darwin]
     cmds:
       - task: build
       - mkdir -p bin
-      - CGO_ENABLED=1 go build -o bin/propolis-runner github.com/stacklok/propolis/runner/cmd/propolis-runner
-      - codesign --entitlements assets/entitlements.plist --force -s - bin/propolis-runner
+      - CGO_ENABLED=1 go build -o bin/go-microvm-runner github.com/stacklok/go-microvm/runner/cmd/go-microvm-runner
+      - codesign --entitlements assets/entitlements.plist --force -s - bin/go-microvm-runner
 
   fetch-runtime:
-    desc: Download pre-built propolis runtime from GitHub Release
+    desc: Download pre-built go-microvm runtime from GitHub Release
     status:
-      - test -f internal/infra/vm/runtimebin/propolis-runner
+      - test -f internal/infra/vm/runtimebin/go-microvm-runner
     cmds:
       - |
         mkdir -p internal/infra/vm/runtimebin
-        gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis --dir internal/infra/vm/runtimebin/ --clobber --pattern 'propolis-runtime-*.tar.gz'
+        gh release download {{.GOMICROVM_VERSION}} --repo stacklok/go-microvm --dir internal/infra/vm/runtimebin/ --clobber --pattern 'go-microvm-runtime-*.tar.gz'
         archive=""
         for os in "{{.HOST_OS}}" "{{.HOST_OS_ALT}}"; do
           for arch in "{{.HOST_ARCH}}" "{{.HOST_ARCH_ALT}}"; do
-            candidate="internal/infra/vm/runtimebin/propolis-runtime-${os}-${arch}.tar.gz"
+            candidate="internal/infra/vm/runtimebin/go-microvm-runtime-${os}-${arch}.tar.gz"
             if [ -f "$candidate" ]; then
               archive="$candidate"
               break 2
@@ -137,24 +137,24 @@ tasks:
         done
         if [ -z "$archive" ]; then
           echo "no runtime archive found in internal/infra/vm/runtimebin"
-          ls -1 internal/infra/vm/runtimebin/propolis-runtime-*.tar.gz || true
+          ls -1 internal/infra/vm/runtimebin/go-microvm-runtime-*.tar.gz || true
           exit 1
         fi
         tar -xzf "$archive" -C internal/infra/vm/runtimebin/ --strip-components=1
-        rm -f internal/infra/vm/runtimebin/propolis-runtime-*.tar.gz
+        rm -f internal/infra/vm/runtimebin/go-microvm-runtime-*.tar.gz
 
   fetch-firmware:
-    desc: Download pre-built propolis firmware from GitHub Release
+    desc: Download pre-built go-microvm firmware from GitHub Release
     status:
       - ls internal/infra/vm/runtimebin/libkrunfw.* 1>/dev/null 2>&1
     cmds:
       - |
         mkdir -p internal/infra/vm/runtimebin
-        gh release download {{.PROPOLIS_VERSION}} --repo stacklok/propolis --dir internal/infra/vm/runtimebin/ --clobber --pattern 'propolis-firmware-*.tar.gz'
+        gh release download {{.GOMICROVM_VERSION}} --repo stacklok/go-microvm --dir internal/infra/vm/runtimebin/ --clobber --pattern 'go-microvm-firmware-*.tar.gz'
         archive=""
         for os in "{{.HOST_OS}}" "{{.HOST_OS_ALT}}"; do
           for arch in "{{.HOST_ARCH}}" "{{.HOST_ARCH_ALT}}"; do
-            candidate="internal/infra/vm/runtimebin/propolis-firmware-${os}-${arch}.tar.gz"
+            candidate="internal/infra/vm/runtimebin/go-microvm-firmware-${os}-${arch}.tar.gz"
             if [ -f "$candidate" ]; then
               archive="$candidate"
               break 2
@@ -163,11 +163,11 @@ tasks:
         done
         if [ -z "$archive" ]; then
           echo "no firmware archive found in internal/infra/vm/runtimebin"
-          ls -1 internal/infra/vm/runtimebin/propolis-firmware-*.tar.gz || true
+          ls -1 internal/infra/vm/runtimebin/go-microvm-firmware-*.tar.gz || true
           exit 1
         fi
         tar -xzf "$archive" -C internal/infra/vm/runtimebin/ --strip-components=1
-        rm -f internal/infra/vm/runtimebin/propolis-firmware-*.tar.gz
+        rm -f internal/infra/vm/runtimebin/go-microvm-firmware-*.tar.gz
 
   test:
     desc: Run unit tests
@@ -229,7 +229,7 @@ tasks:
       - rm -rf bin/
       - rm -f coverage.out coverage.html
       - rm -f internal/infra/vm/initbin/bbox-init
-      - rm -f internal/infra/vm/runtimebin/propolis-runner
+      - rm -f internal/infra/vm/runtimebin/go-microvm-runner
       - rm -f internal/infra/vm/runtimebin/libkrun.so.1 internal/infra/vm/runtimebin/libkrun.1.dylib
       - rm -f internal/infra/vm/runtimebin/libkrunfw.so.5 internal/infra/vm/runtimebin/libkrunfw.5.dylib
       - rm -f internal/infra/vm/runtimebin/libepoxy.0.dylib internal/infra/vm/runtimebin/libvirglrenderer.1.dylib internal/infra/vm/runtimebin/libMoltenVK.dylib

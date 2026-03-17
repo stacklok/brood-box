@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-// Package vm provides the propolis-backed VM runner implementation.
+// Package vm provides the go-microvm-backed VM runner implementation.
 package vm
 
 import (
@@ -15,25 +15,25 @@ import (
 
 	"golang.org/x/crypto/ssh"
 
-	"github.com/stacklok/propolis"
-	"github.com/stacklok/propolis/extract"
-	"github.com/stacklok/propolis/hooks"
-	"github.com/stacklok/propolis/hypervisor/libkrun"
-	"github.com/stacklok/propolis/image"
-	"github.com/stacklok/propolis/net/hosted"
-	"github.com/stacklok/propolis/net/topology"
-	propolisssh "github.com/stacklok/propolis/ssh"
+	microvm "github.com/stacklok/go-microvm"
+	"github.com/stacklok/go-microvm/extract"
+	"github.com/stacklok/go-microvm/hooks"
+	"github.com/stacklok/go-microvm/hypervisor/libkrun"
+	"github.com/stacklok/go-microvm/image"
+	"github.com/stacklok/go-microvm/net/hosted"
+	"github.com/stacklok/go-microvm/net/topology"
+	microvmssh "github.com/stacklok/go-microvm/ssh"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 	domvm "github.com/stacklok/brood-box/pkg/domain/vm"
 )
 
-// Ensure PropolisRunner implements domvm.VMRunner at compile time.
-var _ domvm.VMRunner = (*PropolisRunner)(nil)
+// Ensure MicroVMRunner implements domvm.VMRunner at compile time.
+var _ domvm.VMRunner = (*MicroVMRunner)(nil)
 
-// PropolisRunner implements VMRunner using the propolis library.
-type PropolisRunner struct {
+// MicroVMRunner implements VMRunner using the go-microvm library.
+type MicroVMRunner struct {
 	runnerPath      string
 	libDir          string
 	runtimeSource   extract.Source
@@ -45,60 +45,60 @@ type PropolisRunner struct {
 }
 
 // RunnerOption configures a PropolisRunner.
-type RunnerOption func(*PropolisRunner)
+type RunnerOption func(*MicroVMRunner)
 
-// WithRunnerPath sets an explicit path to the propolis-runner binary.
+// WithRunnerPath sets an explicit path to the go-microvm-runner binary.
 func WithRunnerPath(p string) RunnerOption {
-	return func(r *PropolisRunner) { r.runnerPath = p }
+	return func(r *MicroVMRunner) { r.runnerPath = p }
 }
 
 // WithLibDir sets the directory containing bundled shared libraries
-// (e.g. Homebrew libkrun). Propolis passes this as DYLD_LIBRARY_PATH
+// (e.g. Homebrew libkrun). go-microvm passes this as DYLD_LIBRARY_PATH
 // or LD_LIBRARY_PATH to the runner subprocess.
 func WithLibDir(d string) RunnerOption {
-	return func(r *PropolisRunner) { r.libDir = d }
+	return func(r *MicroVMRunner) { r.libDir = d }
 }
 
-// WithRuntimeSource sets an extract.Source providing propolis-runner and libkrun.
+// WithRuntimeSource sets an extract.Source providing go-microvm-runner and libkrun.
 // Mutually exclusive with WithRunnerPath and WithLibDir.
 func WithRuntimeSource(src extract.Source) RunnerOption {
-	return func(r *PropolisRunner) { r.runtimeSource = src }
+	return func(r *MicroVMRunner) { r.runtimeSource = src }
 }
 
 // WithFirmwareSource sets an extract.Source providing libkrunfw.
 func WithFirmwareSource(src extract.Source) RunnerOption {
-	return func(r *PropolisRunner) { r.firmwareSource = src }
+	return func(r *MicroVMRunner) { r.firmwareSource = src }
 }
 
 // WithCacheDir sets the cache directory for bundle-based extract.Sources.
 func WithCacheDir(dir string) RunnerOption {
-	return func(r *PropolisRunner) { r.cacheDir = dir }
+	return func(r *MicroVMRunner) { r.cacheDir = dir }
 }
 
 // WithCredentialStore sets the credential store used to inject saved
 // agent credentials into the guest rootfs before boot.
 func WithCredentialStore(store credential.Store) RunnerOption {
-	return func(r *PropolisRunner) { r.credentialStore = store }
+	return func(r *MicroVMRunner) { r.credentialStore = store }
 }
 
 // WithImageCacheDir sets a shared OCI image cache directory. When set, the
 // image cache is externalized from the per-VM data directory, surviving
 // across VM restarts and enabling sub-second warm starts via COW cloning.
 func WithImageCacheDir(dir string) RunnerOption {
-	return func(r *PropolisRunner) { r.imageCacheDir = dir }
+	return func(r *MicroVMRunner) { r.imageCacheDir = dir }
 }
 
-// NewPropolisRunner creates a VMRunner backed by propolis.
-func NewPropolisRunner(logger *slog.Logger, opts ...RunnerOption) *PropolisRunner {
-	r := &PropolisRunner{logger: logger}
+// NewMicroVMRunner creates a VMRunner backed by go-microvm.
+func NewMicroVMRunner(logger *slog.Logger, opts ...RunnerOption) *MicroVMRunner {
+	r := &MicroVMRunner{logger: logger}
 	for _, o := range opts {
 		o(r)
 	}
 	return r
 }
 
-// Start boots a microVM using propolis.
-func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM, error) {
+// Start boots a microVM using go-microvm.
+func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM, error) {
 	r.logger.Info("starting sandbox VM",
 		"name", cfg.Name,
 		"image", cfg.Image,
@@ -120,29 +120,29 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		return nil, fmt.Errorf("creating ssh key dir: %w", err)
 	}
 
-	privKeyPath, pubKeyPath, err := propolisssh.GenerateKeyPair(keyDir)
+	privKeyPath, pubKeyPath, err := microvmssh.GenerateKeyPair(keyDir)
 	if err != nil {
 		_ = os.RemoveAll(keyDir)
 		return nil, fmt.Errorf("generating ssh key pair: %w", err)
 	}
 
-	pubKey, err := propolisssh.GetPublicKeyContent(pubKeyPath)
+	pubKey, err := microvmssh.GetPublicKeyContent(pubKeyPath)
 	if err != nil {
 		_ = os.RemoveAll(keyDir)
 		return nil, fmt.Errorf("reading public key: %w", err)
 	}
 
 	// Generate host key pair for host key pinning.
-	hostKeyPEM, hostPubKey, err := propolisssh.GenerateHostKeyPair()
+	hostKeyPEM, hostPubKey, err := microvmssh.GenerateHostKeyPair()
 	if err != nil {
 		_ = os.RemoveAll(keyDir)
 		return nil, fmt.Errorf("generating host key pair: %w", err)
 	}
 
 	// Resolve SSH port. When 0, pick a free ephemeral port up front so
-	// we know the actual port before propolis starts. The runner inside
-	// propolis would also bind :0, but it never reports the resolved
-	// port back — so we reserve one ourselves and pass the concrete value.
+	// we know the actual port before the VM starts. The runner would
+	// also bind :0, but it never reports the resolved port back — so
+	// we reserve one ourselves and pass the concrete value.
 	sshPort := cfg.SSHPort
 	if sshPort == 0 {
 		picked, pickErr := pickFreePort()
@@ -154,29 +154,29 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		r.logger.Info("picked ephemeral SSH port", "port", sshPort)
 	}
 
-	// Build propolis options.
-	opts := []propolis.Option{
-		propolis.WithName(cfg.Name),
-		propolis.WithDataDir(dataDir),
-		propolis.WithPreflightChecker(buildPreflightChecker(dataDir)),
-		propolis.WithCleanDataDir(),
-		propolis.WithCPUs(cfg.CPUs),
-		propolis.WithMemory(cfg.Memory),
-		propolis.WithLogLevel(cfg.LogLevel),
-		propolis.WithTmpSize(cfg.TmpSizeMiB),
-		propolis.WithPorts(propolis.PortForward{Host: sshPort, Guest: 22}),
-		propolis.WithRootFSHook(
+	// Build microvm options.
+	opts := []microvm.Option{
+		microvm.WithName(cfg.Name),
+		microvm.WithDataDir(dataDir),
+		microvm.WithPreflightChecker(buildPreflightChecker(dataDir)),
+		microvm.WithCleanDataDir(),
+		microvm.WithCPUs(cfg.CPUs),
+		microvm.WithMemory(cfg.Memory),
+		microvm.WithLogLevel(cfg.LogLevel),
+		microvm.WithTmpSize(cfg.TmpSizeMiB),
+		microvm.WithPorts(microvm.PortForward{Host: sshPort, Guest: 22}),
+		microvm.WithRootFSHook(
 			hooks.InjectAuthorizedKeys(pubKey),
 			hooks.InjectFile("/etc/ssh/ssh_host_ecdsa_key", hostKeyPEM, 0o600),
 			InjectInitBinary(),
 			hooks.InjectEnvFile("/etc/sandbox-env", cfg.EnvVars),
 			InjectGitConfig(cfg.GitIdentity, cfg.HasGitToken, bestEffortLchown),
 		),
-		propolis.WithInitOverride("/bbox-init"),
-		propolis.WithPostBoot(func(ctx context.Context, _ *propolis.VM) error {
+		microvm.WithInitOverride("/bbox-init"),
+		microvm.WithPostBoot(func(ctx context.Context, _ *microvm.VM) error {
 			r.logger.Debug("waiting for SSH", "port", sshPort)
-			client := propolisssh.NewClient("127.0.0.1", sshPort, "sandbox", privKeyPath,
-				propolisssh.WithHostKey(hostPubKey),
+			client := microvmssh.NewClient("127.0.0.1", sshPort, "sandbox", privKeyPath,
+				microvmssh.WithHostKey(hostPubKey),
 			)
 			start := time.Now()
 			if err := client.WaitForReady(ctx); err != nil {
@@ -193,7 +193,7 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 
 	// Register hosted services on a custom network provider so they are
 	// reachable from the guest at http://192.168.127.1:<port>/.
-	// This must happen before the egress policy is set because propolis
+	// This must happen before the egress policy is set because go-microvm
 	// will auto-create a hosted.Provider if netProvider is nil.
 	if len(cfg.HostServices) > 0 {
 		provider := hosted.NewProvider()
@@ -203,7 +203,7 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 				Handler: svc.Handler,
 			})
 		}
-		opts = append(opts, propolis.WithNetProvider(provider))
+		opts = append(opts, microvm.WithNetProvider(provider))
 
 		r.logger.Info("registered hosted services",
 			"count", len(cfg.HostServices),
@@ -212,29 +212,29 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 
 	// Add egress policy if specified.
 	if cfg.EgressPolicy != nil {
-		hosts := make([]propolis.EgressHost, len(cfg.EgressPolicy.AllowedHosts))
+		hosts := make([]microvm.EgressHost, len(cfg.EgressPolicy.AllowedHosts))
 		for i, h := range cfg.EgressPolicy.AllowedHosts {
-			hosts[i] = propolis.EgressHost{
+			hosts[i] = microvm.EgressHost{
 				Name:     h.Name,
 				Ports:    h.Ports,
 				Protocol: h.Protocol,
 			}
 		}
-		opts = append(opts, propolis.WithEgressPolicy(propolis.EgressPolicy{
+		opts = append(opts, microvm.WithEgressPolicy(microvm.EgressPolicy{
 			AllowedHosts: hosts,
 		}))
 	}
 
 	// Add credential injection hook if store and paths are configured.
 	if r.credentialStore != nil && len(cfg.CredentialPaths) > 0 {
-		opts = append(opts, propolis.WithRootFSHook(
+		opts = append(opts, microvm.WithRootFSHook(
 			InjectCredentials(r.credentialStore, cfg.AgentName, cfg.CredentialPaths),
 		))
 	}
 
 	// Add MCP config injection hook if host services and agent format are set.
 	if len(cfg.HostServices) > 0 && cfg.MCPConfigFormat != "" && cfg.MCPConfigFormat != agent.MCPConfigFormatNone {
-		opts = append(opts, propolis.WithRootFSHook(
+		opts = append(opts, microvm.WithRootFSHook(
 			InjectMCPConfig(cfg.MCPConfigFormat, topology.GatewayIP, cfg.HostServices[0].Port, bestEffortLchown),
 		))
 	}
@@ -261,13 +261,13 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 	// with EPERM when host GID != guest GID.
 	backendOpts = append(backendOpts, libkrun.WithUserNamespaceUID(sandboxUID, sandboxGID))
 	if len(backendOpts) > 0 {
-		opts = append(opts, propolis.WithBackend(libkrun.NewBackend(backendOpts...)))
+		opts = append(opts, microvm.WithBackend(libkrun.NewBackend(backendOpts...)))
 	}
 
 	// Use external image cache when configured. WithImageCache sets
 	// an internal flag so option ordering with WithDataDir is irrelevant.
 	if r.imageCacheDir != "" {
-		opts = append(opts, propolis.WithImageCache(image.NewCache(r.imageCacheDir)))
+		opts = append(opts, microvm.WithImageCache(image.NewCache(r.imageCacheDir)))
 	}
 
 	// Add workspace mount if specified.
@@ -276,15 +276,15 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 		if err != nil {
 			return nil, fmt.Errorf("resolving workspace path: %w", err)
 		}
-		opts = append(opts, propolis.WithVirtioFS(propolis.VirtioFSMount{
+		opts = append(opts, microvm.WithVirtioFS(microvm.VirtioFSMount{
 			Tag:      "workspace",
 			HostPath: absPath,
 		}))
 	}
 
-	// Run propolis.
+	// Run microvm.
 	start := time.Now()
-	pvm, err := propolis.Run(ctx, cfg.Image, opts...)
+	pvm, err := microvm.Run(ctx, cfg.Image, opts...)
 	if err != nil {
 		// Clean up SSH keys on failure.
 		_ = os.RemoveAll(keyDir)
@@ -292,7 +292,7 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 	}
 	r.logger.Debug("sandbox VM started", "elapsed", time.Since(start))
 
-	return &propolisVM{
+	return &microvmVM{
 		vm:         pvm,
 		sshPort:    sshPort,
 		sshKeyPath: privKeyPath,
@@ -302,9 +302,9 @@ func (r *PropolisRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.V
 	}, nil
 }
 
-// propolisVM wraps a propolis.VM to implement our VM interface.
-type propolisVM struct {
-	vm         *propolis.VM
+// microvmVM wraps a microvm.VM to implement our VM interface.
+type microvmVM struct {
+	vm         *microvm.VM
 	sshPort    uint16
 	sshKeyPath string
 	sshKeyDir  string
@@ -312,7 +312,7 @@ type propolisVM struct {
 	logger     *slog.Logger
 }
 
-func (v *propolisVM) Stop(ctx context.Context) error {
+func (v *microvmVM) Stop(ctx context.Context) error {
 	v.logger.Info("stopping sandbox VM")
 	err := v.vm.Remove(ctx)
 	// Clean up ephemeral SSH keys regardless of stop outcome.
@@ -323,23 +323,23 @@ func (v *propolisVM) Stop(ctx context.Context) error {
 	return nil
 }
 
-func (v *propolisVM) SSHPort() uint16 {
+func (v *microvmVM) SSHPort() uint16 {
 	return v.sshPort
 }
 
-func (v *propolisVM) DataDir() string {
+func (v *microvmVM) DataDir() string {
 	return v.vm.DataDir()
 }
 
-func (v *propolisVM) SSHKeyPath() string {
+func (v *microvmVM) SSHKeyPath() string {
 	return v.sshKeyPath
 }
 
-func (v *propolisVM) SSHHostKey() ssh.PublicKey {
+func (v *microvmVM) SSHHostKey() ssh.PublicKey {
 	return v.sshHostKey
 }
 
-func (v *propolisVM) RootFSPath() string {
+func (v *microvmVM) RootFSPath() string {
 	return v.vm.RootFSPath()
 }
 
@@ -361,7 +361,7 @@ func VMDataDir(name string) (string, error) {
 
 // pickFreePort asks the kernel for a free TCP port by binding to :0, reading
 // the assigned port, then closing the listener. There is a small TOCTOU window
-// between closing the listener and propolis binding the same port, but in
+// between closing the listener and the VM binding the same port, but in
 // practice this is reliable for localhost ephemeral ports.
 func pickFreePort() (uint16, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

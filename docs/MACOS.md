@@ -1,13 +1,13 @@
 # macOS Support
 
 Brood Box supports macOS on Apple Silicon (M1+) via Hypervisor.framework, using the
-same propolis framework that powers the Linux backend.
+same go-microvm framework that powers the Linux backend.
 
 ## Requirements
 
 - Apple Silicon Mac (M1, M2, M3, M4)
 - macOS 11 (Big Sur) or later
-- [Homebrew](https://brew.sh/) libkrun and libkrunfw (for building propolis-runner)
+- [Homebrew](https://brew.sh/) libkrun and libkrunfw (for building go-microvm-runner)
 - Go 1.26+ (matching `go.mod`)
 - [Task](https://taskfile.dev/) runner
 
@@ -18,13 +18,13 @@ brew tap slp/krun
 brew install libkrun libkrunfw
 ```
 
-This installs the shared libraries that propolis-runner links against via CGO.
+This installs the shared libraries that go-microvm-runner links against via CGO.
 
 ## Building
 
 ### Default build (embedded runtime)
 
-The default build embeds the propolis runtime into `bbox`:
+The default build embeds the go-microvm runtime into `bbox`:
 
 ```bash
 task build
@@ -37,7 +37,7 @@ Firmware (`libkrunfw`) is not embedded. It is downloaded at runtime and cached
 under `~/.cache/broodbox/firmware/`, with a system fallback if the download is
 unavailable.
 
-### System build (bbox + propolis-runner)
+### System build (bbox + go-microvm-runner)
 
 ```bash
 task build-dev-system-darwin
@@ -45,8 +45,8 @@ task build-dev-system-darwin
 
 This:
 1. Builds the `bbox` binary (pure Go)
-2. Builds `propolis-runner` from the pinned propolis module version (CGO, links libkrun)
-3. Code-signs `propolis-runner` with Hypervisor.framework entitlements
+2. Builds `go-microvm-runner` from the pinned go-microvm module version (CGO, links libkrun)
+3. Code-signs `go-microvm-runner` with Hypervisor.framework entitlements
 
 The resulting binaries are in `bin/`.
 
@@ -56,7 +56,7 @@ The resulting binaries are in `bin/`.
 bin/bbox claude-code --workspace /path/to/project
 ```
 
-Propolis auto-discovers `propolis-runner` next to the `bbox` binary (both in `bin/`)
+go-microvm auto-discovers `go-microvm-runner` next to the `bbox` binary (both in `bin/`)
 when using the system build.
 
 ## Platform Differences
@@ -75,11 +75,11 @@ when using the system build.
 
 ### Code signing errors
 
-If you see `EXC_BAD_ACCESS` or `killed` when running propolis-runner, the binary
+If you see `EXC_BAD_ACCESS` or `killed` when running go-microvm-runner, the binary
 likely lacks Hypervisor.framework entitlements:
 
 ```bash
-codesign --entitlements assets/entitlements.plist --force -s - bin/propolis-runner
+codesign --entitlements assets/entitlements.plist --force -s - bin/go-microvm-runner
 ```
 
 The `task build-dev-system-darwin` command does this automatically.
@@ -97,7 +97,7 @@ If this returns 0, your hardware does not support Hypervisor.framework.
 
 ### Library not found errors
 
-If propolis-runner fails to find libkrunfw at runtime, ensure Homebrew libraries are
+If go-microvm-runner fails to find libkrunfw at runtime, ensure Homebrew libraries are
 on the dynamic linker path:
 
 ```bash

@@ -71,7 +71,7 @@ type VMConfig struct {
 	LogLevel uint32
 
 	// TmpSizeMiB is the size of the /tmp tmpfs inside the guest in MiB.
-	// Zero uses the propolis default (256 MiB).
+	// Zero uses the go-microvm default (256 MiB).
 	TmpSizeMiB uint32
 }
 

@@ -11,7 +11,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/stacklok/propolis/preflight"
+	"github.com/stacklok/go-microvm/preflight"
 )
 
 const kvmDevicePath = "/dev/kvm"
