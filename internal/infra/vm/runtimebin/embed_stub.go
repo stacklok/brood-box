@@ -5,7 +5,7 @@
 
 package runtimebin
 
-import "github.com/stacklok/propolis/extract"
+import "github.com/stacklok/go-microvm/extract"
 
 var (
 	runner  []byte

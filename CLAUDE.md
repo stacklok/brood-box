@@ -1,7 +1,7 @@
 # brood-box
 
 CLI tool for running coding agents (Claude Code, Codex, OpenCode) inside hardware-isolated microVMs.
-Wraps the propolis framework with an opinionated CLI.
+Wraps the go-microvm framework with an opinionated CLI.
 
 Module: `github.com/stacklok/brood-box`
 
@@ -10,14 +10,14 @@ Module: `github.com/stacklok/brood-box`
 **IMPORTANT**: ALWAYS use `task <target>` for building, testing, linting, formatting, and running. NEVER invoke `go build`, `go test`, `golangci-lint`, `go fmt`, `goimports`, `docker build`, or `podman build` directly — the Taskfile wraps these with the correct flags, ldflags, env vars, and dependency ordering. Running raw commands will produce incorrect builds or miss steps.
 
 ```bash
-task build                  # Build self-contained bbox with embedded propolis runtime
+task build                  # Build self-contained bbox with embedded go-microvm runtime
 task build-init             # Cross-compile bbox-init for guest VM
 task build-dev              # Alias for task build (Linux)
 task build-dev-darwin       # Alias for task build (macOS)
-task build-dev-system       # Build bbox + propolis-runner from system libkrun (Linux, requires libkrun-devel)
-task build-dev-system-darwin # Build bbox + propolis-runner from system libkrun (macOS, requires Homebrew libkrun)
-task fetch-runtime          # Download pre-built propolis runtime from GitHub Release
-task fetch-firmware         # Optional: prefetch propolis firmware
+task build-dev-system       # Build bbox + go-microvm-runner from system libkrun (Linux, requires libkrun-devel)
+task build-dev-system-darwin # Build bbox + go-microvm-runner from system libkrun (macOS, requires Homebrew libkrun)
+task fetch-runtime          # Download pre-built go-microvm runtime from GitHub Release
+task fetch-firmware         # Optional: prefetch go-microvm firmware
 task test                   # go test -v -race ./...
 task test-coverage          # Run tests with coverage report
 task lint                   # golangci-lint run ./...
@@ -47,17 +47,25 @@ This project follows DDD layered architecture with dependency injection **strict
 
 **Domain** (`pkg/domain/`) — Pure types and interfaces. ZERO I/O, ZERO external dependencies, ZERO side effects. Domain packages define _what_ things are and _what_ operations exist, never _how_ they are performed. Public so external modules can import the shared ubiquitous language:
 - `pkg/domain/agent/` — Agent value object, env forwarding
-- `pkg/domain/config/` — Config types, merge logic
+- `pkg/domain/config/` — Config types, merge logic, ByteSize parsing
 - `pkg/domain/vm/` — VMRunner, VM, VMConfig interfaces
 - `pkg/domain/session/` — TerminalSession interface
 - `pkg/domain/workspace/` — WorkspaceCloner interface, Snapshot type
 - `pkg/domain/snapshot/` — FileChange, ExcludeConfig, Matcher, Differ, Reviewer, Flusher
+- `pkg/domain/credential/` — Store, FileStore, Seeder interfaces
+- `pkg/domain/egress/` — DNS-aware egress Policy, Host, ProfileName, Resolve()
+- `pkg/domain/git/` — Identity, IdentityProvider interface
+- `pkg/domain/hostservice/` — Service, Provider for HTTP services exposed to guest
+- `pkg/domain/progress/` — Phase enum, Observer interface for lifecycle reporting
 
 **Application** (`pkg/sandbox/`) — Orchestration only. Depends on domain interfaces, never on infrastructure. Contains no I/O implementations. Public so library consumers can drive the same SandboxRunner API:
 - `pkg/sandbox/` — SandboxRunner orchestrator (application service), SandboxConfig SDK contract
 
+**Runtime Factory** (`pkg/runtime/`) — Public helper that wires default infrastructure for SDK consumers. Keeps `internal/infra/` private while providing a supported path to construct `SandboxRunner` with standard implementations:
+- `pkg/runtime/` — `NewDefaultSandboxDeps()`, `NewDefaultSandboxRunner()`, exclude matcher builders
+
 **Infrastructure** (`internal/infra/`) — Concrete implementations of domain interfaces. This is the only layer that touches I/O, external libraries, and system calls:
-- `internal/infra/vm/` — Propolis VMRunner implementation, rootfs hooks
+- `internal/infra/vm/` — go-microvm VMRunner implementation, rootfs hooks
 - `internal/infra/ssh/` — Interactive PTY terminal session
 - `internal/infra/config/` — YAML config loader
 - `internal/infra/agent/` — Built-in agent registry
@@ -66,10 +74,16 @@ This project follows DDD layered architecture with dependency injection **strict
 - `internal/infra/workspace/` — COW workspace cloning (FICLONE on Linux, clonefile on macOS, copy fallback)
 - `internal/infra/diff/` — SHA-256 based file diff engine
 - `internal/infra/review/` — Interactive per-file terminal review, auto-accept reviewer, flusher with hash verification
+- `internal/infra/credential/` — FS-based credential store, Claude credential seeder
+- `internal/infra/git/` — Host identity provider, `.git/config` credential sanitizer
+- `internal/infra/logging/` — Custom slog file handler
+- `internal/infra/terminal/` — OS terminal wrapper (raw mode, SIGWINCH)
+- `internal/infra/progress/` — Spinner, simple, and log-based progress observers
+- `internal/infra/process/` — Process management utilities
 
-**Guest VM** (`internal/guest/`, Linux only — runs inside the microVM):
-- `internal/guest/` — Boot, mount, network, env, sshd, reaper packages
-- `cmd/bbox-init/` — Guest PID 1 init binary (compiled Go)
+**Guest VM** (`internal/guest/` + `cmd/bbox-init/`, Linux only — runs inside the microVM):
+- `internal/guest/homefs/` — Writable home directory overlay (overlayfs/tmpfs)
+- `cmd/bbox-init/` — Guest PID 1 init binary (compiled Go); boot, mount, network, env, sshd, and reaper logic lives in the go-microvm module under `guest/`
 
 **CLI + Composition Root** (`cmd/`):
 - `cmd/bbox/main.go` — Composition root, wires dependencies, Cobra CLI
@@ -181,7 +195,7 @@ Three GitHub Actions workflows:
 
 - **CI** (`.github/workflows/ci.yaml`) — Runs on pushes to `main` and PRs. Jobs: test, lint, build (matrix: ubuntu + macOS). Also validates image builds (build-only, no push).
 - **Images** (`.github/workflows/images.yaml`) — Dedicated image build and push. Triggers: weekly schedule (Monday 06:00 UTC), manual dispatch, and pushes to `main` that touch `images/**`. Pushes all guest images (base, claude-code, codex, opencode) as `:latest` to GHCR.
-- **Release** (`.github/workflows/release.yaml`) — Triggered by `v*` tag pushes. Builds `bbox` binaries natively on linux/amd64, linux/arm64, and darwin/arm64 using `task build` (embeds bbox-init + propolis runtime). Packages tarballs, generates SHA-256 checksums, and creates a GitHub Release with auto-generated notes.
+- **Release** (`.github/workflows/release.yaml`) — Triggered by `v*` tag pushes. Builds `bbox` binaries natively on linux/amd64, linux/arm64, and darwin/arm64 using `task build` (embeds bbox-init + go-microvm runtime). Packages tarballs, generates SHA-256 checksums, and creates a GitHub Release with auto-generated notes.
 
 To cut a release:
 ```bash
@@ -193,12 +207,12 @@ Image tagging is `:latest` only — images are not versioned with release tags. 
 
 ## Things That Will Bite You
 
-- **propolis is a tagged dependency**: `go.mod` depends on `github.com/stacklok/propolis` as a versioned module. `build` downloads pre-built propolis runtime artifacts and embeds them — no local checkout or system libkrun needed. Use `build-dev-system` to build propolis-runner from source (requires `libkrun-devel`).
-- **CGO boundary**: Brood Box itself is pure Go (`CGO_ENABLED=0`). The embedded propolis-runner was pre-built with CGO elsewhere — no CGO needed at bbox build time.
+- **go-microvm is a tagged dependency**: `go.mod` depends on `github.com/stacklok/go-microvm` as a versioned module. `build` downloads pre-built go-microvm runtime artifacts and embeds them — no local checkout or system libkrun needed. Use `build-dev-system` to build go-microvm-runner from source (requires `libkrun-devel`).
+- **CGO boundary**: Brood Box itself is pure Go (`CGO_ENABLED=0`). The embedded go-microvm-runner was pre-built with CGO elsewhere — no CGO needed at bbox build time.
 - **`gh` CLI dependency**: `task fetch-runtime` uses the GitHub CLI (`gh`) to download release artifacts. Firmware is downloaded at runtime via HTTPS by default.
 - **Domain purity**: `pkg/domain/` must never import from `internal/infra/` or `pkg/sandbox/`. This is the most important architectural invariant — break it and you break the entire DDD foundation.
 - **Always use `task`**: Never run `go build`, `go test ./...`, `golangci-lint`, `go fmt`, or `goimports` directly. The Taskfile sets critical env vars and flags. Raw commands will silently produce wrong results.
-- **macOS entitlements**: `propolis-runner` must be code-signed with `assets/entitlements.plist` on macOS (Hypervisor.framework requirement). `task build-dev-system-darwin` handles this automatically. On macOS, install libkrun via `brew tap slp/krun && brew install libkrun libkrunfw`.
+- **macOS entitlements**: `go-microvm-runner` must be code-signed with `assets/entitlements.plist` on macOS (Hypervisor.framework requirement). `task build-dev-system-darwin` handles this automatically. On macOS, install libkrun via `brew tap slp/krun && brew install libkrun libkrunfw`.
 
 ## Verification
 

@@ -66,7 +66,7 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 	// Redirect the toolhive zap/slog loggers to the bbox log file so vmcp
 	// diagnostics don't pollute stdout/stderr during the terminal session.
 	// Save and restore the slog default because initToolhiveLogger clobbers
-	// it, and propolis (called later) relies on the broodbox default.
+	// it, and go-microvm (called later) relies on the broodbox default.
 	prevDefault := slog.Default()
 	initToolhiveLogger(p.logWriter)
 	defer slog.SetDefault(prevDefault)
@@ -286,7 +286,7 @@ func (r *statusRecorder) WriteHeader(code int) {
 // vmcp diagnostics don't pollute stdout/stderr during the terminal session.
 // If w is nil, no-op loggers are installed for both.
 //
-// NOTE: this clobbers the broodbox slog default, which means propolis debug
+// NOTE: this clobbers the broodbox slog default, which means go-microvm debug
 // logs (image pull, cache hit, COW clone) are lost. The proper fix is for
 // toolhive to accept an injected *slog.Logger instead of mutating the global.
 // Until that's done, we restore the broodbox logger after Services() returns.

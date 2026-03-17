@@ -128,7 +128,7 @@ func ParseHostFlag(s string) (Host, error) {
 	}
 
 	// Canonicalize to lowercase — DNS is case-insensitive (RFC 4343)
-	// and propolis lowercases at matching time, so we normalize early.
+	// and go-microvm lowercases at matching time, so we normalize early.
 	h := Host{Name: strings.ToLower(host)}
 	if hasPort {
 		port, err := strconv.ParseUint(portStr, 10, 16)

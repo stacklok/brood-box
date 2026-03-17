@@ -86,7 +86,7 @@ Release binaries are self-contained and do not require `libkrun-devel` or any sy
 task build
 ```
 
-This downloads pre-built propolis runtime artifacts and embeds them into a
+This downloads pre-built go-microvm runtime artifacts and embeds them into a
 self-contained `bbox` binary (pure Go, no CGO). No system `libkrun-devel`
 needed. The binary lands in `bin/`.
 
@@ -123,8 +123,8 @@ bbox claude-code --cpus 4 --memory 4096
 # Use a different workspace
 bbox claude-code --workspace /path/to/project
 
-# Disable snapshot isolation (mount workspace directly)
-bbox claude-code --no-review
+# Enable interactive per-file review (snapshot isolation is always active)
+bbox claude-code --review
 
 # Exclude files from snapshot
 bbox claude-code --exclude "*.log" --exclude "tmp/"
@@ -250,9 +250,9 @@ bbox claude-code --allow-host "my-registry.example.com:443"
 
 | Agent | Command | Image | Default Resources |
 |---|---|---|---|
-| Claude Code | `bbox claude-code` | `ghcr.io/stacklok/brood-box/claude-code` | 2 vCPUs, 2 GiB RAM |
-| Codex | `bbox codex` | `ghcr.io/stacklok/brood-box/codex` | 2 vCPUs, 2 GiB RAM |
-| OpenCode | `bbox opencode` | `ghcr.io/stacklok/brood-box/opencode` | 2 vCPUs, 2 GiB RAM |
+| Claude Code | `bbox claude-code` | `ghcr.io/stacklok/brood-box/claude-code` | 2 vCPUs, 4 GiB RAM |
+| Codex | `bbox codex` | `ghcr.io/stacklok/brood-box/codex` | 2 vCPUs, 4 GiB RAM |
+| OpenCode | `bbox opencode` | `ghcr.io/stacklok/brood-box/opencode` | 2 vCPUs, 4 GiB RAM |
 
 You can also define custom agents in your config:
 
@@ -341,10 +341,10 @@ Detailed documentation lives in the [`docs/`](docs/) directory:
 ## Building from Source
 
 ```bash
-# Build self-contained bbox (downloads + embeds propolis runtime)
+# Build self-contained bbox (downloads + embeds go-microvm runtime)
 task build
 
-# Build bbox + propolis-runner from system libkrun (requires libkrun-devel)
+# Build bbox + go-microvm-runner from system libkrun (requires libkrun-devel)
 task build-dev-system
 
 # Build guest init binary

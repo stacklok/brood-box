@@ -6,7 +6,7 @@ package vm
 import (
 	"log/slog"
 
-	"github.com/stacklok/propolis/image"
+	"github.com/stacklok/go-microvm/image"
 
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 )

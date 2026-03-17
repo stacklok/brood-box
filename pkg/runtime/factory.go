@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 
 	"github.com/adrg/xdg"
-	"github.com/stacklok/propolis/extract"
+	"github.com/stacklok/go-microvm/extract"
 
 	infraagent "github.com/stacklok/brood-box/internal/infra/agent"
 	infradiff "github.com/stacklok/brood-box/internal/infra/diff"
@@ -33,7 +33,7 @@ type DefaultSandboxDepsOpts struct {
 	// Logger is used by infra implementations. Defaults to a discard logger.
 	Logger *slog.Logger
 
-	// RunnerPath overrides the propolis runner path (empty uses default lookup).
+	// RunnerPath overrides the go-microvm runner path (empty uses default lookup).
 	RunnerPath string
 
 	// LibDir sets the directory containing bundled shared libraries
@@ -55,7 +55,7 @@ type DefaultSandboxDepsOpts struct {
 	// SnapshotPostProcessors run after snapshot creation but before VM start.
 	SnapshotPostProcessors []domainworkspace.SnapshotPostProcessor
 
-	// RuntimeSource provides embedded propolis-runner and libkrun (optional).
+	// RuntimeSource provides embedded go-microvm-runner and libkrun (optional).
 	RuntimeSource extract.Source
 
 	// FirmwareSource provides libkrunfw (optional).
@@ -117,7 +117,7 @@ func NewDefaultSandboxDeps(opts DefaultSandboxDepsOpts) sandbox.SandboxDeps {
 
 	return sandbox.SandboxDeps{
 		Registry:      infraagent.NewRegistry(),
-		VMRunner:      infravm.NewPropolisRunner(logger, runnerOpts...),
+		VMRunner:      infravm.NewMicroVMRunner(logger, runnerOpts...),
 		SessionRunner: infrassh.NewInteractiveSession(logger),
 		Config:        cfg,
 		EnvProvider:   domainagent.NewOSEnvProvider(os.Environ),

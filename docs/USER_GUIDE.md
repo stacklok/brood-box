@@ -59,12 +59,12 @@ bbox <agent-name> [flags] [-- <agent-args...>]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--cpus` | Agent default (2) | Number of vCPUs for the VM |
-| `--memory` | Agent default (2048) | RAM in MiB |
+| `--memory` | Agent default (4096) | RAM in MiB |
 | `--workspace` | Current directory | Host directory mounted as `/workspace` |
 | `--ssh-port` | Auto-pick | Host port forwarded to guest SSH (port 22) |
 | `--config` | `~/.config/broodbox/config.yaml` | Config file path |
 | `--image` | Agent default | Override the OCI image reference |
-| `--no-review` | `false` | Disable snapshot isolation, mount workspace directly |
+| `--review` | `false` | Enable interactive per-file review of workspace changes (snapshot isolation is always active) |
 | `--exclude` | (none) | Additional gitignore-style exclude patterns (repeatable) |
 | `--egress-profile` | Agent default (`permissive`) | Egress restriction level: `permissive`, `standard`, `locked` |
 | `--allow-host` | (none) | Additional allowed egress DNS hostname[:port] — no IP addresses (repeatable) |
@@ -75,7 +75,13 @@ bbox <agent-name> [flags] [-- <agent-args...>]
 | `--mcp-authz-profile` | `full-access` | MCP authorization profile: `full-access`, `observe`, `safe-tools`, `custom` |
 | `--no-git-token` | `false` | Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM |
 | `--no-git-ssh-agent` | `false` | Disable SSH agent forwarding into the VM |
+| `--no-save-credentials` | `false` | Disable saving agent credentials between sessions |
+| `--seed-credentials` | `false` | Seed agent credentials from host (e.g. macOS Keychain) into the VM |
 | `--no-firmware-download` | `false` | Disable firmware download (use system libkrunfw only) |
+| `--no-image-cache` | `false` | Disable OCI image caching (fresh pull every run) |
+| `--tmp-size` | Agent default (512m) | Size of /tmp tmpfs inside the VM (e.g. `512m`, `2g`) |
+| `--exec` | Agent command | Override the agent command (e.g. `/bin/bash` for debugging) |
+| `--timings` | `false` | Print per-phase timing summary after run |
 | `--log-file` | `~/.config/broodbox/vms/<vm>/broodbox.log` | Override log file path |
 | `--debug` | `false` | Enable debug-level logging to file |
 
@@ -90,6 +96,8 @@ bbox claude-code -- --help
 | Command | Description |
 |---------|-------------|
 | `list` | List all available agents |
+| `auth list` | List agents with saved credentials |
+| `auth clear <agent>` | Remove saved credentials for an agent |
 
 ## What Happens When You Run It
 
@@ -229,13 +237,14 @@ Your workspace ──COW copy──▶ Snapshot directory
                         Accepted changes ──▶ Your workspace
 ```
 
-### Disabling Review
+### Enabling Interactive Review
 
-Pass `--no-review` to mount the workspace directly into the VM with no
-snapshot isolation:
+Snapshot isolation is always active. By default, all changes are
+auto-accepted (with auto-rejection of sensitive auto-exec paths).
+Pass `--review` to interactively approve or reject each changed file:
 
 ```bash
-bbox claude-code --no-review
+bbox claude-code --review
 ```
 
 ### Exclude Patterns
@@ -563,7 +572,7 @@ The agent name doesn't match any built-in or custom agent. Run
 
 Check that:
 - `/dev/kvm` exists and is accessible
-- `propolis-runner` is built and in your PATH (or use `task build-dev`)
+- `go-microvm-runner` is built and in your PATH (or use `task build-dev`)
 - The OCI image exists and is pullable
 
 ### SSH connection refused

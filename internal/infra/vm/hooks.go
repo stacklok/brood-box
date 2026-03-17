@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/stacklok/propolis/image"
+	"github.com/stacklok/go-microvm/image"
 
 	"github.com/stacklok/brood-box/internal/infra/vm/initbin"
 	domainagent "github.com/stacklok/brood-box/pkg/domain/agent"

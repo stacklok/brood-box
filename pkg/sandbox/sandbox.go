@@ -85,6 +85,9 @@ type RunOpts struct {
 	// LogLevel sets the hypervisor log verbosity (0=off, 5=trace).
 	LogLevel uint32
 
+	// TmpSizeMiB overrides the /tmp tmpfs size in MiB (0 = use agent/global default).
+	TmpSizeMiB uint32
+
 	// Terminal provides I/O streams for the session. Required for Run().
 	Terminal session.Terminal
 }
@@ -246,6 +249,9 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	}
 	if opts.Memory > 0 {
 		override.Memory = opts.Memory
+	}
+	if opts.TmpSizeMiB > 0 {
+		override.TmpSize = config.ByteSize(opts.TmpSizeMiB)
 	}
 	if opts.ImageOverride != "" {
 		override.Image = opts.ImageOverride
@@ -449,6 +455,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		SSHAgentForward: opts.SSHAgentForward,
 		CredentialPaths: ag.CredentialPaths,
 		LogLevel:        opts.LogLevel,
+		TmpSizeMiB:      ag.DefaultTmpSize,
 	}
 
 	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)

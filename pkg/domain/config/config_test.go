@@ -758,6 +758,56 @@ func TestMergeConfigs_ResourceBounds(t *testing.T) {
 	}
 }
 
+func TestMergeConfigs_TmpSizeTightenOnly(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		global  *Config
+		local   *Config
+		wantTmp ByteSize
+	}{
+		{
+			name:    "local smaller than global — accepted",
+			global:  &Config{Defaults: DefaultsConfig{TmpSize: 512}},
+			local:   &Config{Defaults: DefaultsConfig{TmpSize: 256}},
+			wantTmp: 256,
+		},
+		{
+			name:    "local larger than global — rejected",
+			global:  &Config{Defaults: DefaultsConfig{TmpSize: 512}},
+			local:   &Config{Defaults: DefaultsConfig{TmpSize: 2048}},
+			wantTmp: 512,
+		},
+		{
+			name:    "local zero does not override global",
+			global:  &Config{Defaults: DefaultsConfig{TmpSize: 512}},
+			local:   &Config{Defaults: DefaultsConfig{}},
+			wantTmp: 512,
+		},
+		{
+			name:    "global zero local sets — accepted",
+			global:  &Config{Defaults: DefaultsConfig{}},
+			local:   &Config{Defaults: DefaultsConfig{TmpSize: 256}},
+			wantTmp: 256,
+		},
+		{
+			name:    "local exceeds MaxTmpSize — clamped",
+			global:  &Config{Defaults: DefaultsConfig{}},
+			local:   &Config{Defaults: DefaultsConfig{TmpSize: MaxTmpSize + 1}},
+			wantTmp: MaxTmpSize,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := MergeConfigs(tt.global, tt.local)
+			assert.Equal(t, tt.wantTmp, got.Defaults.TmpSize, "TmpSize")
+		})
+	}
+}
+
 func TestStricterMCPAuthzProfile(t *testing.T) {
 	t.Parallel()
 
