@@ -365,6 +365,20 @@ func StricterMCPAuthzProfile(a, b string) string {
 	return a
 }
 
+// MCPAgentOverride holds the subset of MCP settings that can be
+// overridden per-agent. Only Enabled (gate) and Authz (tighten-only)
+// have runtime effect at the per-agent level.
+type MCPAgentOverride struct {
+	// Enabled controls whether the MCP proxy is active for this agent.
+	// nil means "no override" (inherit global setting), unlike
+	// MCPConfig.Enabled where nil defaults to true.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// Authz overrides the MCP authorization profile for this agent.
+	// Tighten-only: can only make the profile stricter, not more permissive.
+	Authz *MCPAuthzConfig `yaml:"authz,omitempty"`
+}
+
 // IsEnabled returns whether the MCP proxy is enabled.
 // Defaults to true when Enabled is nil.
 func (m MCPConfig) IsEnabled() bool {
@@ -457,7 +471,8 @@ type AgentOverride struct {
 	AllowHosts []EgressHostConfig `yaml:"allow_hosts,omitempty"`
 
 	// MCP overrides the global MCP proxy settings for this agent.
-	MCP *MCPConfig `yaml:"mcp,omitempty"`
+	// Only Enabled (gate) and Authz (tighten-only) are supported.
+	MCP *MCPAgentOverride `yaml:"mcp,omitempty"`
 
 	// SettingsImport overrides the global settings import for this agent.
 	SettingsImport *SettingsImportConfig `yaml:"settings_import,omitempty"`
@@ -569,13 +584,12 @@ func MergeConfigs(global, local *Config) *Config {
 
 	// MCP.Authz: local can only tighten (not widen). Same security pattern
 	// as egress profiles — a workspace config cannot escalate permissions.
-	result.MCP.Authz = mergeMCPAuthzConfig(global.MCP.Authz, local.MCP.Authz)
+	result.MCP.Authz = MergeMCPAuthzConfig(global.MCP.Authz, local.MCP.Authz)
 
 	// Agents: local extends/overrides global per key.
-	// MCP.Config and MCP.Authz are stripped from local overrides — workspace
-	// config must not inject Cedar policies, aggregation settings, or authz
-	// profiles through per-agent overrides (same security pattern as top-level
-	// MCP.Authz tighten-only and Auth ignore).
+	// Per-agent MCP.Authz uses tighten-only merge: workspace config can only
+	// make the profile stricter, not more permissive. "custom" from workspace
+	// config is blocked by MergeMCPAuthzConfig.
 	if len(local.Agents) > 0 {
 		if result.Agents == nil {
 			result.Agents = make(map[string]AgentOverride)
@@ -588,10 +602,15 @@ func MergeConfigs(global, local *Config) *Config {
 			result.Agents = merged
 		}
 		for k, v := range local.Agents {
-			if v.MCP != nil && (v.MCP.Config != nil || v.MCP.Authz != nil) {
+			if v.MCP != nil && v.MCP.Authz != nil {
+				// Merge local per-agent authz with the global per-agent authz
+				// (if any) using tighten-only semantics.
+				var globalAgentAuthz *MCPAuthzConfig
+				if ga, ok := result.Agents[k]; ok && ga.MCP != nil {
+					globalAgentAuthz = ga.MCP.Authz
+				}
 				sanitized := *v.MCP
-				sanitized.Config = nil
-				sanitized.Authz = nil
+				sanitized.Authz = MergeMCPAuthzConfig(globalAgentAuthz, v.MCP.Authz)
 				v.MCP = &sanitized
 			}
 			result.Agents[k] = v
@@ -690,12 +709,12 @@ func mergeGitConfig(global, local GitConfig) GitConfig {
 	return result
 }
 
-// mergeMCPAuthzConfig merges local into global using tighten-only semantics.
+// MergeMCPAuthzConfig merges local into global using tighten-only semantics.
 // Local can only make the profile stricter, never more permissive.
 // "custom" from local config is silently ignored (security: local config must
 // not be able to switch to operator-controlled Cedar policies).
 // Returns nil when neither side sets an authz config.
-func mergeMCPAuthzConfig(global, local *MCPAuthzConfig) *MCPAuthzConfig {
+func MergeMCPAuthzConfig(global, local *MCPAuthzConfig) *MCPAuthzConfig {
 	if local == nil || local.Profile == "" {
 		return global
 	}

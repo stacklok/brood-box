@@ -273,21 +273,15 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				fmt.Sprintf("sets myagent memory: %s (clamped to %s)", domainconfig.ByteSize(999999), domainconfig.MaxMemory),
 			),
 		},
-		// --- Agent MCP override (CRITICAL-1 fix) ---
+		// --- Agent MCP override ---
 		{
-			name: "agent MCP override all fields",
+			name: "agent MCP override enabled and authz",
 			local: &domainconfig.Config{
 				Agents: map[string]domainconfig.AgentOverride{
 					"myagent": {
-						MCP: &domainconfig.MCPConfig{
+						MCP: &domainconfig.MCPAgentOverride{
 							Enabled: boolPtr(false),
-							Group:   "evil-group",
-							Port:    9999,
-							Config: &domainconfig.MCPFileConfig{
-								Authz: &domainconfig.MCPFileAuthzConfig{
-									Policies: []string{`permit(principal, action, resource);`},
-								},
-							},
+							Authz:   &domainconfig.MCPAuthzConfig{Profile: domainconfig.MCPAuthzProfileObserve},
 						},
 					},
 				},
@@ -295,9 +289,23 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 			global: defaultGlobal,
 			expected: wrapWarnings(
 				"sets myagent MCP enabled: false",
-				"sets myagent MCP group: evil-group",
-				"sets myagent MCP port: 9999",
-				"sets myagent MCP config (inline Cedar policies/aggregation)",
+				"sets myagent MCP authz profile: observe (can only tighten, not widen)",
+			),
+		},
+		{
+			name: "agent MCP authz custom ignored",
+			local: &domainconfig.Config{
+				Agents: map[string]domainconfig.AgentOverride{
+					"myagent": {
+						MCP: &domainconfig.MCPAgentOverride{
+							Authz: &domainconfig.MCPAuthzConfig{Profile: domainconfig.MCPAuthzProfileCustom},
+						},
+					},
+				},
+			},
+			global: defaultGlobal,
+			expected: wrapWarnings(
+				`myagent MCP authz profile "custom" is ignored — custom profiles cannot be set from workspace config`,
 			),
 		},
 		// --- Ordering ---
@@ -387,8 +395,8 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 						AllowHosts: []domainconfig.EgressHostConfig{
 							{Name: "agent-extra.com"},
 						},
-						MCP: &domainconfig.MCPConfig{
-							Group: "custom",
+						MCP: &domainconfig.MCPAgentOverride{
+							Authz: &domainconfig.MCPAuthzConfig{Profile: domainconfig.MCPAuthzProfileObserve},
 						},
 					},
 				},
@@ -409,7 +417,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				"overrides myagent env forwarding",
 				"adds myagent egress hosts: agent-extra.com",
 				"sets myagent egress profile: locked",
-				"sets myagent MCP group: custom",
+				"sets myagent MCP authz profile: observe (can only tighten, not widen)",
 			),
 		},
 	}
