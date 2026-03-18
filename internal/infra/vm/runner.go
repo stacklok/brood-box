@@ -169,9 +169,9 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 		microvm.WithPreflightChecker(buildPreflightChecker(dataDir)),
 		microvm.WithCleanDataDir(),
 		microvm.WithCPUs(cfg.CPUs),
-		microvm.WithMemory(cfg.Memory),
+		microvm.WithMemory(cfg.Memory.MiB()),
 		microvm.WithLogLevel(cfg.LogLevel),
-		microvm.WithTmpSize(cfg.TmpSizeMiB),
+		microvm.WithTmpSize(cfg.TmpSize.MiB()),
 		microvm.WithPorts(microvm.PortForward{Host: sshPort, Guest: 22}),
 		microvm.WithRootFSHook(
 			hooks.InjectAuthorizedKeys(pubKey),

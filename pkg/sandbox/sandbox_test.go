@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/hostservice"
@@ -207,7 +208,7 @@ func TestSandboxRunner_Run(t *testing.T) {
 		Command:       []string{"test-cmd"},
 		EnvForward:    []string{"TEST_KEY"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{
@@ -244,7 +245,7 @@ func TestSandboxRunner_Run(t *testing.T) {
 	assert.Equal(t, VMName("test-agent", "/tmp/workspace", "abcd1234"), vmRunner.startCfg.Name)
 	assert.Equal(t, "test-image:latest", vmRunner.startCfg.Image)
 	assert.Equal(t, uint32(2), vmRunner.startCfg.CPUs)
-	assert.Equal(t, uint32(2048), vmRunner.startCfg.Memory)
+	assert.Equal(t, bytesize.ByteSize(2048), vmRunner.startCfg.Memory)
 	assert.Equal(t, "/tmp/workspace", vmRunner.startCfg.WorkspacePath)
 	assert.Equal(t, map[string]string{"TEST_KEY": "secret123", "GIT_TERMINAL_PROMPT": "0"}, vmRunner.startCfg.EnvVars)
 
@@ -286,7 +287,7 @@ func TestSandboxRunner_Run_CLIOverrides(t *testing.T) {
 		Image:         "original:latest",
 		Command:       []string{"cmd"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{sshPort: 3333, sshKeyPath: "/tmp/key"}
@@ -313,7 +314,7 @@ func TestSandboxRunner_Run_CLIOverrides(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "custom:v2", vmRunner.startCfg.Image)
 	assert.Equal(t, uint32(4), vmRunner.startCfg.CPUs)
-	assert.Equal(t, uint32(8192), vmRunner.startCfg.Memory)
+	assert.Equal(t, bytesize.ByteSize(8192), vmRunner.startCfg.Memory)
 }
 
 func TestSandboxRunner_Run_CommandResolution(t *testing.T) {
@@ -802,7 +803,7 @@ func TestSandboxRunner_Prepare_Success(t *testing.T) {
 		Command:       []string{"test-cmd"},
 		EnvForward:    []string{"TEST_KEY"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
@@ -1059,7 +1060,7 @@ func TestSandboxRunner_LifecycleEndToEnd(t *testing.T) {
 		Command:       []string{"test-cmd"},
 		EnvForward:    []string{"KEY"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{sshPort: 3333, sshKeyPath: "/tmp/key"}
@@ -1255,7 +1256,7 @@ func TestSandboxRunner_Prepare_MCPFailure_WarnsAndContinues(t *testing.T) {
 		Image:         "img:latest",
 		Command:       []string{"cmd"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
@@ -1567,7 +1568,7 @@ func TestSandboxRunner_Prepare_MCPSuccess_AddsHostServices(t *testing.T) {
 		Image:         "img:latest",
 		Command:       []string{"cmd"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	handler := http.NewServeMux()

@@ -44,6 +44,7 @@ import (
 	infraws "github.com/stacklok/brood-box/internal/infra/workspace"
 	"github.com/stacklok/brood-box/internal/version"
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
@@ -465,7 +466,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 						Command:       override.Command,
 						EnvForward:    override.EnvForward,
 						DefaultCPUs:   override.CPUs,
-						DefaultMemory: override.Memory.MiB(),
+						DefaultMemory: override.Memory,
 					}); addErr != nil {
 						_, _ = fmt.Fprintf(os.Stderr, "Warning: skipping custom agent %q: %s\n", name, addErr)
 					}
@@ -764,7 +765,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Parse --memory flag (human-readable string → MiB).
 	var memoryMiB uint32
 	if flags.memory != "" {
-		parsed, parseErr := domainconfig.ParseByteSize(flags.memory)
+		parsed, parseErr := bytesize.ParseByteSize(flags.memory)
 		if parseErr != nil {
 			return fmt.Errorf("--memory: %w", parseErr)
 		}
@@ -774,7 +775,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Parse --tmp-size flag (human-readable string → MiB).
 	var tmpSizeMiB uint32
 	if flags.tmpSize != "" {
-		parsed, parseErr := domainconfig.ParseByteSize(flags.tmpSize)
+		parsed, parseErr := bytesize.ParseByteSize(flags.tmpSize)
 		if parseErr != nil {
 			return fmt.Errorf("--tmp-size: %w", parseErr)
 		}

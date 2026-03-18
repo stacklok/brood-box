@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
+	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 )
 
 func TestLoader_Load_FileNotExist(t *testing.T) {
@@ -57,7 +57,7 @@ agents:
 	require.NoError(t, err)
 
 	assert.Equal(t, uint32(4), cfg.Defaults.CPUs)
-	assert.Equal(t, domainconfig.ByteSize(4096), cfg.Defaults.Memory)
+	assert.Equal(t, bytesize.ByteSize(4096), cfg.Defaults.Memory)
 
 	require.Contains(t, cfg.Agents, "claude-code")
 	cc := cfg.Agents["claude-code"]
@@ -68,7 +68,7 @@ agents:
 	assert.Equal(t, "ghcr.io/me/my-agent:latest", custom.Image)
 	assert.Equal(t, []string{"my-agent", "--interactive"}, custom.Command)
 	assert.Equal(t, uint32(2), custom.CPUs)
-	assert.Equal(t, domainconfig.ByteSize(1024), custom.Memory)
+	assert.Equal(t, bytesize.ByteSize(1024), custom.Memory)
 }
 
 func TestLoader_Load_InvalidYAML(t *testing.T) {
@@ -110,7 +110,7 @@ review:
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.Equal(t, uint32(8), cfg.Defaults.CPUs)
-	assert.Equal(t, domainconfig.ByteSize(8192), cfg.Defaults.Memory)
+	assert.Equal(t, bytesize.ByteSize(8192), cfg.Defaults.Memory)
 	assert.Equal(t, []string{"*.tmp"}, cfg.Review.ExcludePatterns)
 }
 

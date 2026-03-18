@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	"github.com/stacklok/brood-box/pkg/domain/config"
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
@@ -252,10 +253,10 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		override.CPUs = opts.CPUs
 	}
 	if opts.Memory > 0 {
-		override.Memory = config.ByteSize(opts.Memory)
+		override.Memory = bytesize.ByteSize(opts.Memory)
 	}
 	if opts.TmpSizeMiB > 0 {
-		override.TmpSize = config.ByteSize(opts.TmpSizeMiB)
+		override.TmpSize = bytesize.ByteSize(opts.TmpSizeMiB)
 	}
 	if opts.ImageOverride != "" {
 		override.Image = opts.ImageOverride
@@ -272,7 +273,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		return nil, fmt.Errorf("resolving command: %w", err)
 	}
 
-	s.observer.Complete(fmt.Sprintf("Resolved agent %s (%d CPUs, %d MiB)",
+	s.observer.Complete(fmt.Sprintf("Resolved agent %s (%d CPUs, %s)",
 		ag.Name, ag.DefaultCPUs, ag.DefaultMemory))
 	s.logger.Debug("resolved agent",
 		"name", ag.Name,
@@ -331,7 +332,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	// by letting V8's GC manage memory within bounds rather than growing
 	// until the guest OOM killer SIGKILLs the process.
 	if ag.NodeHeapPercent > 0 {
-		heapMiB := ag.DefaultMemory * ag.NodeHeapPercent / 100
+		heapMiB := ag.DefaultMemory.MiB() * ag.NodeHeapPercent / 100
 		envVars["NODE_OPTIONS"] = fmt.Sprintf("--max-old-space-size=%d", heapMiB)
 	}
 
@@ -470,7 +471,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		SSHAgentForward:  opts.SSHAgentForward,
 		CredentialPaths:  ag.CredentialPaths,
 		LogLevel:         opts.LogLevel,
-		TmpSizeMiB:       ag.DefaultTmpSize,
+		TmpSize:          ag.DefaultTmpSize,
 		SettingsManifest: settingsManifest,
 	}
 

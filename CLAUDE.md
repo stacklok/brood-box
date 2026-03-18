@@ -47,7 +47,8 @@ This project follows DDD layered architecture with dependency injection **strict
 
 **Domain** (`pkg/domain/`) — Pure types and interfaces. ZERO I/O, ZERO external dependencies, ZERO side effects. Domain packages define _what_ things are and _what_ operations exist, never _how_ they are performed. Public so external modules can import the shared ubiquitous language:
 - `pkg/domain/agent/` — Agent value object, env forwarding
-- `pkg/domain/config/` — Config types, merge logic, ByteSize parsing
+- `pkg/domain/bytesize/` — ByteSize value object for human-readable memory sizes
+- `pkg/domain/config/` — Config types, merge logic
 - `pkg/domain/vm/` — VMRunner, VM, VMConfig interfaces
 - `pkg/domain/session/` — TerminalSession interface
 - `pkg/domain/workspace/` — WorkspaceCloner interface, Snapshot type

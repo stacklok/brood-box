@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 )
 
@@ -404,10 +405,10 @@ const (
 	MaxCPUs uint32 = 128
 
 	// MaxMemory is the upper bound for RAM allocation (128 GiB).
-	MaxMemory ByteSize = 131072
+	MaxMemory bytesize.ByteSize = 131072
 
 	// MaxTmpSize is the upper bound for /tmp tmpfs size (64 GiB).
-	MaxTmpSize ByteSize = 65536
+	MaxTmpSize bytesize.ByteSize = 65536
 )
 
 // DefaultsConfig specifies default VM resource limits.
@@ -418,12 +419,12 @@ type DefaultsConfig struct {
 	// Memory is the default RAM for the VM. Accepts human-readable values
 	// like "4g" or "512m". Bare integers are treated as MiB for backward
 	// compatibility. Zero uses the agent default.
-	Memory ByteSize `yaml:"memory"`
+	Memory bytesize.ByteSize `yaml:"memory"`
 
 	// TmpSize is the default /tmp tmpfs size. Accepts human-readable values
 	// like "512m" or "2g". Bare integers are treated as MiB for backward
 	// compatibility. Zero uses the go-microvm default (256 MiB).
-	TmpSize ByteSize `yaml:"tmp_size,omitempty"`
+	TmpSize bytesize.ByteSize `yaml:"tmp_size,omitempty"`
 
 	// EgressProfile is the default egress restriction level.
 	EgressProfile string `yaml:"egress_profile,omitempty"`
@@ -458,11 +459,11 @@ type AgentOverride struct {
 
 	// Memory overrides the RAM for this agent. Accepts human-readable
 	// values like "4g" or "512m".
-	Memory ByteSize `yaml:"memory,omitempty"`
+	Memory bytesize.ByteSize `yaml:"memory,omitempty"`
 
 	// TmpSize overrides the /tmp tmpfs size for this agent. Accepts
 	// human-readable values like "512m" or "2g".
-	TmpSize ByteSize `yaml:"tmp_size,omitempty"`
+	TmpSize bytesize.ByteSize `yaml:"tmp_size,omitempty"`
 
 	// EgressProfile overrides the agent's default egress profile.
 	EgressProfile string `yaml:"egress_profile,omitempty"`
@@ -480,7 +481,7 @@ type AgentOverride struct {
 
 // clampResources caps CPU and memory values to their maximums.
 // Zero values are passed through (they mean "use default").
-func clampResources(cpus uint32, memory ByteSize) (uint32, ByteSize) {
+func clampResources(cpus uint32, memory bytesize.ByteSize) (uint32, bytesize.ByteSize) {
 	if cpus > MaxCPUs {
 		cpus = MaxCPUs
 	}
@@ -491,7 +492,7 @@ func clampResources(cpus uint32, memory ByteSize) (uint32, ByteSize) {
 }
 
 // clampTmpSize caps the /tmp tmpfs size to MaxTmpSize.
-func clampTmpSize(s ByteSize) ByteSize {
+func clampTmpSize(s bytesize.ByteSize) bytesize.ByteSize {
 	if s > MaxTmpSize {
 		return MaxTmpSize
 	}
@@ -642,27 +643,23 @@ func Merge(a agent.Agent, override AgentOverride, defaults DefaultsConfig) agent
 
 	// Memory: override > agent default > global default
 	if override.Memory > 0 {
-		result.DefaultMemory = override.Memory.MiB()
+		result.DefaultMemory = override.Memory
 	} else if result.DefaultMemory == 0 && defaults.Memory > 0 {
-		result.DefaultMemory = defaults.Memory.MiB()
+		result.DefaultMemory = defaults.Memory
 	}
 
 	// TmpSize: override > agent default > global default
 	if override.TmpSize > 0 {
-		result.DefaultTmpSize = override.TmpSize.MiB()
+		result.DefaultTmpSize = override.TmpSize
 	} else if result.DefaultTmpSize == 0 && defaults.TmpSize > 0 {
-		result.DefaultTmpSize = defaults.TmpSize.MiB()
+		result.DefaultTmpSize = defaults.TmpSize
 	}
 
 	// Clamp resource values to configured maximums.
-	clampedCPUs, clampedMem := clampResources(
-		result.DefaultCPUs, ByteSize(result.DefaultMemory),
-	)
+	clampedCPUs, clampedMem := clampResources(result.DefaultCPUs, result.DefaultMemory)
 	result.DefaultCPUs = clampedCPUs
-	result.DefaultMemory = clampedMem.MiB()
-	if result.DefaultTmpSize > MaxTmpSize.MiB() {
-		result.DefaultTmpSize = MaxTmpSize.MiB()
-	}
+	result.DefaultMemory = clampedMem
+	result.DefaultTmpSize = clampTmpSize(result.DefaultTmpSize)
 
 	// EgressProfile: override can only tighten the agent's built-in profile.
 	// Treat empty as "permissive" — the default for all agents.

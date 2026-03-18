@@ -11,6 +11,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/git"
 	"github.com/stacklok/brood-box/pkg/domain/settings"
@@ -27,8 +28,8 @@ type VMConfig struct {
 	// CPUs is the number of vCPUs.
 	CPUs uint32
 
-	// Memory is the RAM in MiB.
-	Memory uint32
+	// Memory is the RAM allocation for this VM.
+	Memory bytesize.ByteSize
 
 	// SSHPort is the host port to forward to guest port 22.
 	// If 0, an ephemeral port will be chosen.
@@ -71,9 +72,9 @@ type VMConfig struct {
 	// LogLevel sets the hypervisor log verbosity (0=off, 5=trace).
 	LogLevel uint32
 
-	// TmpSizeMiB is the size of the /tmp tmpfs inside the guest in MiB.
+	// TmpSize is the size of the /tmp tmpfs inside the guest.
 	// Zero uses the go-microvm default (256 MiB).
-	TmpSizeMiB uint32
+	TmpSize bytesize.ByteSize
 
 	// SettingsManifest declares agent settings to inject into the rootfs.
 	SettingsManifest *settings.Manifest
