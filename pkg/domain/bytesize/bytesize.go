@@ -1,7 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-package config
+// Package bytesize defines the ByteSize value object for human-readable memory sizes.
+package bytesize
 
 import (
 	"fmt"

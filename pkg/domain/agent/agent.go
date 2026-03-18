@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"regexp"
 
+	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/settings"
 )
@@ -83,8 +84,8 @@ type Agent struct {
 	// DefaultCPUs is the default number of vCPUs for this agent.
 	DefaultCPUs uint32
 
-	// DefaultMemory is the default RAM in MiB for this agent.
-	DefaultMemory uint32
+	// DefaultMemory is the default RAM for this agent.
+	DefaultMemory bytesize.ByteSize
 
 	// DefaultEgressProfile is the default egress restriction level.
 	DefaultEgressProfile egress.ProfileName
@@ -100,9 +101,9 @@ type Agent struct {
 	// Only built-in agents should set this field.
 	CredentialPaths []string
 
-	// DefaultTmpSize is the default /tmp tmpfs size in MiB for this agent.
+	// DefaultTmpSize is the default /tmp tmpfs size for this agent.
 	// Zero means use the go-microvm default (256 MiB). Built-in agents default to 2 GiB.
-	DefaultTmpSize uint32
+	DefaultTmpSize bytesize.ByteSize
 
 	// SettingsManifest declares host settings to inject into the VM.
 	// Nil means no settings injection for this agent.

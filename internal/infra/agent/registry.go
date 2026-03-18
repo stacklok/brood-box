@@ -9,6 +9,7 @@ import (
 	"sort"
 
 	domainagent "github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/settings"
 )
@@ -66,8 +67,8 @@ func builtinAgents() map[string]domainagent.Agent {
 			EnvForward:           []string{"ANTHROPIC_API_KEY", "CLAUDE_*", "NODE_OPTIONS"},
 			NodeHeapPercent:      75,
 			DefaultCPUs:          2,
-			DefaultMemory:        4096,
-			DefaultTmpSize:       2048,
+			DefaultMemory:        bytesize.ByteSize(4096),
+			DefaultTmpSize:       bytesize.ByteSize(2048),
 			DefaultEgressProfile: egress.ProfilePermissive,
 			MCPConfigFormat:      domainagent.MCPConfigFormatClaudeCode,
 			CredentialPaths:      []string{".claude/"},
@@ -97,8 +98,8 @@ func builtinAgents() map[string]domainagent.Agent {
 			Command:              []string{"codex"},
 			EnvForward:           []string{"OPENAI_API_KEY", "CODEX_*"},
 			DefaultCPUs:          2,
-			DefaultMemory:        4096,
-			DefaultTmpSize:       2048,
+			DefaultMemory:        bytesize.ByteSize(4096),
+			DefaultTmpSize:       bytesize.ByteSize(2048),
 			DefaultEgressProfile: egress.ProfilePermissive,
 			MCPConfigFormat:      domainagent.MCPConfigFormatCodex,
 			CredentialPaths:      []string{".codex/"},
@@ -127,8 +128,8 @@ func builtinAgents() map[string]domainagent.Agent {
 			Command:              []string{"opencode"},
 			EnvForward:           []string{"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "OPENCODE_*"},
 			DefaultCPUs:          2,
-			DefaultMemory:        4096,
-			DefaultTmpSize:       2048,
+			DefaultMemory:        bytesize.ByteSize(4096),
+			DefaultTmpSize:       bytesize.ByteSize(2048),
 			DefaultEgressProfile: egress.ProfilePermissive,
 			MCPConfigFormat:      domainagent.MCPConfigFormatOpenCode,
 			CredentialPaths:      []string{".config/opencode/"},

@@ -21,6 +21,7 @@ import (
 	"golang.org/x/crypto/ssh"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/hostservice"
@@ -207,7 +208,7 @@ func TestSandboxRunner_Run(t *testing.T) {
 		Command:       []string{"test-cmd"},
 		EnvForward:    []string{"TEST_KEY"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{
@@ -286,7 +287,7 @@ func TestSandboxRunner_Run_CLIOverrides(t *testing.T) {
 		Image:         "original:latest",
 		Command:       []string{"cmd"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{sshPort: 3333, sshKeyPath: "/tmp/key"}
@@ -802,7 +803,7 @@ func TestSandboxRunner_Prepare_Success(t *testing.T) {
 		Command:       []string{"test-cmd"},
 		EnvForward:    []string{"TEST_KEY"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
@@ -1059,7 +1060,7 @@ func TestSandboxRunner_LifecycleEndToEnd(t *testing.T) {
 		Command:       []string{"test-cmd"},
 		EnvForward:    []string{"KEY"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{sshPort: 3333, sshKeyPath: "/tmp/key"}
@@ -1255,7 +1256,7 @@ func TestSandboxRunner_Prepare_MCPFailure_WarnsAndContinues(t *testing.T) {
 		Image:         "img:latest",
 		Command:       []string{"cmd"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
@@ -1567,7 +1568,7 @@ func TestSandboxRunner_Prepare_MCPSuccess_AddsHostServices(t *testing.T) {
 		Image:         "img:latest",
 		Command:       []string{"cmd"},
 		DefaultCPUs:   2,
-		DefaultMemory: 2048,
+		DefaultMemory: bytesize.ByteSize(2048),
 	}
 
 	handler := http.NewServeMux()
