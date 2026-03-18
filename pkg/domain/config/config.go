@@ -632,27 +632,24 @@ func Merge(a agent.Agent, override AgentOverride, defaults DefaultsConfig) agent
 		result.EnvForward = override.EnvForward
 	}
 
-	// CPUs: override > agent default > global default
+	// CPUs: override > global default > agent default
 	if override.CPUs > 0 {
 		result.DefaultCPUs = override.CPUs
-	}
-	if result.DefaultCPUs == 0 && defaults.CPUs > 0 {
+	} else if defaults.CPUs > 0 {
 		result.DefaultCPUs = defaults.CPUs
 	}
 
-	// Memory: override > agent default > global default
+	// Memory: override > global default > agent default
 	if override.Memory > 0 {
 		result.DefaultMemory = override.Memory.MiB()
-	}
-	if result.DefaultMemory == 0 && defaults.Memory > 0 {
+	} else if defaults.Memory > 0 {
 		result.DefaultMemory = defaults.Memory.MiB()
 	}
 
-	// TmpSize: override > agent default > global default
+	// TmpSize: override > global default > agent default
 	if override.TmpSize > 0 {
 		result.DefaultTmpSize = override.TmpSize.MiB()
-	}
-	if result.DefaultTmpSize == 0 && defaults.TmpSize > 0 {
+	} else if defaults.TmpSize > 0 {
 		result.DefaultTmpSize = defaults.TmpSize.MiB()
 	}
 
