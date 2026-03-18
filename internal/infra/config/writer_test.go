@@ -16,11 +16,11 @@ func TestWriteDefault(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		setup     func(t *testing.T, dir string) string
-		force     bool
-		wantErr   string
-		assertFn  func(t *testing.T, path string)
+		name     string
+		setup    func(t *testing.T, dir string) string
+		force    bool
+		wantErr  string
+		assertFn func(t *testing.T, path string)
 	}{
 		{
 			name: "creates file when it does not exist",
@@ -85,6 +85,12 @@ func TestWriteDefault(t *testing.T) {
 				require.NoError(t, err)
 				assert.Contains(t, string(data), "# Brood Box")
 				assert.NotContains(t, string(data), "old content")
+
+				// Verify permissions are reset to 0600 even though
+				// the original file was 0644.
+				info, err := os.Stat(path)
+				require.NoError(t, err)
+				assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 			},
 		},
 		{
@@ -119,7 +125,8 @@ func TestWriteDefault(t *testing.T) {
 				content := string(data)
 				for _, section := range []string{
 					"defaults:", "review:", "network:",
-					"mcp:", "git:", "auth:", "runtime:", "agents:",
+					"mcp:", "authz:", "config:",
+					"git:", "auth:", "runtime:", "agents:",
 				} {
 					assert.Contains(t, content, section,
 						"template should contain section %q", section)

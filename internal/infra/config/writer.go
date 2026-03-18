@@ -22,7 +22,8 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   # Number of vCPUs (0 = agent default).
 #   cpus: 0
 #
-#   # RAM in MiB (0 = agent default).
+#   # RAM for the VM. Accepts human-readable values like "4g" or "512m".
+#   # Bare integers are treated as MiB. Zero uses the agent default.
 #   memory: 0
 #
 #   # Size of /tmp tmpfs inside the VM. Accepts human-readable values
@@ -139,7 +140,7 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   #   # Override vCPU count for this agent.
 #   #   cpus: 0
 #   #
-#   #   # Override RAM in MiB for this agent.
+#   #   # Override RAM for this agent (e.g. "4g", "512m").
 #   #   memory: 0
 #   #
 #   #   # Override /tmp tmpfs size for this agent (e.g. "512m", "2g").
@@ -153,10 +154,11 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   #   allow_hosts: []
 #   #
 #   #   # Override MCP proxy settings for this agent.
+#   #   # Only enabled (gate) and authz (tighten-only) are supported.
 #   #   mcp:
 #   #     enabled: true
-#   #     group: "default"
-#   #     port: 4483
+#   #     authz:
+#   #       profile: "full-access"
 `
 
 // WriteDefault writes the default config template to the given path.
@@ -181,6 +183,13 @@ func WriteDefault(path string, force bool) error {
 
 	if err := os.WriteFile(path, []byte(defaultConfigTemplate), 0o600); err != nil {
 		return fmt.Errorf("writing config file: %w", err)
+	}
+
+	// WriteFile only sets permissions on creation. When overwriting an
+	// existing file (--force) the old permissions remain. Explicitly
+	// chmod to ensure 0600 regardless of prior state.
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("setting config file permissions: %w", err)
 	}
 
 	return nil
