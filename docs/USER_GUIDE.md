@@ -80,7 +80,7 @@ bbox <agent-name> [flags] [-- <agent-args...>]
 | `--seed-credentials` | `false` | Seed agent credentials from host (e.g. macOS Keychain) into the VM |
 | `--no-firmware-download` | `false` | Disable firmware download (use system libkrunfw only) |
 | `--no-image-cache` | `false` | Disable OCI image caching (fresh pull every run) |
-| `--tmp-size` | Agent default (512m) | Size of /tmp tmpfs inside the VM (e.g. `512m`, `2g`) |
+| `--tmp-size` | Agent default (2g) | Size of /tmp tmpfs inside the VM (e.g. `512m`, `2g`) |
 | `--exec` | Agent command | Override the agent command (e.g. `/bin/bash` for debugging) |
 | `--timings` | `false` | Print per-phase timing summary after run |
 | `--log-file` | `~/.config/broodbox/vms/<vm>/broodbox.log` | Override log file path |

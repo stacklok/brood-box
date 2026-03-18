@@ -35,6 +35,18 @@ func TestReviewConfig_Explicit(t *testing.T) {
 	assert.Equal(t, []string{"*.log", "tmp/"}, cfg.ExcludePatterns)
 }
 
+func TestMerge_UsesGlobalTmpSizeWhenAgentDefaultUnset(t *testing.T) {
+	t.Parallel()
+
+	merged := Merge(
+		agent.Agent{Name: "test-agent"},
+		AgentOverride{},
+		DefaultsConfig{TmpSize: ByteSize(2048)},
+	)
+
+	assert.Equal(t, uint32(2048), merged.DefaultTmpSize)
+}
+
 func boolPtr(b bool) *bool { return &b }
 
 func TestMergeConfigs(t *testing.T) {
