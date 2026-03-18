@@ -78,8 +78,8 @@ func builtinAgents() map[string]domainagent.Agent {
 			SettingsManifest: &settings.Manifest{Entries: []settings.Entry{
 				{Category: "settings", HostPath: ".claude/settings.json", GuestPath: ".claude/settings.json", Kind: settings.KindMergeFile, Optional: true,
 					Format: "json", Filter: &settings.FieldFilter{AllowKeys: []string{
-						"permissions", "hooks", "model", "preferredNotifChannel", "hasCompletedOnboarding",
-						"autoUpdaterStatus", "bypassPermissions", "enableAllProjectMcpServers",
+						"permissions", "model", "preferredNotifChannel", "hasCompletedOnboarding",
+						"autoUpdaterStatus",
 					}}},
 				// NOTE: .claude.json mcpServers are NOT injected. The VM cannot reach
 				// host MCP servers — only the toolhive-proxied sandbox-tools endpoint

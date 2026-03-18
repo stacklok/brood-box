@@ -639,3 +639,528 @@ func TestFSInjector_MergeFileJSONC(t *testing.T) {
 	_, hasAPIKey := result["apiKey"]
 	assert.False(t, hasAPIKey)
 }
+
+func TestStripKeyRecursive(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		input  map[string]any
+		subKey string
+		want   map[string]any
+	}{
+		{
+			name:   "strips key at top level",
+			input:  map[string]any{"apiKey": "secret", "theme": "dark"},
+			subKey: "apiKey",
+			want:   map[string]any{"theme": "dark"},
+		},
+		{
+			name: "strips key at nested level",
+			input: map[string]any{
+				"github": map[string]any{
+					"url":    "https://github.com",
+					"apiKey": "ghp_secret",
+				},
+				"theme": "dark",
+			},
+			subKey: "apiKey",
+			want: map[string]any{
+				"github": map[string]any{
+					"url": "https://github.com",
+				},
+				"theme": "dark",
+			},
+		},
+		{
+			name: "strips key at three levels deep",
+			input: map[string]any{
+				"level1": map[string]any{
+					"level2": map[string]any{
+						"level3": map[string]any{
+							"apiKey": "deep-secret",
+							"safe":   "keep",
+						},
+						"apiKey": "mid-secret",
+					},
+					"apiKey": "shallow-secret",
+				},
+			},
+			subKey: "apiKey",
+			want: map[string]any{
+				"level1": map[string]any{
+					"level2": map[string]any{
+						"level3": map[string]any{
+							"safe": "keep",
+						},
+					},
+				},
+			},
+		},
+		{
+			name: "handles mixed nesting (maps and scalars)",
+			input: map[string]any{
+				"apiKey": "top-secret",
+				"count":  42,
+				"nested": map[string]any{
+					"apiKey": "nested-secret",
+					"list":   []string{"a", "b"},
+				},
+				"flat": "value",
+			},
+			subKey: "apiKey",
+			want: map[string]any{
+				"count": 42,
+				"nested": map[string]any{
+					"list": []string{"a", "b"},
+				},
+				"flat": "value",
+			},
+		},
+		{
+			name:   "no-op when key does not exist",
+			input:  map[string]any{"theme": "dark", "editor": "vim"},
+			subKey: "apiKey",
+			want:   map[string]any{"theme": "dark", "editor": "vim"},
+		},
+		{
+			name:   "empty map is a no-op",
+			input:  map[string]any{},
+			subKey: "apiKey",
+			want:   map[string]any{},
+		},
+		{
+			name: "strips key only from maps, not scalar siblings",
+			input: map[string]any{
+				"providers": map[string]any{
+					"gh": map[string]any{
+						"apiKey": "ghp_123",
+						"url":    "https://github.com",
+					},
+					"gl": map[string]any{
+						"apiKey": "glpat_456",
+						"url":    "https://gitlab.com",
+					},
+				},
+				"other": "scalar-value",
+			},
+			subKey: "apiKey",
+			want: map[string]any{
+				"providers": map[string]any{
+					"gh": map[string]any{
+						"url": "https://github.com",
+					},
+					"gl": map[string]any{
+						"url": "https://gitlab.com",
+					},
+				},
+				"other": "scalar-value",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			stripKeyRecursive(tt.input, tt.subKey)
+			assert.Equal(t, tt.want, tt.input)
+		})
+	}
+}
+
+func TestDeepMerge(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		dst  map[string]any
+		src  map[string]any
+		want map[string]any
+	}{
+		{
+			name: "disjoint keys are combined",
+			dst:  map[string]any{"a": 1},
+			src:  map[string]any{"b": 2},
+			want: map[string]any{"a": 1, "b": 2},
+		},
+		{
+			name: "overlapping scalar keys — src wins",
+			dst:  map[string]any{"key": "old"},
+			src:  map[string]any{"key": "new"},
+			want: map[string]any{"key": "new"},
+		},
+		{
+			name: "nested map merge is recursive",
+			dst: map[string]any{
+				"outer": map[string]any{
+					"a": 1,
+					"b": 2,
+				},
+			},
+			src: map[string]any{
+				"outer": map[string]any{
+					"b": 99,
+					"c": 3,
+				},
+			},
+			want: map[string]any{
+				"outer": map[string]any{
+					"a": 1,
+					"b": 99,
+					"c": 3,
+				},
+			},
+		},
+		{
+			name: "src has map, dst has scalar for same key — src wins",
+			dst:  map[string]any{"key": "scalar"},
+			src:  map[string]any{"key": map[string]any{"nested": true}},
+			want: map[string]any{"key": map[string]any{"nested": true}},
+		},
+		{
+			name: "dst has map, src has scalar for same key — src wins",
+			dst:  map[string]any{"key": map[string]any{"nested": true}},
+			src:  map[string]any{"key": "scalar"},
+			want: map[string]any{"key": "scalar"},
+		},
+		{
+			name: "empty src leaves dst unchanged",
+			dst:  map[string]any{"a": 1, "b": 2},
+			src:  map[string]any{},
+			want: map[string]any{"a": 1, "b": 2},
+		},
+		{
+			name: "empty dst returns src",
+			dst:  map[string]any{},
+			src:  map[string]any{"a": 1},
+			want: map[string]any{"a": 1},
+		},
+		{
+			name: "both empty returns empty",
+			dst:  map[string]any{},
+			src:  map[string]any{},
+			want: map[string]any{},
+		},
+		{
+			name: "nil values in maps are preserved",
+			dst:  map[string]any{"a": nil},
+			src:  map[string]any{"b": nil},
+			want: map[string]any{"a": nil, "b": nil},
+		},
+		{
+			name: "src nil value overwrites dst scalar",
+			dst:  map[string]any{"key": "value"},
+			src:  map[string]any{"key": nil},
+			want: map[string]any{"key": nil},
+		},
+		{
+			name: "does not mutate original dst",
+			dst:  map[string]any{"a": 1},
+			src:  map[string]any{"b": 2},
+			want: map[string]any{"a": 1, "b": 2},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := deepMerge(tt.dst, tt.src)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+
+	// Verify deepMerge does not mutate the original dst map.
+	t.Run("original dst is not mutated", func(t *testing.T) {
+		t.Parallel()
+
+		dst := map[string]any{"a": 1}
+		src := map[string]any{"b": 2}
+		result := deepMerge(dst, src)
+
+		// result has both keys
+		assert.Equal(t, map[string]any{"a": 1, "b": 2}, result)
+		// original dst should be unmodified
+		_, hasBInDst := dst["b"]
+		assert.False(t, hasBInDst, "original dst should not contain key 'b'")
+	})
+}
+
+func TestDeepMergeN(t *testing.T) {
+	t.Parallel()
+
+	t.Run("respects MaxDepth — replaces wholesale at depth limit", func(t *testing.T) {
+		t.Parallel()
+
+		// The check in deepMergeN is: if depth < MaxDepth, recurse; else replace.
+		// At depth d, processing a key whose src and dst are both maps:
+		//   - d < MaxDepth  -> recurse into depth d+1
+		//   - d >= MaxDepth -> src map replaces dst map wholesale
+		//
+		// We need MaxDepth+1 layers of map nesting so that the innermost
+		// pair of leaf maps is encountered at depth == MaxDepth, where
+		// the wholesale-replace path fires.
+		dstLeaf := map[string]any{"dstOnly": "kept-by-dst", "shared": "dst-val"}
+		srcLeaf := map[string]any{"srcOnly": "from-src", "shared": "src-val"}
+
+		// Wrap in MaxDepth+1 layers so the leaf maps sit at depth MaxDepth.
+		var dst, src any = dstLeaf, srcLeaf
+		for i := 0; i < settings.MaxDepth+1; i++ {
+			dst = map[string]any{"nest": dst}
+			src = map[string]any{"nest": src}
+		}
+
+		dstMap := dst.(map[string]any)
+		srcMap := src.(map[string]any)
+
+		result := deepMergeN(dstMap, srcMap, 0)
+
+		// Navigate to the leaf.
+		current := result
+		for i := 0; i < settings.MaxDepth+1; i++ {
+			nested, ok := current["nest"].(map[string]any)
+			require.True(t, ok, "expected map at depth %d", i)
+			current = nested
+		}
+
+		// At MaxDepth, src replaces dst wholesale — so dstOnly should NOT exist.
+		assert.Equal(t, "from-src", current["srcOnly"], "srcOnly should be present")
+		assert.Equal(t, "src-val", current["shared"], "shared should be src value")
+		_, hasDstOnly := current["dstOnly"]
+		assert.False(t, hasDstOnly, "dstOnly should be absent because src replaced dst at MaxDepth")
+	})
+
+	t.Run("merges recursively below MaxDepth", func(t *testing.T) {
+		t.Parallel()
+
+		// With MaxDepth wrappings, the leaf maps sit at depth MaxDepth-1
+		// (one below the cutoff), so they should be recursively merged.
+		dstLeaf := map[string]any{"dstOnly": "kept", "shared": "dst-val"}
+		srcLeaf := map[string]any{"srcOnly": "added", "shared": "src-val"}
+
+		var dst, src any = dstLeaf, srcLeaf
+		for i := 0; i < settings.MaxDepth; i++ {
+			dst = map[string]any{"nest": dst}
+			src = map[string]any{"nest": src}
+		}
+
+		dstMap := dst.(map[string]any)
+		srcMap := src.(map[string]any)
+
+		result := deepMergeN(dstMap, srcMap, 0)
+
+		// Navigate to the leaf.
+		current := result
+		for i := 0; i < settings.MaxDepth; i++ {
+			nested, ok := current["nest"].(map[string]any)
+			require.True(t, ok, "expected map at depth %d", i)
+			current = nested
+		}
+
+		// Below MaxDepth — recursive merge should happen, so dstOnly IS present.
+		assert.Equal(t, "kept", current["dstOnly"], "dstOnly should be preserved by merge")
+		assert.Equal(t, "added", current["srcOnly"], "srcOnly should be added by merge")
+		assert.Equal(t, "src-val", current["shared"], "shared should be overridden by src")
+	})
+
+	t.Run("depth parameter offsets the limit", func(t *testing.T) {
+		t.Parallel()
+
+		dst := map[string]any{
+			"inner": map[string]any{"a": 1, "b": 2},
+		}
+		src := map[string]any{
+			"inner": map[string]any{"b": 99, "c": 3},
+		}
+
+		// Call with depth == MaxDepth: should NOT recurse into "inner".
+		result := deepMergeN(dst, src, settings.MaxDepth)
+		inner, ok := result["inner"].(map[string]any)
+		require.True(t, ok)
+		// src replaces wholesale, so "a" (dst-only) should be gone.
+		_, hasA := inner["a"]
+		assert.False(t, hasA, "at MaxDepth, src map replaces dst map wholesale")
+		assert.Equal(t, 99, inner["b"])
+		assert.Equal(t, 3, inner["c"])
+	})
+
+	t.Run("depth below MaxDepth recurses", func(t *testing.T) {
+		t.Parallel()
+
+		dst := map[string]any{
+			"inner": map[string]any{"a": 1, "b": 2},
+		}
+		src := map[string]any{
+			"inner": map[string]any{"b": 99, "c": 3},
+		}
+
+		// Call with depth == MaxDepth-1: should recurse into "inner".
+		result := deepMergeN(dst, src, settings.MaxDepth-1)
+		inner, ok := result["inner"].(map[string]any)
+		require.True(t, ok)
+		assert.Equal(t, 1, inner["a"], "a preserved from dst")
+		assert.Equal(t, 99, inner["b"], "b overridden by src")
+		assert.Equal(t, 3, inner["c"], "c added from src")
+	})
+}
+
+func TestApplyDenySubKeys(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		val      any
+		patterns []string
+		want     any
+	}{
+		{
+			name: "wildcard strips key recursively in nested maps",
+			val: map[string]any{
+				"github": map[string]any{
+					"url":    "https://github.com",
+					"apiKey": "ghp_secret",
+				},
+				"gitlab": map[string]any{
+					"url":    "https://gitlab.com",
+					"apiKey": "glpat_secret",
+					"nested": map[string]any{
+						"apiKey": "deep-secret",
+						"safe":   "keep",
+					},
+				},
+			},
+			patterns: []string{"*.apiKey"},
+			want: map[string]any{
+				"github": map[string]any{
+					"url": "https://github.com",
+				},
+				"gitlab": map[string]any{
+					"url": "https://gitlab.com",
+					"nested": map[string]any{
+						"safe": "keep",
+					},
+				},
+			},
+		},
+		{
+			name: "plain pattern deletes top-level key only",
+			val: map[string]any{
+				"apiKey": "top-level",
+				"nested": map[string]any{
+					"apiKey": "should-remain",
+				},
+			},
+			patterns: []string{"apiKey"},
+			want: map[string]any{
+				"nested": map[string]any{
+					"apiKey": "should-remain",
+				},
+			},
+		},
+		{
+			name: "multiple patterns applied together",
+			val: map[string]any{
+				"provider": map[string]any{
+					"apiKey": "secret",
+					"token":  "also-secret",
+					"url":    "https://example.com",
+				},
+			},
+			patterns: []string{"*.apiKey", "*.token"},
+			want: map[string]any{
+				"provider": map[string]any{
+					"url": "https://example.com",
+				},
+			},
+		},
+		{
+			name:     "non-map value is returned unchanged",
+			val:      "scalar-string",
+			patterns: []string{"*.apiKey"},
+			want:     "scalar-string",
+		},
+		{
+			name:     "nil value is returned unchanged",
+			val:      nil,
+			patterns: []string{"*.apiKey"},
+			want:     nil,
+		},
+		{
+			name: "empty patterns is a no-op",
+			val: map[string]any{
+				"apiKey": "kept",
+			},
+			patterns: []string{},
+			want: map[string]any{
+				"apiKey": "kept",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := applyDenySubKeys(tt.val, tt.patterns)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestApplyDenySubKeys_EndToEnd(t *testing.T) {
+	t.Parallel()
+
+	// Simulate a realistic scenario: multi-level provider config with
+	// API keys at various depths, all stripped by "*.apiKey".
+	data := map[string]any{
+		"providers": map[string]any{
+			"github": map[string]any{
+				"url":    "https://github.com",
+				"apiKey": "ghp_top",
+				"oauth": map[string]any{
+					"apiKey":      "ghp_oauth",
+					"callbackURL": "http://localhost/callback",
+				},
+			},
+			"gitlab": map[string]any{
+				"url":    "https://gitlab.com",
+				"apiKey": "glpat_top",
+			},
+		},
+		"theme": "dark",
+	}
+
+	filter := &settings.FieldFilter{
+		AllowKeys:   []string{"providers", "theme"},
+		DenySubKeys: map[string][]string{"providers": {"*.apiKey"}},
+	}
+
+	result := applyFilter(data, filter)
+
+	// theme should be preserved.
+	assert.Equal(t, "dark", result["theme"])
+
+	providers, ok := result["providers"].(map[string]any)
+	require.True(t, ok)
+
+	// github
+	gh, ok := providers["github"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "https://github.com", gh["url"])
+	_, hasKey := gh["apiKey"]
+	assert.False(t, hasKey, "github top-level apiKey should be stripped")
+
+	oauth, ok := gh["oauth"].(map[string]any)
+	require.True(t, ok)
+	_, hasKey = oauth["apiKey"]
+	assert.False(t, hasKey, "github oauth apiKey should be stripped")
+	assert.Equal(t, "http://localhost/callback", oauth["callbackURL"])
+
+	// gitlab
+	gl, ok := providers["gitlab"].(map[string]any)
+	require.True(t, ok)
+	assert.Equal(t, "https://gitlab.com", gl["url"])
+	_, hasKey = gl["apiKey"]
+	assert.False(t, hasKey, "gitlab apiKey should be stripped")
+}

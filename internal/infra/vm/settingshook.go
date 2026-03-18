@@ -16,7 +16,7 @@ import (
 // from the host into the guest rootfs before VM boot.
 func InjectSettings(injector settings.Injector, manifest *settings.Manifest) func(string, *image.OCIConfig) error {
 	return func(rootfsPath string, _ *image.OCIConfig) error {
-		if manifest == nil || len(manifest.Entries) == 0 {
+		if injector == nil || manifest == nil || len(manifest.Entries) == 0 {
 			return nil
 		}
 

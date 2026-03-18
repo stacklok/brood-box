@@ -146,12 +146,12 @@ func (f *FSInjector) injectFile(
 	if err := os.MkdirAll(filepath.Dir(dstPath), dirPerm); err != nil {
 		return fmt.Errorf("creating parent dirs: %w", err)
 	}
-	bestEffortChown(filepath.Dir(dstPath))
+	bestEffortChown(f.logger, filepath.Dir(dstPath))
 
 	if err := os.WriteFile(dstPath, data, filePerm); err != nil {
 		return fmt.Errorf("writing destination: %w", err)
 	}
-	bestEffortChown(dstPath)
+	bestEffortChown(f.logger, dstPath)
 
 	c.fileCount++
 	c.totalSize += dataSize
@@ -203,7 +203,7 @@ func (f *FSInjector) injectDirectory(
 	if err := os.MkdirAll(dstPath, dirPerm); err != nil {
 		return fmt.Errorf("creating directory: %w", err)
 	}
-	bestEffortChown(dstPath)
+	bestEffortChown(f.logger, dstPath)
 
 	entries, err := os.ReadDir(srcPath)
 	if err != nil {
@@ -333,12 +333,12 @@ func (f *FSInjector) injectMergeFile(
 	if err := os.MkdirAll(filepath.Dir(dstPath), dirPerm); err != nil {
 		return fmt.Errorf("creating parent dirs: %w", err)
 	}
-	bestEffortChown(filepath.Dir(dstPath))
+	bestEffortChown(f.logger, filepath.Dir(dstPath))
 
 	if err := os.WriteFile(dstPath, output, filePerm); err != nil {
 		return fmt.Errorf("writing merged file: %w", err)
 	}
-	bestEffortChown(dstPath)
+	bestEffortChown(f.logger, dstPath)
 
 	c.fileCount++
 	c.totalSize += int64(len(output))
@@ -437,8 +437,8 @@ func applyFilter(data map[string]any, filter *settings.FieldFilter) map[string]a
 	return result
 }
 
-// applyDenySubKeys removes matching sub-keys from the value.
-// Patterns like "*.apiKey" strip "apiKey" from every map entry under the value.
+// applyDenySubKeys removes matching sub-keys from the value, recursing into
+// nested maps so that patterns like "*.apiKey" strip the key at all depths.
 func applyDenySubKeys(val any, patterns []string) any {
 	topMap, ok := val.(map[string]any)
 	if !ok {
@@ -447,16 +447,9 @@ func applyDenySubKeys(val any, patterns []string) any {
 
 	for _, pattern := range patterns {
 		if strings.HasPrefix(pattern, "*.") {
-			// Wildcard: strip the sub-key from every map entry.
 			subKey := strings.TrimPrefix(pattern, "*.")
-			for entryKey, entryVal := range topMap {
-				if innerMap, ok := entryVal.(map[string]any); ok {
-					delete(innerMap, subKey)
-					topMap[entryKey] = innerMap
-				}
-			}
+			stripKeyRecursive(topMap, subKey)
 		} else {
-			// Direct key removal.
 			delete(topMap, pattern)
 		}
 	}
@@ -464,9 +457,24 @@ func applyDenySubKeys(val any, patterns []string) any {
 	return topMap
 }
 
+// stripKeyRecursive removes subKey from m and from every nested map within m.
+func stripKeyRecursive(m map[string]any, subKey string) {
+	delete(m, subKey)
+	for _, v := range m {
+		if nested, ok := v.(map[string]any); ok {
+			stripKeyRecursive(nested, subKey)
+		}
+	}
+}
+
 // deepMerge recursively merges src into dst. Values from src override dst.
 // Both maps are treated as nested map[string]any structures.
+// Recursion is bounded by settings.MaxDepth to prevent stack overflow.
 func deepMerge(dst, src map[string]any) map[string]any {
+	return deepMergeN(dst, src, 0)
+}
+
+func deepMergeN(dst, src map[string]any, depth int) map[string]any {
 	result := make(map[string]any, len(dst))
 	for k, v := range dst {
 		result[k] = v
@@ -482,8 +490,8 @@ func deepMerge(dst, src map[string]any) map[string]any {
 		srcMap, srcIsMap := srcVal.(map[string]any)
 		dstMap, dstIsMap := dstVal.(map[string]any)
 
-		if srcIsMap && dstIsMap {
-			result[k] = deepMerge(dstMap, srcMap)
+		if srcIsMap && dstIsMap && depth < settings.MaxDepth {
+			result[k] = deepMergeN(dstMap, srcMap, depth+1)
 		} else {
 			result[k] = srcVal
 		}
@@ -558,9 +566,9 @@ func readFileNoFollow(path string) ([]byte, error) {
 }
 
 // bestEffortChown attempts to chown a path to the sandbox user, ignoring EPERM.
-func bestEffortChown(path string) {
+func bestEffortChown(logger *slog.Logger, path string) {
 	err := os.Lchown(path, sandboxUID, sandboxGID)
 	if err != nil && !errors.Is(err, syscall.EPERM) && !errors.Is(err, fs.ErrPermission) {
-		slog.Debug("unexpected chown error", "path", path, "error", err)
+		logger.Debug("unexpected chown error", "path", path, "error", err)
 	}
 }
