@@ -459,7 +459,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		AgentName:        ag.Name,
 		Image:            ag.Image,
 		CPUs:             ag.DefaultCPUs,
-		Memory:           ag.DefaultMemory.MiB(),
+		Memory:           ag.DefaultMemory,
 		SSHPort:          opts.SSHPort,
 		WorkspacePath:    workspacePath,
 		EnvVars:          envVars,
@@ -471,7 +471,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		SSHAgentForward:  opts.SSHAgentForward,
 		CredentialPaths:  ag.CredentialPaths,
 		LogLevel:         opts.LogLevel,
-		TmpSizeMiB:       ag.DefaultTmpSize.MiB(),
+		TmpSize:          ag.DefaultTmpSize,
 		SettingsManifest: settingsManifest,
 	}
 

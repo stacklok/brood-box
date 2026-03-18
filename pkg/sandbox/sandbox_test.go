@@ -245,7 +245,7 @@ func TestSandboxRunner_Run(t *testing.T) {
 	assert.Equal(t, VMName("test-agent", "/tmp/workspace", "abcd1234"), vmRunner.startCfg.Name)
 	assert.Equal(t, "test-image:latest", vmRunner.startCfg.Image)
 	assert.Equal(t, uint32(2), vmRunner.startCfg.CPUs)
-	assert.Equal(t, uint32(2048), vmRunner.startCfg.Memory)
+	assert.Equal(t, bytesize.ByteSize(2048), vmRunner.startCfg.Memory)
 	assert.Equal(t, "/tmp/workspace", vmRunner.startCfg.WorkspacePath)
 	assert.Equal(t, map[string]string{"TEST_KEY": "secret123", "GIT_TERMINAL_PROMPT": "0"}, vmRunner.startCfg.EnvVars)
 
@@ -314,7 +314,7 @@ func TestSandboxRunner_Run_CLIOverrides(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "custom:v2", vmRunner.startCfg.Image)
 	assert.Equal(t, uint32(4), vmRunner.startCfg.CPUs)
-	assert.Equal(t, uint32(8192), vmRunner.startCfg.Memory)
+	assert.Equal(t, bytesize.ByteSize(8192), vmRunner.startCfg.Memory)
 }
 
 func TestSandboxRunner_Run_CommandResolution(t *testing.T) {
