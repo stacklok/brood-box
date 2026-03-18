@@ -616,8 +616,9 @@ func MergeConfigs(global, local *Config) *Config {
 }
 
 // Merge combines an agent definition with user overrides and defaults.
-// Override fields take precedence when non-zero. Defaults are used as fallback
-// when neither the agent nor the override specifies a value.
+// Override fields take precedence when non-zero. Global defaults are used as
+// fallback when neither the override nor the built-in agent value specifies a
+// value.
 // EgressProfile overrides can only tighten (not widen) the agent's profile.
 func Merge(a agent.Agent, override AgentOverride, defaults DefaultsConfig) agent.Agent {
 	result := a
@@ -632,24 +633,24 @@ func Merge(a agent.Agent, override AgentOverride, defaults DefaultsConfig) agent
 		result.EnvForward = override.EnvForward
 	}
 
-	// CPUs: override > global default > agent default
+	// CPUs: override > agent default > global default
 	if override.CPUs > 0 {
 		result.DefaultCPUs = override.CPUs
-	} else if defaults.CPUs > 0 {
+	} else if result.DefaultCPUs == 0 && defaults.CPUs > 0 {
 		result.DefaultCPUs = defaults.CPUs
 	}
 
-	// Memory: override > global default > agent default
+	// Memory: override > agent default > global default
 	if override.Memory > 0 {
 		result.DefaultMemory = override.Memory.MiB()
-	} else if defaults.Memory > 0 {
+	} else if result.DefaultMemory == 0 && defaults.Memory > 0 {
 		result.DefaultMemory = defaults.Memory.MiB()
 	}
 
-	// TmpSize: override > global default > agent default
+	// TmpSize: override > agent default > global default
 	if override.TmpSize > 0 {
 		result.DefaultTmpSize = override.TmpSize.MiB()
-	} else if defaults.TmpSize > 0 {
+	} else if result.DefaultTmpSize == 0 && defaults.TmpSize > 0 {
 		result.DefaultTmpSize = defaults.TmpSize.MiB()
 	}
 
