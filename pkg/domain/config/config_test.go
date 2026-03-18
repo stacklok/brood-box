@@ -917,18 +917,173 @@ func TestMergeConfigs_MCPAuthz(t *testing.T) {
 	}
 }
 
-func TestMergeConfigs_AgentOverridesMCPSecurityFieldsStripped(t *testing.T) {
+func TestMergeConfigs_AgentOverridesMCPAuthzTightenOnly(t *testing.T) {
 	t.Parallel()
 
-	policies := []string{`permit(principal, action, resource);`}
+	tests := []struct {
+		name        string
+		global      *Config
+		local       *Config
+		agent       string
+		wantAuthz   *MCPAuthzConfig
+		wantEnabled *bool // if non-nil, assert MCP.Enabled matches
+	}{
+		{
+			name: "local can tighten per-agent authz — observe beats safe-tools",
+			global: &Config{
+				Agents: map[string]AgentOverride{
+					"claude-code": {
+						MCP: &MCPAgentOverride{
+							Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+						},
+					},
+				},
+			},
+			local: &Config{
+				Agents: map[string]AgentOverride{
+					"claude-code": {
+						MCP: &MCPAgentOverride{
+							Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+						},
+					},
+				},
+			},
+			agent:     "claude-code",
+			wantAuthz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+		},
+		{
+			name: "local cannot widen per-agent authz — full-access blocked by observe",
+			global: &Config{
+				Agents: map[string]AgentOverride{
+					"claude-code": {
+						MCP: &MCPAgentOverride{
+							Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+						},
+					},
+				},
+			},
+			local: &Config{
+				Agents: map[string]AgentOverride{
+					"claude-code": {
+						MCP: &MCPAgentOverride{
+							Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileFullAccess},
+						},
+					},
+				},
+			},
+			agent:     "claude-code",
+			wantAuthz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+		},
+		{
+			name:   "local sets per-agent authz when global has none",
+			global: &Config{},
+			local: &Config{
+				Agents: map[string]AgentOverride{
+					"codex": {
+						MCP: &MCPAgentOverride{
+							Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+						},
+					},
+				},
+			},
+			agent:     "codex",
+			wantAuthz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+		},
+		{
+			name:   "custom from local per-agent config is ignored",
+			global: &Config{},
+			local: &Config{
+				Agents: map[string]AgentOverride{
+					"codex": {
+						MCP: &MCPAgentOverride{
+							Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileCustom},
+						},
+					},
+				},
+			},
+			agent:     "codex",
+			wantAuthz: nil,
+		},
+		{
+			name: "enabled field survives alongside authz merge",
+			global: &Config{
+				Agents: map[string]AgentOverride{
+					"claude-code": {
+						MCP: &MCPAgentOverride{
+							Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+						},
+					},
+				},
+			},
+			local: &Config{
+				Agents: map[string]AgentOverride{
+					"claude-code": {
+						MCP: &MCPAgentOverride{
+							Enabled: boolPtr(false),
+							Authz:   &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+						},
+					},
+				},
+			},
+			agent:       "claude-code",
+			wantAuthz:   &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+			wantEnabled: boolPtr(false),
+		},
+		{
+			name: "local MCP with only Enabled set preserves global authz",
+			global: &Config{
+				Agents: map[string]AgentOverride{
+					"claude-code": {
+						MCP: &MCPAgentOverride{
+							Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+						},
+					},
+				},
+			},
+			local: &Config{
+				Agents: map[string]AgentOverride{
+					"claude-code": {
+						MCP: &MCPAgentOverride{
+							Enabled: boolPtr(false),
+						},
+					},
+				},
+			},
+			agent:       "claude-code",
+			wantAuthz:   &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+			wantEnabled: boolPtr(false),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := MergeConfigs(tt.global, tt.local)
+			agentOverride, ok := result.Agents[tt.agent]
+			if tt.wantAuthz == nil {
+				if ok && agentOverride.MCP != nil && agentOverride.MCP.Authz != nil {
+					t.Errorf("expected nil authz, got %+v", agentOverride.MCP.Authz)
+				}
+			} else {
+				require.True(t, ok, "agent should exist in result")
+				require.NotNil(t, agentOverride.MCP, "MCP should be present")
+				assert.Equal(t, tt.wantAuthz, agentOverride.MCP.Authz)
+			}
+			if tt.wantEnabled != nil && ok && agentOverride.MCP != nil {
+				require.NotNil(t, agentOverride.MCP.Enabled, "MCP.Enabled should be set")
+				assert.Equal(t, *tt.wantEnabled, *agentOverride.MCP.Enabled, "MCP.Enabled")
+			}
+		})
+	}
+}
+
+func TestMergeConfigs_AgentOverridesMCPDoesNotMutateGlobal(t *testing.T) {
+	t.Parallel()
+
 	global := &Config{
 		Agents: map[string]AgentOverride{
 			"claude-code": {
-				MCP: &MCPConfig{
-					Group: "global-group",
-					Config: &MCPFileConfig{
-						Authz: &MCPFileAuthzConfig{Policies: policies},
-					},
+				MCP: &MCPAgentOverride{
 					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
 				},
 			},
@@ -937,42 +1092,210 @@ func TestMergeConfigs_AgentOverridesMCPSecurityFieldsStripped(t *testing.T) {
 	local := &Config{
 		Agents: map[string]AgentOverride{
 			"claude-code": {
-				MCP: &MCPConfig{
-					Group: "local-group",
-					Config: &MCPFileConfig{
-						Authz: &MCPFileAuthzConfig{Policies: policies},
-					},
-					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileFullAccess},
-				},
-			},
-			"codex": {
-				MCP: &MCPConfig{
-					Config: &MCPFileConfig{
-						Authz: &MCPFileAuthzConfig{Policies: policies},
-					},
+				MCP: &MCPAgentOverride{
 					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
 				},
 			},
 		},
 	}
 
-	result := MergeConfigs(global, local)
+	_ = MergeConfigs(global, local)
 
-	// Local agent override MCP.Config and MCP.Authz must be stripped.
-	claude := result.Agents["claude-code"]
-	assert.NotNil(t, claude.MCP, "MCP should be preserved")
-	assert.Equal(t, "local-group", claude.MCP.Group, "non-security MCP fields should survive")
-	assert.Nil(t, claude.MCP.Config, "MCP.Config from local override must be stripped")
-	assert.Nil(t, claude.MCP.Authz, "MCP.Authz from local override must be stripped")
-
-	codex := result.Agents["codex"]
-	assert.NotNil(t, codex.MCP)
-	assert.Nil(t, codex.MCP.Config, "MCP.Config from local override must be stripped")
-	assert.Nil(t, codex.MCP.Authz, "MCP.Authz from local override must be stripped")
-
-	// Global agent override security fields are preserved (trusted config).
-	assert.NotNil(t, global.Agents["claude-code"].MCP.Config, "global input must not be mutated")
+	// Global agent override must not be mutated.
 	assert.NotNil(t, global.Agents["claude-code"].MCP.Authz, "global input must not be mutated")
+	assert.Equal(t, MCPAuthzProfileObserve, global.Agents["claude-code"].MCP.Authz.Profile)
+}
+
+func TestMergeAgentOverride_FieldByField(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name   string
+		global AgentOverride
+		local  AgentOverride
+		want   AgentOverride
+	}{
+		{
+			name: "local resource override preserves global security fields",
+			global: AgentOverride{
+				Image: "original:v1",
+				MCP: &MCPAgentOverride{
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+				},
+				EgressProfile: "locked",
+			},
+			local: AgentOverride{
+				CPUs: 4,
+			},
+			want: AgentOverride{
+				Image: "original:v1",
+				CPUs:  4,
+				MCP: &MCPAgentOverride{
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+				},
+				EgressProfile: "locked",
+			},
+		},
+		{
+			name: "local egress profile tighten-only — cannot widen",
+			global: AgentOverride{
+				EgressProfile: "locked",
+			},
+			local: AgentOverride{
+				EgressProfile: "permissive",
+			},
+			want: AgentOverride{
+				EgressProfile: "locked",
+			},
+		},
+		{
+			name: "local egress profile can tighten",
+			global: AgentOverride{
+				EgressProfile: "standard",
+			},
+			local: AgentOverride{
+				EgressProfile: "locked",
+			},
+			want: AgentOverride{
+				EgressProfile: "locked",
+			},
+		},
+		{
+			name:   "local egress profile tightens implicit permissive",
+			global: AgentOverride{},
+			local: AgentOverride{
+				EgressProfile: "standard",
+			},
+			want: AgentOverride{
+				EgressProfile: "standard",
+			},
+		},
+		{
+			name: "allow hosts are additive",
+			global: AgentOverride{
+				AllowHosts: []EgressHostConfig{{Name: "a.example.com"}},
+			},
+			local: AgentOverride{
+				AllowHosts: []EgressHostConfig{{Name: "b.example.com"}},
+			},
+			want: AgentOverride{
+				AllowHosts: []EgressHostConfig{
+					{Name: "a.example.com"},
+					{Name: "b.example.com"},
+				},
+			},
+		},
+		{
+			name: "MCP authz tighten-only via field-by-field merge",
+			global: AgentOverride{
+				MCP: &MCPAgentOverride{
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
+				},
+			},
+			local: AgentOverride{
+				MCP: &MCPAgentOverride{
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+				},
+			},
+			want: AgentOverride{
+				MCP: &MCPAgentOverride{
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+				},
+			},
+		},
+		{
+			name: "MCP enabled override preserves global authz",
+			global: AgentOverride{
+				MCP: &MCPAgentOverride{
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+				},
+			},
+			local: AgentOverride{
+				MCP: &MCPAgentOverride{
+					Enabled: boolPtr(false),
+				},
+			},
+			want: AgentOverride{
+				MCP: &MCPAgentOverride{
+					Enabled: boolPtr(false),
+					Authz:   &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+				},
+			},
+		},
+		{
+			name: "all resource fields override when non-zero",
+			global: AgentOverride{
+				Image:      "old:v1",
+				Command:    []string{"old-cmd"},
+				EnvForward: []string{"OLD_*"},
+				CPUs:       2,
+				Memory:     ByteSize(2048),
+				TmpSize:    ByteSize(512),
+			},
+			local: AgentOverride{
+				Image:      "new:v2",
+				Command:    []string{"new-cmd", "--flag"},
+				EnvForward: []string{"NEW_*"},
+				CPUs:       8,
+				Memory:     ByteSize(8192),
+				TmpSize:    ByteSize(1024),
+			},
+			want: AgentOverride{
+				Image:      "new:v2",
+				Command:    []string{"new-cmd", "--flag"},
+				EnvForward: []string{"NEW_*"},
+				CPUs:       8,
+				Memory:     ByteSize(8192),
+				TmpSize:    ByteSize(1024),
+			},
+		},
+		{
+			name:   "zero local is a no-op",
+			global: AgentOverride{Image: "keep", CPUs: 4},
+			local:  AgentOverride{},
+			want:   AgentOverride{Image: "keep", CPUs: 4},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := mergeAgentOverride(tt.global, tt.local)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestMergeConfigs_AgentOverridePreservesSecurityFields(t *testing.T) {
+	t.Parallel()
+
+	// Exact scenario from review: local sets cpus, global has MCP authz + egress.
+	global := &Config{
+		Agents: map[string]AgentOverride{
+			"claude-code": {
+				MCP: &MCPAgentOverride{
+					Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
+				},
+				EgressProfile: "locked",
+			},
+		},
+	}
+	local := &Config{
+		Agents: map[string]AgentOverride{
+			"claude-code": {
+				CPUs: 4,
+			},
+		},
+	}
+
+	result := MergeConfigs(global, local)
+	ao := result.Agents["claude-code"]
+
+	assert.Equal(t, uint32(4), ao.CPUs, "CPUs should be overridden")
+	require.NotNil(t, ao.MCP, "MCP should be preserved from global")
+	require.NotNil(t, ao.MCP.Authz, "MCP.Authz should be preserved from global")
+	assert.Equal(t, MCPAuthzProfileObserve, ao.MCP.Authz.Profile, "authz profile should survive")
+	assert.Equal(t, "locked", ao.EgressProfile, "egress profile should survive")
 }
 
 func TestMergeConfigs_SettingsImport(t *testing.T) {

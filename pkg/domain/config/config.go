@@ -365,6 +365,20 @@ func StricterMCPAuthzProfile(a, b string) string {
 	return a
 }
 
+// MCPAgentOverride holds the subset of MCP settings that can be
+// overridden per-agent. Only Enabled (gate) and Authz (tighten-only)
+// have runtime effect at the per-agent level.
+type MCPAgentOverride struct {
+	// Enabled controls whether the MCP proxy is active for this agent.
+	// nil means "no override" (inherit global setting), unlike
+	// MCPConfig.Enabled where nil defaults to true.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// Authz overrides the MCP authorization profile for this agent.
+	// Tighten-only: can only make the profile stricter, not more permissive.
+	Authz *MCPAuthzConfig `yaml:"authz,omitempty"`
+}
+
 // IsEnabled returns whether the MCP proxy is enabled.
 // Defaults to true when Enabled is nil.
 func (m MCPConfig) IsEnabled() bool {
@@ -457,7 +471,8 @@ type AgentOverride struct {
 	AllowHosts []EgressHostConfig `yaml:"allow_hosts,omitempty"`
 
 	// MCP overrides the global MCP proxy settings for this agent.
-	MCP *MCPConfig `yaml:"mcp,omitempty"`
+	// Only Enabled (gate) and Authz (tighten-only) are supported.
+	MCP *MCPAgentOverride `yaml:"mcp,omitempty"`
 
 	// SettingsImport overrides the global settings import for this agent.
 	SettingsImport *SettingsImportConfig `yaml:"settings_import,omitempty"`
@@ -569,13 +584,12 @@ func MergeConfigs(global, local *Config) *Config {
 
 	// MCP.Authz: local can only tighten (not widen). Same security pattern
 	// as egress profiles — a workspace config cannot escalate permissions.
-	result.MCP.Authz = mergeMCPAuthzConfig(global.MCP.Authz, local.MCP.Authz)
+	result.MCP.Authz = MergeMCPAuthzConfig(global.MCP.Authz, local.MCP.Authz)
 
 	// Agents: local extends/overrides global per key.
-	// MCP.Config and MCP.Authz are stripped from local overrides — workspace
-	// config must not inject Cedar policies, aggregation settings, or authz
-	// profiles through per-agent overrides (same security pattern as top-level
-	// MCP.Authz tighten-only and Auth ignore).
+	// Security fields (EgressProfile, MCP.Authz) use tighten-only merge.
+	// Resource/identity fields use local-overrides-when-non-zero.
+	// AllowHosts are additive.
 	if len(local.Agents) > 0 {
 		if result.Agents == nil {
 			result.Agents = make(map[string]AgentOverride)
@@ -588,11 +602,11 @@ func MergeConfigs(global, local *Config) *Config {
 			result.Agents = merged
 		}
 		for k, v := range local.Agents {
-			if v.MCP != nil && (v.MCP.Config != nil || v.MCP.Authz != nil) {
-				sanitized := *v.MCP
-				sanitized.Config = nil
-				sanitized.Authz = nil
-				v.MCP = &sanitized
+			if ga, ok := result.Agents[k]; ok {
+				v = mergeAgentOverride(ga, v)
+			} else {
+				// New agent from local — still sanitize security fields.
+				v = sanitizeNewAgentOverride(v)
 			}
 			result.Agents[k] = v
 		}
@@ -690,12 +704,12 @@ func mergeGitConfig(global, local GitConfig) GitConfig {
 	return result
 }
 
-// mergeMCPAuthzConfig merges local into global using tighten-only semantics.
+// MergeMCPAuthzConfig merges local into global using tighten-only semantics.
 // Local can only make the profile stricter, never more permissive.
 // "custom" from local config is silently ignored (security: local config must
 // not be able to switch to operator-controlled Cedar policies).
 // Returns nil when neither side sets an authz config.
-func mergeMCPAuthzConfig(global, local *MCPAuthzConfig) *MCPAuthzConfig {
+func MergeMCPAuthzConfig(global, local *MCPAuthzConfig) *MCPAuthzConfig {
 	if local == nil || local.Profile == "" {
 		return global
 	}
@@ -772,6 +786,102 @@ func TightenSettingsCategories(global, local *SettingsCategoryConfig) *SettingsC
 	tightenBool(&result.Themes, local.Themes)
 
 	return &result
+}
+
+// mergeAgentOverride merges a local (workspace) agent override into a global one.
+// Rules mirror the top-level MergeConfigs patterns:
+//   - Resource/identity fields (Image, Command, EnvForward, CPUs, Memory, TmpSize):
+//     local overrides global when non-zero.
+//   - EgressProfile: tighten-only via egress.Stricter.
+//   - AllowHosts: additive (global + local).
+//   - MCP.Enabled: local overrides global.
+//   - MCP.Authz: tighten-only via MergeMCPAuthzConfig.
+//   - SettingsImport: tighten-only via mergeSettingsImportConfig.
+func mergeAgentOverride(global, local AgentOverride) AgentOverride {
+	result := global
+
+	// Resource/identity: local overrides when non-zero.
+	if local.Image != "" {
+		result.Image = local.Image
+	}
+	if len(local.Command) > 0 {
+		result.Command = local.Command
+	}
+	if len(local.EnvForward) > 0 {
+		result.EnvForward = local.EnvForward
+	}
+	if local.CPUs > 0 {
+		result.CPUs = local.CPUs
+	}
+	if local.Memory > 0 {
+		result.Memory = local.Memory
+	}
+	if local.TmpSize > 0 {
+		result.TmpSize = local.TmpSize
+	}
+
+	// EgressProfile: tighten-only, matching top-level Defaults.EgressProfile merge.
+	if local.EgressProfile != "" {
+		effectiveGlobal := egress.ProfileName(result.EgressProfile)
+		if effectiveGlobal == "" {
+			effectiveGlobal = egress.ProfilePermissive
+		}
+		result.EgressProfile = string(egress.Stricter(
+			effectiveGlobal,
+			egress.ProfileName(local.EgressProfile),
+		))
+	}
+
+	// AllowHosts: additive, matching Network.AllowHosts merge.
+	if len(local.AllowHosts) > 0 {
+		result.AllowHosts = append(
+			append([]EgressHostConfig{}, result.AllowHosts...),
+			local.AllowHosts...,
+		)
+	}
+
+	// MCP: merge Enabled and Authz separately.
+	if local.MCP != nil {
+		if result.MCP == nil {
+			result.MCP = &MCPAgentOverride{}
+		} else {
+			// Copy to avoid mutating the global.
+			cp := *result.MCP
+			result.MCP = &cp
+		}
+		if local.MCP.Enabled != nil {
+			result.MCP.Enabled = local.MCP.Enabled
+		}
+		result.MCP.Authz = MergeMCPAuthzConfig(result.MCP.Authz, local.MCP.Authz)
+	}
+
+	// SettingsImport: tighten-only, matching top-level merge.
+	if local.SettingsImport != nil {
+		if result.SettingsImport == nil {
+			// Local can only disable — when global has no settings import
+			// config, only honour an explicit disable from local.
+			if local.SettingsImport.Enabled != nil && !*local.SettingsImport.Enabled {
+				result.SettingsImport = local.SettingsImport
+			}
+		} else {
+			merged := mergeSettingsImportConfig(*result.SettingsImport, *local.SettingsImport)
+			result.SettingsImport = &merged
+		}
+	}
+
+	return result
+}
+
+// sanitizeNewAgentOverride strips security-sensitive fields that a workspace
+// config must not set on a brand-new agent (one with no global counterpart).
+// "custom" MCP authz profile is blocked (same as MergeMCPAuthzConfig).
+func sanitizeNewAgentOverride(ao AgentOverride) AgentOverride {
+	if ao.MCP != nil && ao.MCP.Authz != nil && ao.MCP.Authz.Profile == MCPAuthzProfileCustom {
+		sanitized := *ao.MCP
+		sanitized.Authz = nil
+		ao.MCP = &sanitized
+	}
+	return ao
 }
 
 // ToEgressHosts converts config host entries to domain egress hosts.

@@ -30,6 +30,8 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/workspace"
 )
 
+func boolPtr(b bool) *bool { return &b }
+
 // mockVMRunner records the config it was called with.
 type mockVMRunner struct {
 	startCfg domvm.VMConfig
@@ -1432,18 +1434,20 @@ func TestResolveMCPConfig(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		cfg       *SandboxConfig
-		agentName string
-		wantGroup string
-		wantPort  uint16
+		name        string
+		cfg         *SandboxConfig
+		agentName   string
+		wantGroup   string
+		wantPort    uint16
+		wantEnabled bool
 	}{
 		{
-			name:      "zero config applies defaults",
-			cfg:       &SandboxConfig{},
-			agentName: "test",
-			wantGroup: "default",
-			wantPort:  4483,
+			name:        "zero config applies defaults",
+			cfg:         &SandboxConfig{},
+			agentName:   "test",
+			wantGroup:   "default",
+			wantPort:    4483,
+			wantEnabled: true,
 		},
 		{
 			name: "global config preserved",
@@ -1453,12 +1457,13 @@ func TestResolveMCPConfig(t *testing.T) {
 					Port:  9999,
 				},
 			},
-			agentName: "test",
-			wantGroup: "custom-group",
-			wantPort:  9999,
+			agentName:   "test",
+			wantGroup:   "custom-group",
+			wantPort:    9999,
+			wantEnabled: true,
 		},
 		{
-			name: "agent override wins",
+			name: "agent override disables MCP",
 			cfg: &SandboxConfig{
 				MCP: domainconfig.MCPConfig{
 					Group: "global-group",
@@ -1466,19 +1471,19 @@ func TestResolveMCPConfig(t *testing.T) {
 				},
 				AgentOverrides: map[string]domainconfig.AgentOverride{
 					"test": {
-						MCP: &domainconfig.MCPConfig{
-							Group: "agent-group",
-							Port:  7777,
+						MCP: &domainconfig.MCPAgentOverride{
+							Enabled: boolPtr(false),
 						},
 					},
 				},
 			},
-			agentName: "test",
-			wantGroup: "agent-group",
-			wantPort:  7777,
+			agentName:   "test",
+			wantGroup:   "global-group",
+			wantPort:    5555,
+			wantEnabled: false,
 		},
 		{
-			name: "empty override does not clear global",
+			name: "empty override does not change enabled",
 			cfg: &SandboxConfig{
 				MCP: domainconfig.MCPConfig{
 					Group: "global-group",
@@ -1486,15 +1491,35 @@ func TestResolveMCPConfig(t *testing.T) {
 				},
 				AgentOverrides: map[string]domainconfig.AgentOverride{
 					"test": {
-						MCP: &domainconfig.MCPConfig{
-							// Empty group and zero port should not clear global values.
+						MCP: &domainconfig.MCPAgentOverride{},
+					},
+				},
+			},
+			agentName:   "test",
+			wantGroup:   "global-group",
+			wantPort:    5555,
+			wantEnabled: true,
+		},
+		{
+			name: "agent override re-enables MCP",
+			cfg: &SandboxConfig{
+				MCP: domainconfig.MCPConfig{
+					Enabled: boolPtr(false),
+					Group:   "global-group",
+					Port:    5555,
+				},
+				AgentOverrides: map[string]domainconfig.AgentOverride{
+					"test": {
+						MCP: &domainconfig.MCPAgentOverride{
+							Enabled: boolPtr(true),
 						},
 					},
 				},
 			},
-			agentName: "test",
-			wantGroup: "global-group",
-			wantPort:  5555,
+			agentName:   "test",
+			wantGroup:   "global-group",
+			wantPort:    5555,
+			wantEnabled: true,
 		},
 		{
 			name: "agent not in map uses global",
@@ -1505,16 +1530,16 @@ func TestResolveMCPConfig(t *testing.T) {
 				},
 				AgentOverrides: map[string]domainconfig.AgentOverride{
 					"other-agent": {
-						MCP: &domainconfig.MCPConfig{
-							Group: "other-group",
-							Port:  8888,
+						MCP: &domainconfig.MCPAgentOverride{
+							Enabled: boolPtr(false),
 						},
 					},
 				},
 			},
-			agentName: "test",
-			wantGroup: "global-group",
-			wantPort:  6666,
+			agentName:   "test",
+			wantGroup:   "global-group",
+			wantPort:    6666,
+			wantEnabled: true,
 		},
 	}
 
@@ -1529,6 +1554,7 @@ func TestResolveMCPConfig(t *testing.T) {
 
 			assert.Equal(t, tt.wantGroup, got.Group)
 			assert.Equal(t, tt.wantPort, got.Port)
+			assert.Equal(t, tt.wantEnabled, got.IsEnabled())
 		})
 	}
 }

@@ -653,6 +653,14 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			authzCfg = &domainconfig.MCPAuthzConfig{Profile: domainconfig.MCPAuthzProfileCustom}
 		}
 
+		// Merge per-agent authz override (tighten-only) before constructing
+		// the VMCPProvider singleton.
+		if cfg != nil {
+			if ao, ok := cfg.Agents[agentName]; ok && ao.MCP != nil && ao.MCP.Authz != nil {
+				authzCfg = domainconfig.MergeMCPAuthzConfig(authzCfg, ao.MCP.Authz)
+			}
+		}
+
 		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpFileConfig, authzCfg, logger, logFile)
 		deps.MCPProvider = mcpProvider
 		defer func() { _ = mcpProvider.Close() }()
@@ -1058,14 +1066,13 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 			if override.MCP.Enabled != nil {
 				warnings = append(warnings, fmt.Sprintf("sets %s MCP enabled: %t", safeName, *override.MCP.Enabled))
 			}
-			if override.MCP.Group != "" {
-				warnings = append(warnings, fmt.Sprintf("sets %s MCP group: %s", safeName, sanitizeValue(override.MCP.Group)))
-			}
-			if override.MCP.Port != 0 {
-				warnings = append(warnings, fmt.Sprintf("sets %s MCP port: %d", safeName, override.MCP.Port))
-			}
-			if override.MCP.Config != nil {
-				warnings = append(warnings, fmt.Sprintf("sets %s MCP config (inline Cedar policies/aggregation)", safeName))
+			if override.MCP.Authz != nil && override.MCP.Authz.Profile != "" {
+				profile := sanitizeValue(override.MCP.Authz.Profile)
+				if override.MCP.Authz.Profile == domainconfig.MCPAuthzProfileCustom {
+					warnings = append(warnings, fmt.Sprintf("%s MCP authz profile %q is ignored — custom profiles cannot be set from workspace config", safeName, profile))
+				} else {
+					warnings = append(warnings, fmt.Sprintf("sets %s MCP authz profile: %s (can only tighten, not widen)", safeName, profile))
+				}
 			}
 		}
 	}

@@ -749,27 +749,20 @@ func (s *SandboxRunner) resolveSettingsManifest(
 }
 
 // resolveMCPConfig returns the effective MCP configuration by merging
-// global config with any agent-specific override.
+// global config with any agent-specific Enabled override.
+// Per-agent authz is handled at the composition root (cmd/bbox/main.go)
+// where the VMCPProvider is constructed.
 func (s *SandboxRunner) resolveMCPConfig(cfg *SandboxConfig, agentName string) config.MCPConfig {
 	mcpCfg := cfg.MCP
 
-	// Apply agent-specific override if present.
+	// Apply agent-specific Enabled override if present.
 	if override, ok := cfg.AgentOverrides[agentName]; ok && override.MCP != nil {
 		if override.MCP.Enabled != nil {
 			mcpCfg.Enabled = override.MCP.Enabled
 		}
-		if override.MCP.Group != "" {
-			mcpCfg.Group = override.MCP.Group
-		}
-		if override.MCP.Port != 0 {
-			mcpCfg.Port = override.MCP.Port
-		}
-		if override.MCP.Config != nil {
-			mcpCfg.Config = override.MCP.Config
-		}
 	}
 
-	// Apply defaults.
+	// Apply defaults for log message.
 	if mcpCfg.Group == "" {
 		mcpCfg.Group = "default"
 	}
