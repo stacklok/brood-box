@@ -410,7 +410,7 @@ func TestMerge(t *testing.T) {
 			want: baseAgent,
 		},
 		{
-			name: "global defaults override built-in resource defaults",
+			name: "global defaults do not override built-in resource defaults",
 			agent: agent.Agent{
 				Name:                 "a",
 				Image:                "i:l",
@@ -430,9 +430,9 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultCPUs:          6,
-				DefaultMemory:        8192,
-				DefaultTmpSize:       2048,
+				DefaultCPUs:          2,
+				DefaultMemory:        4096,
+				DefaultTmpSize:       512,
 				DefaultEgressProfile: egress.ProfileStandard,
 			},
 		},
