@@ -159,8 +159,8 @@ Example:
 	}
 
 	cmd.Flags().Uint32Var(&cpus, "cpus", 0, "Number of vCPUs (0 = agent default)")
-	cmd.Flags().StringVar(&memory, "memory", "", "RAM for the VM, e.g. 4g or 512m (0 = agent default)")
-	cmd.Flags().StringVar(&tmpSize, "tmp-size", "", "Size of /tmp tmpfs inside the VM, e.g. 512m or 2g (0 = agent default)")
+	cmd.Flags().StringVar(&memory, "memory", "", "RAM for the VM, e.g. 4g or 512m (empty = agent default)")
+	cmd.Flags().StringVar(&tmpSize, "tmp-size", "", "Size of /tmp tmpfs inside the VM, e.g. 512m or 2g (empty = agent default)")
 	cmd.Flags().StringVar(&wsPath, "workspace", "", "Workspace directory to mount (default: current directory)")
 	cmd.Flags().Uint16Var(&sshPort, "ssh-port", 0, "Host SSH port (0 = auto-pick)")
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/broodbox/config.yaml)")
