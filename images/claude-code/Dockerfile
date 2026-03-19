@@ -17,6 +17,5 @@ RUN export PATH="$HOME/.local/bin:$PATH" && \
 
 # Set sandbox env vars that should be baked into the image
 ENV IS_SANDBOX=1
-ENV DISABLE_AUTOUPDATER=1
 ENV DISABLE_TELEMETRY=1
 ENV DISABLE_ERROR_REPORTING=1
