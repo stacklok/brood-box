@@ -38,7 +38,7 @@ jobs:
           git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Task
-        uses: go-task/setup-task@v1
+        uses: go-task/setup-task@v2
 
       - name: Build bbox-init (for go:embed)
         run: task build-init
@@ -67,7 +67,7 @@ jobs:
           git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Task
-        uses: go-task/setup-task@v1
+        uses: go-task/setup-task@v2
 
       - name: Install golangci-lint
         uses: golangci/golangci-lint-action@v9
@@ -101,7 +101,7 @@ jobs:
           git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Task
-        uses: go-task/setup-task@v1
+        uses: go-task/setup-task@v2
 
       - name: Build
         run: task build
@@ -124,7 +124,7 @@ jobs:
           git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Task
-        uses: go-task/setup-task@v1
+        uses: go-task/setup-task@v2
 
       - name: Build bbox-init (for go:embed)
         run: task build-init
