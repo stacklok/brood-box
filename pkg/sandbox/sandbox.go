@@ -143,6 +143,9 @@ type SandboxDeps struct {
 
 	// GitIdentityProvider resolves the host git user identity.
 	GitIdentityProvider domaingit.IdentityProvider
+
+	// CommitReplayer replays git commits from the snapshot to the original workspace (nil = disabled).
+	CommitReplayer domaingit.CommitReplayer
 }
 
 // Sandbox holds the state of a running sandbox session.
@@ -192,6 +195,7 @@ type SandboxRunner struct {
 	mcpProvider            hostservice.Provider
 	snapshotPostProcessors []workspace.SnapshotPostProcessor
 	gitIdentityProvider    domaingit.IdentityProvider
+	commitReplayer         domaingit.CommitReplayer
 }
 
 // NewSandboxRunner creates a new SandboxRunner with the given dependencies.
@@ -216,6 +220,7 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 		mcpProvider:            deps.MCPProvider,
 		snapshotPostProcessors: deps.SnapshotPostProcessors,
 		gitIdentityProvider:    deps.GitIdentityProvider,
+		commitReplayer:         deps.CommitReplayer,
 	}
 }
 
@@ -448,6 +453,15 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 			}
 		}
 
+		// Record the snapshot's HEAD so commit replay can detect new commits.
+		if s.commitReplayer != nil {
+			baseRef, refErr := s.commitReplayer.ResolveHEAD(ctx, snap.SnapshotPath)
+			if refErr != nil {
+				s.logger.Debug("could not record snapshot base ref", "error", refErr)
+			}
+			snap.BaseRef = baseRef
+		}
+
 		workspacePath = snap.SnapshotPath
 	}
 
@@ -592,6 +606,45 @@ func (s *SandboxRunner) Flush(sb *Sandbox, accepted []snapshot.FileChange) error
 	return nil
 }
 
+// ReplayCommits replays git commits from the snapshot onto the original workspace.
+// This is a best-effort operation — errors are logged but do not fail the pipeline.
+// Must be called after Flush so the working tree is already correct.
+func (s *SandboxRunner) ReplayCommits(ctx context.Context, sb *Sandbox, accepted []snapshot.FileChange) {
+	if sb.Snapshot == nil || s.commitReplayer == nil {
+		return
+	}
+	if sb.Snapshot.BaseRef == "" {
+		s.logger.Debug("no base ref recorded, skipping commit replay")
+		return
+	}
+
+	s.observer.Start(progress.PhaseReplayingCommits, "Replaying git commits...")
+
+	// Extract accepted file paths.
+	paths := make([]string, 0, len(accepted))
+	for _, fc := range accepted {
+		paths = append(paths, fc.RelPath)
+	}
+
+	result, err := s.commitReplayer.Replay(ctx, sb.Snapshot.OriginalPath, sb.Snapshot.SnapshotPath, sb.Snapshot.BaseRef, paths)
+	if err != nil {
+		s.observer.Warn(fmt.Sprintf("Commit replay failed: %v", err))
+		s.logger.Warn("commit replay failed", "error", err)
+		return
+	}
+
+	if result.Diverged {
+		s.observer.Warn("Skipped commit replay: original repo HEAD diverged during VM session")
+		return
+	}
+
+	if result.Replayed == 0 {
+		s.observer.Complete("No commits to replay")
+	} else {
+		s.observer.Complete(fmt.Sprintf("Replayed %d commit(s), skipped %d", result.Replayed, result.Skipped))
+	}
+}
+
 // Run executes the full sandbox lifecycle for the named agent:
 // Prepare -> Attach -> Stop -> review/flush -> Cleanup.
 // opts.Terminal must be set to provide I/O streams for the session.
@@ -631,6 +684,9 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 				reviewErr = fmt.Errorf("reviewing changes: %w", revErr)
 			} else if len(result.Accepted) > 0 {
 				reviewErr = s.Flush(sb, result.Accepted)
+				if reviewErr == nil {
+					s.ReplayCommits(ctx, sb, result.Accepted)
+				}
 			} else {
 				s.observer.Warn("No changes accepted")
 			}

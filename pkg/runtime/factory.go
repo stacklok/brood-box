@@ -69,6 +69,9 @@ type DefaultSandboxDepsOpts struct {
 	// Defaults to ~/.cache/broodbox/snapshots/ (XDG_CACHE_HOME), falling
 	// back to os.TempDir() if XDG resolution fails.
 	SnapshotDir string
+
+	// CommitReplayer overrides the git commit replayer (nil = auto-create default).
+	CommitReplayer domaingit.CommitReplayer
 }
 
 // NewDefaultSandboxDeps wires Brood Box's standard infrastructure dependencies.
@@ -138,7 +141,16 @@ func NewDefaultSandboxDeps(opts DefaultSandboxDepsOpts) sandbox.SandboxDeps {
 		MCPProvider:            opts.MCPProvider,
 		SnapshotPostProcessors: opts.SnapshotPostProcessors,
 		GitIdentityProvider:    gitIdentityProvider,
+		CommitReplayer:         resolveCommitReplayer(opts.CommitReplayer, logger),
 	}
+}
+
+// resolveCommitReplayer returns the provided replayer or creates a default one.
+func resolveCommitReplayer(override domaingit.CommitReplayer, logger *slog.Logger) domaingit.CommitReplayer {
+	if override != nil {
+		return override
+	}
+	return infragit.NewGitCommitReplayer(logger)
 }
 
 // NewDefaultSandboxRunner constructs a SandboxRunner using default infra wiring.
