@@ -26,6 +26,7 @@ import (
 	"github.com/stacklok/toolhive/pkg/vmcp/discovery"
 	"github.com/stacklok/toolhive/pkg/vmcp/router"
 	vmcpserver "github.com/stacklok/toolhive/pkg/vmcp/server"
+	vmcpsession "github.com/stacklok/toolhive/pkg/vmcp/session"
 	workloadsmgr "github.com/stacklok/toolhive/pkg/workloads"
 
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
@@ -148,6 +149,12 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 		return nil, err
 	}
 
+	// Create session factory for vmcp session management.
+	sessionFactory := vmcpsession.NewSessionFactory(
+		authRegistry,
+		vmcpsession.WithAggregator(agg),
+	)
+
 	// Create vmcp server with the resolved auth/authz middleware.
 	srv, err := vmcpserver.New(
 		ctx,
@@ -159,6 +166,7 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 			AuthMiddleware:  authMiddleware,
 			AuthzMiddleware: authzMiddleware,
 			AuthInfoHandler: authInfoHandler,
+			SessionFactory:  sessionFactory,
 		},
 		rt,
 		backendClient,

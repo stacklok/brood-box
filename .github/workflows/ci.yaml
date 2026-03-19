@@ -106,6 +106,40 @@ jobs:
       - name: Build
         run: task build
 
+  integration-test:
+    name: Integration Test (MCP)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Configure Git for private modules
+        run: |
+          git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
+
+      - name: Install Task
+        uses: go-task/setup-task@v1
+
+      - name: Build bbox-init (for go:embed)
+        run: task build-init
+
+      - name: Install ToolHive
+        uses: StacklokLabs/toolhive-actions/install@v0
+
+      - name: Run MCP server
+        uses: StacklokLabs/toolhive-actions/run-mcp-server@v0
+        with:
+          server: fetch
+
+      - name: Run integration tests
+        run: go test -v -race -run Integration ./internal/infra/mcp/
+
   images:
     name: Build Images
     runs-on: ubuntu-latest
