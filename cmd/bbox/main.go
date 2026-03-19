@@ -730,6 +730,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 	deps.Flusher = review.NewFSFlusher()
 	deps.Differ = diff.NewFSDiffer()
+	deps.CommitReplayer = infragit.NewGitCommitReplayer(logger)
 
 	// Wire snapshot post-processors (git config sanitizer).
 	deps.SnapshotPostProcessors = []workspace.SnapshotPostProcessor{

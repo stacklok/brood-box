@@ -23,6 +23,8 @@ const (
 	PhaseComputingDiff
 	// PhaseFlushingChanges is the accepted-changes flush phase.
 	PhaseFlushingChanges
+	// PhaseReplayingCommits is the git commit replay phase.
+	PhaseReplayingCommits
 	// PhaseConfiguringMCP is the MCP proxy configuration phase.
 	PhaseConfiguringMCP
 	// PhaseSavingCredentials is the credential persistence phase.

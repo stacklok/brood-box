@@ -19,6 +19,10 @@ type Snapshot struct {
 	// SnapshotPath is the COW clone directory.
 	SnapshotPath string
 
+	// BaseRef is the HEAD commit hash at snapshot creation time.
+	// Empty if the snapshot has no commits (e.g. worktree case).
+	BaseRef string
+
 	// Cleanup removes the snapshot directory. Set by the WorkspaceCloner
 	// implementation. Safe to call multiple times.
 	Cleanup func() error
