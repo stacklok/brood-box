@@ -847,6 +847,9 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 				reviewErr = fmt.Errorf("reviewing changes: %w", revErr)
 			} else if len(result.Accepted) > 0 {
 				reviewErr = runner.Flush(sb, result.Accepted)
+				if reviewErr == nil {
+					runner.ReplayCommits(ctx, sb, result.Accepted)
+				}
 			} else {
 				observer.Warn("No changes accepted")
 			}

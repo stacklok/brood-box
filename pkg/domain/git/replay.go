@@ -29,4 +29,7 @@ type ReplayResult struct {
 	Replayed int
 	// Skipped is the number of commits that were skipped (e.g. no accepted files, merge commits).
 	Skipped int
+	// Diverged is true when the original repo's HEAD has moved since the
+	// snapshot was taken. Replay is skipped to avoid misleading history.
+	Diverged bool
 }

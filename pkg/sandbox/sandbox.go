@@ -633,6 +633,11 @@ func (s *SandboxRunner) ReplayCommits(ctx context.Context, sb *Sandbox, accepted
 		return
 	}
 
+	if result.Diverged {
+		s.observer.Warn("Skipped commit replay: original repo HEAD diverged during VM session")
+		return
+	}
+
 	if result.Replayed == 0 {
 		s.observer.Complete("No commits to replay")
 	} else {

@@ -401,6 +401,152 @@ func TestReplay_UncommittedChangesRestored(t *testing.T) {
 	}
 }
 
+func TestResolveHEAD_NoCommits(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	run(t, dir, "git", "init")
+
+	replayer := newTestReplayer()
+	head, err := replayer.ResolveHEAD(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("expected nil error, got %v", err)
+	}
+	if head != "" {
+		t.Errorf("expected empty HEAD for repo with no commits, got %q", head)
+	}
+}
+
+func TestReplay_HeadDiverged(t *testing.T) {
+	t.Parallel()
+
+	// Create a common bare repo to clone from so both repos share the same initial commit.
+	bare := t.TempDir()
+	run(t, bare, "git", "init", "--bare")
+
+	snapshot := t.TempDir()
+	run(t, "", "git", "clone", bare, snapshot)
+	run(t, snapshot, "git", "config", "user.name", "Test Author")
+	run(t, snapshot, "git", "config", "user.email", "test@example.com")
+	writeFile(t, filepath.Join(snapshot, "README.md"), "# Test\n")
+	run(t, snapshot, "git", "add", "README.md")
+	run(t, snapshot, "git", "commit", "-m", "Initial commit")
+	run(t, snapshot, "git", "push", "-u", "origin", "HEAD")
+
+	baseRef := getHEAD(t, snapshot)
+
+	original := t.TempDir()
+	run(t, "", "git", "clone", bare, original)
+	run(t, original, "git", "config", "user.name", "Test Author")
+	run(t, original, "git", "config", "user.email", "test@example.com")
+
+	// Simulate agent work in snapshot.
+	writeFile(t, filepath.Join(snapshot, "agent.txt"), "agent work\n")
+	run(t, snapshot, "git", "add", "agent.txt")
+	run(t, snapshot, "git", "commit", "-m", "Agent work")
+
+	// Simulate divergence: someone commits to the original while VM was running.
+	writeFile(t, filepath.Join(original, "other.txt"), "other work\n")
+	run(t, original, "git", "add", "other.txt")
+	run(t, original, "git", "commit", "-m", "Concurrent work")
+
+	replayer := newTestReplayer()
+	result, err := replayer.Replay(context.Background(), original, snapshot, baseRef, []string{"agent.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Diverged {
+		t.Error("expected Diverged=true")
+	}
+	if result.Replayed != 0 {
+		t.Errorf("expected 0 replayed, got %d", result.Replayed)
+	}
+}
+
+func TestReplay_PreservesExecutableBit(t *testing.T) {
+	t.Parallel()
+
+	snapshot := t.TempDir()
+	initRepo(t, snapshot)
+	baseRef := getHEAD(t, snapshot)
+
+	original := t.TempDir()
+	run(t, "", "git", "clone", snapshot, original)
+	run(t, original, "git", "config", "user.name", "Test Author")
+	run(t, original, "git", "config", "user.email", "test@example.com")
+
+	// Create an executable file in the snapshot.
+	scriptPath := filepath.Join(snapshot, "script.sh")
+	writeFile(t, scriptPath, "#!/bin/sh\necho hello\n")
+	if err := os.Chmod(scriptPath, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	run(t, snapshot, "git", "add", "script.sh")
+	run(t, snapshot, "git", "update-index", "--chmod=+x", "script.sh")
+	run(t, snapshot, "git", "commit", "-m", "Add executable script")
+
+	// Simulate flush.
+	writeFile(t, filepath.Join(original, "script.sh"), "#!/bin/sh\necho hello\n")
+
+	replayer := newTestReplayer()
+	result, err := replayer.Replay(context.Background(), original, snapshot, baseRef, []string{"script.sh"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Replayed != 1 {
+		t.Errorf("expected 1 replayed, got %d", result.Replayed)
+	}
+
+	// Verify the file has executable permission.
+	info, err := os.Stat(filepath.Join(original, "script.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm()&0o111 == 0 {
+		t.Errorf("expected executable bit set, got mode %o", info.Mode().Perm())
+	}
+}
+
+func TestGetFileModeAtCommit(t *testing.T) {
+	t.Parallel()
+
+	repo := t.TempDir()
+	initRepo(t, repo)
+
+	// Add a regular file and an executable file.
+	writeFile(t, filepath.Join(repo, "regular.txt"), "content\n")
+	run(t, repo, "git", "add", "regular.txt")
+
+	writeFile(t, filepath.Join(repo, "exec.sh"), "#!/bin/sh\n")
+	run(t, repo, "git", "add", "exec.sh")
+	run(t, repo, "git", "update-index", "--chmod=+x", "exec.sh")
+
+	run(t, repo, "git", "commit", "-m", "Add files")
+	hash := getHEAD(t, repo)
+
+	replayer := newTestReplayer()
+
+	tests := []struct {
+		name     string
+		path     string
+		wantMode os.FileMode
+	}{
+		{"regular file", "regular.txt", 0o644},
+		{"executable file", "exec.sh", 0o755},
+		{"nonexistent file", "nosuchfile.txt", 0o644},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			mode := replayer.getFileModeAtCommit(context.Background(), repo, hash, tt.path)
+			if mode != tt.wantMode {
+				t.Errorf("getFileModeAtCommit(%q) = %o, want %o", tt.path, mode, tt.wantMode)
+			}
+		})
+	}
+}
+
 func TestValidatePath(t *testing.T) {
 	t.Parallel()
 

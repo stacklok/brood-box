@@ -46,10 +46,13 @@ type fileChange struct {
 }
 
 // ResolveHEAD returns the current HEAD commit hash for the repo at the given path.
+// Returns an empty string (not an error) if the repo has no commits or is not a git repository.
 func (r *GitCommitReplayer) ResolveHEAD(ctx context.Context, repoPath string) (string, error) {
 	out, err := r.gitOutput(ctx, repoPath, "rev-parse", "HEAD")
 	if err != nil {
-		return "", fmt.Errorf("resolving HEAD: %w", err)
+		// No commits or not a git repo — return empty per interface contract.
+		r.logger.Debug("could not resolve HEAD", "path", repoPath, "error", err)
+		return "", nil
 	}
 	return out, nil
 }
@@ -77,6 +80,20 @@ func (r *GitCommitReplayer) Replay(
 	// No new commits.
 	if snapshotHEAD == baseRef {
 		r.logger.Debug("no new commits in snapshot")
+		return result, nil
+	}
+
+	// Guard: ensure the original repo's HEAD hasn't moved since snapshot creation.
+	originalHEAD, origErr := r.gitOutput(ctx, originalPath, "rev-parse", "HEAD")
+	if origErr != nil {
+		r.logger.Warn("could not resolve original HEAD, skipping replay", "error", origErr)
+		result.Diverged = true
+		return result, nil
+	}
+	if originalHEAD != baseRef {
+		r.logger.Warn("original repo HEAD has diverged, skipping commit replay",
+			"original_head", originalHEAD, "base_ref", baseRef)
+		result.Diverged = true
 		return result, nil
 	}
 
@@ -235,8 +252,14 @@ func (r *GitCommitReplayer) stageFileChange(
 			return fmt.Errorf("creating parent dir: %w", err)
 		}
 
-		if err := os.WriteFile(destPath, content, 0o644); err != nil {
+		fileMode := r.getFileModeAtCommit(ctx, snapshotPath, hash, fc.Path)
+		if err := os.WriteFile(destPath, content, fileMode); err != nil {
 			return fmt.Errorf("writing file: %w", err)
+		}
+		// WriteFile only applies mode on creation; chmod ensures correct
+		// permissions when the file already exists (e.g. from flush).
+		if err := os.Chmod(destPath, fileMode); err != nil {
+			return fmt.Errorf("setting file mode: %w", err)
 		}
 
 		_, err = r.gitOutput(ctx, originalPath, "add", "--", fc.Path)
@@ -374,6 +397,26 @@ func (r *GitCommitReplayer) getCommitFiles(ctx context.Context, repoPath, hash s
 	}
 
 	return changes, nil
+}
+
+// getFileModeAtCommit returns the file permission for a path at a specific commit.
+// Uses git ls-tree to query the tree mode. Returns 0o755 for executable files
+// (mode 100755), 0o644 for everything else. Falls back to 0o644 on failure.
+func (r *GitCommitReplayer) getFileModeAtCommit(
+	ctx context.Context, repoPath, hash, path string,
+) os.FileMode {
+	out, err := r.gitOutput(ctx, repoPath, "ls-tree", hash, "--", path)
+	if err != nil {
+		r.logger.Debug("could not query file mode, using default",
+			"hash", hash, "path", path, "error", err)
+		return 0o644
+	}
+	// Output: "<mode> <type> <hash>\t<path>"
+	fields := strings.Fields(out)
+	if len(fields) >= 1 && fields[0] == "100755" {
+		return 0o755
+	}
+	return 0o644
 }
 
 // getFileAtCommit extracts file content at a specific commit.
