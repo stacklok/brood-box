@@ -34,6 +34,10 @@ type SessionOpts struct {
 	// SSHAgentForward enables SSH agent forwarding for this session.
 	SSHAgentForward bool
 
+	// SSHAuthSock is the path to the host SSH agent socket.
+	// Required when SSHAgentForward is true.
+	SSHAuthSock string
+
 	// HostPublicKey is the expected SSH host public key for the server.
 	// When non-nil, the client uses ssh.FixedHostKey for verification.
 	// When nil, the client falls back to accepting any host key.

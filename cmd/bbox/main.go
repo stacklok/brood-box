@@ -801,6 +801,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		AllowHosts:      parsedAllowHosts,
 		GitTokenEnabled: gitTokenEnabled,
 		SSHAgentForward: sshAgentEnabled,
+		SSHAuthSock:     os.Getenv("SSH_AUTH_SOCK"),
 		SessionID:       sessionID,
 		CommandOverride: commandOverride,
 		LogLevel:        logLevel,

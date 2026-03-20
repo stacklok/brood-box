@@ -11,12 +11,24 @@ import (
 	"net"
 	"os"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
 	domainagent "github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/session"
+)
+
+const (
+	// agentDialRetries is the number of retry attempts for connecting to
+	// the host SSH agent. Covers transient unavailability when the agent
+	// restarts (e.g. gcr-ssh-agent with Restart=on-failure).
+	agentDialRetries = 3
+	// agentDialBackoff is the base delay between retry attempts.
+	agentDialBackoff = 200 * time.Millisecond
+	// sshKeepaliveInterval is the interval between SSH keepalive requests.
+	sshKeepaliveInterval = 30 * time.Second
 )
 
 // Ensure InteractiveSession implements session.TerminalSession at compile time.
@@ -80,9 +92,12 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 	}
 	defer func() { _ = client.Close() }()
 
+	// Start SSH keepalive to detect dead connections and keep the mux alive.
+	go s.runKeepalive(sessionCtx, client)
+
 	// Set up SSH agent forwarding if requested and an agent is available.
 	if opts.SSHAgentForward {
-		if err := s.setupAgentForwarding(sessionCtx, client); err != nil {
+		if err := s.setupAgentForwarding(sessionCtx, client, opts.SSHAuthSock); err != nil {
 			s.logger.Debug("SSH agent forwarding not available", "error", err)
 		}
 	}
@@ -175,8 +190,7 @@ func forwardResize(resizeCh <-chan session.TermSize, sshSession *ssh.Session) {
 // channel opens from the server. Each channel gets its own connection to the
 // local SSH agent to avoid concurrency issues on the agent protocol stream.
 // If SSH_AUTH_SOCK is not set or unreachable, returns an error (non-fatal).
-func (s *InteractiveSession) setupAgentForwarding(ctx context.Context, client *ssh.Client) error {
-	authSock := os.Getenv("SSH_AUTH_SOCK")
+func (s *InteractiveSession) setupAgentForwarding(ctx context.Context, client *ssh.Client, authSock string) error {
 	if authSock == "" {
 		return fmt.Errorf("SSH_AUTH_SOCK not set")
 	}
@@ -201,11 +215,12 @@ func (s *InteractiveSession) setupAgentForwarding(ctx context.Context, client *s
 				return
 			case ch, ok := <-chans:
 				if !ok {
+					s.logger.Warn("SSH agent forwarding channel closed unexpectedly")
 					return
 				}
 				channel, reqs, err := ch.Accept()
 				if err != nil {
-					s.logger.Debug("failed to accept agent channel", "error", err)
+					s.logger.Warn("failed to accept agent channel", "error", err)
 					continue
 				}
 				go ssh.DiscardRequests(reqs)
@@ -230,9 +245,10 @@ func (s *InteractiveSession) serveAgentChannel(ctx context.Context, authSock str
 		}
 	}()
 
-	agentConn, err := net.Dial("unix", authSock)
+	agentConn, err := s.dialAgentWithRetry(ctx, authSock)
 	if err != nil {
-		s.logger.Debug("failed to connect to SSH agent for channel", "error", err)
+		s.logger.Warn("SSH agent unreachable, agent forwarding will fail for this request",
+			"error", err, "socket", authSock)
 		return
 	}
 	defer func() { _ = agentConn.Close() }()
@@ -240,6 +256,50 @@ func (s *InteractiveSession) serveAgentChannel(ctx context.Context, authSock str
 	agentClient := agent.NewClient(agentConn)
 	if err := agent.ServeAgent(agentClient, channel); err != nil {
 		s.logger.Debug("agent forwarding session ended", "error", err)
+	}
+}
+
+// dialAgentWithRetry attempts to connect to the host SSH agent socket with
+// retries and exponential backoff. This handles transient unavailability when
+// the agent restarts (e.g. gcr-ssh-agent socket-activated restart).
+func (s *InteractiveSession) dialAgentWithRetry(ctx context.Context, authSock string) (net.Conn, error) {
+	var lastErr error
+	for attempt := range agentDialRetries {
+		if attempt > 0 {
+			delay := agentDialBackoff * time.Duration(1<<(attempt-1))
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-time.After(delay):
+			}
+			s.logger.Debug("retrying SSH agent connection", "attempt", attempt+1, "socket", authSock)
+		}
+		conn, err := net.Dial("unix", authSock)
+		if err == nil {
+			return conn, nil
+		}
+		lastErr = err
+	}
+	return nil, fmt.Errorf("after %d attempts: %w", agentDialRetries, lastErr)
+}
+
+// runKeepalive sends periodic keepalive requests over the SSH connection to
+// detect dead connections and prevent idle timeouts from dropping the mux.
+func (s *InteractiveSession) runKeepalive(ctx context.Context, client *ssh.Client) {
+	ticker := time.NewTicker(sshKeepaliveInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// SendRequest with wantReply=true acts as a keepalive ping.
+			_, _, err := client.SendRequest("keepalive@openssh.com", true, nil)
+			if err != nil {
+				s.logger.Warn("SSH keepalive failed, connection may be degraded", "error", err)
+				return
+			}
+		}
 	}
 }
 

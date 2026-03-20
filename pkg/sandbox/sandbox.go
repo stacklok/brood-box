@@ -79,6 +79,10 @@ type RunOpts struct {
 	// SSHAgentForward enables SSH agent forwarding to the VM.
 	SSHAgentForward bool
 
+	// SSHAuthSock is the path to the host SSH agent socket.
+	// Required when SSHAgentForward is true.
+	SSHAuthSock string
+
 	// SessionID uniquely identifies this session so concurrent runs on the
 	// same workspace get distinct VM names and data directories. Required;
 	// must be a non-empty hex string (max 16 chars).
@@ -160,6 +164,7 @@ type Sandbox struct {
 	EnvVars         map[string]string
 	ResolvedCommand []string
 	SSHAgentForward bool
+	SSHAuthSock     string
 }
 
 // Cleanup releases resources (snapshot dir). Safe to call multiple times.
@@ -513,6 +518,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		EnvVars:         envVars,
 		ResolvedCommand: command,
 		SSHAgentForward: opts.SSHAgentForward,
+		SSHAuthSock:     opts.SSHAuthSock,
 	}, nil
 }
 
@@ -532,6 +538,7 @@ func (s *SandboxRunner) Attach(ctx context.Context, sb *Sandbox, terminal sessio
 		Command:         command,
 		Terminal:        terminal,
 		SSHAgentForward: sb.SSHAgentForward,
+		SSHAuthSock:     sb.SSHAuthSock,
 		HostPublicKey:   sb.VM.SSHHostKey(),
 	}
 
