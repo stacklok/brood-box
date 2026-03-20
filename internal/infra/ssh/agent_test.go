@@ -21,12 +21,23 @@ func newTestSession(t *testing.T) *InteractiveSession {
 	return NewInteractiveSession(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelDebug})))
 }
 
+// shortTempDir creates a temp directory with a short path suitable for Unix
+// sockets. macOS limits Unix socket paths to 104 bytes; t.TempDir() paths
+// often exceed that when combined with long test names.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "ssh")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return dir
+}
+
 // startUnixListener creates a Unix socket listener in a temp directory and
 // returns the socket path. The listener accepts and immediately closes
 // connections in a goroutine so that dialAgentWithRetry can succeed.
 func startUnixListener(t *testing.T) (string, net.Listener) {
 	t.Helper()
-	sockPath := filepath.Join(t.TempDir(), "agent.sock")
+	sockPath := filepath.Join(shortTempDir(t), "a.sock")
 	ln, err := net.Listen("unix", sockPath)
 	require.NoError(t, err)
 
@@ -60,7 +71,7 @@ func TestDialAgentWithRetry_AllRetriesFail(t *testing.T) {
 	t.Parallel()
 	s := newTestSession(t)
 	// Use a path that doesn't exist — all attempts should fail.
-	badPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	badPath := filepath.Join(shortTempDir(t), "nonexistent.sock")
 
 	ctx := context.Background()
 	start := time.Now()
@@ -76,7 +87,7 @@ func TestDialAgentWithRetry_AllRetriesFail(t *testing.T) {
 func TestDialAgentWithRetry_SuccessAfterRetry(t *testing.T) {
 	t.Parallel()
 	s := newTestSession(t)
-	sockPath := filepath.Join(t.TempDir(), "agent.sock")
+	sockPath := filepath.Join(shortTempDir(t), "a.sock")
 
 	// Start the listener after a short delay so the first attempt fails
 	// but a retry succeeds.
@@ -106,7 +117,7 @@ func TestDialAgentWithRetry_SuccessAfterRetry(t *testing.T) {
 func TestDialAgentWithRetry_ContextCancelled(t *testing.T) {
 	t.Parallel()
 	s := newTestSession(t)
-	badPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	badPath := filepath.Join(shortTempDir(t), "nonexistent.sock")
 
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel immediately so the first retry's backoff select picks up ctx.Done().
@@ -133,7 +144,7 @@ func TestSetupAgentForwarding_UnreachableSocket(t *testing.T) {
 	t.Parallel()
 	s := newTestSession(t)
 
-	badPath := filepath.Join(t.TempDir(), "nonexistent.sock")
+	badPath := filepath.Join(shortTempDir(t), "nonexistent.sock")
 
 	ctx := context.Background()
 	err := s.setupAgentForwarding(ctx, nil, badPath)
