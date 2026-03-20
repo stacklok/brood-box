@@ -307,7 +307,7 @@ func TestReplay_MergeCommitSkipped(t *testing.T) {
 	run(t, snapshot, "git", "add", "main.txt")
 	run(t, snapshot, "git", "commit", "-m", "Main commit")
 
-	run(t, snapshot, "git", "merge", "feature", "--no-edit")
+	run(t, snapshot, "git", "merge", "feature", "--no-ff", "--no-edit")
 
 	original := t.TempDir()
 	initRepo(t, original)
