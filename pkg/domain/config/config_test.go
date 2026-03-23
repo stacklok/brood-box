@@ -413,17 +413,25 @@ func TestMerge(t *testing.T) {
 			},
 		},
 		{
-			name:     "agent values take precedence over global defaults",
+			name:     "global defaults take precedence over agent built-in defaults",
 			agent:    baseAgent,
 			override: AgentOverride{},
 			defaults: DefaultsConfig{
 				CPUs:   1,
 				Memory: bytesize.ByteSize(512),
 			},
-			want: baseAgent,
+			want: agent.Agent{
+				Name:                 "test-agent",
+				Image:                "ghcr.io/example/test:latest",
+				Command:              []string{"test-cmd"},
+				EnvForward:           []string{"API_KEY"},
+				DefaultCPUs:          1,
+				DefaultMemory:        bytesize.ByteSize(512),
+				DefaultEgressProfile: egress.ProfileStandard,
+			},
 		},
 		{
-			name: "global defaults do not override built-in resource defaults",
+			name: "global defaults override agent built-in resource defaults",
 			agent: agent.Agent{
 				Name:                 "a",
 				Image:                "i:l",
@@ -443,10 +451,34 @@ func TestMerge(t *testing.T) {
 				Name:                 "a",
 				Image:                "i:l",
 				Command:              []string{"c"},
-				DefaultCPUs:          2,
+				DefaultCPUs:          6,
+				DefaultMemory:        bytesize.ByteSize(8192),
+				DefaultTmpSize:       bytesize.ByteSize(2048),
+				DefaultEgressProfile: egress.ProfileStandard,
+			},
+		},
+		{
+			name: "global defaults partially override agent defaults",
+			agent: agent.Agent{
+				Name:           "a",
+				Image:          "i:l",
+				Command:        []string{"c"},
+				DefaultCPUs:    2,
+				DefaultMemory:  bytesize.ByteSize(4096),
+				DefaultTmpSize: bytesize.ByteSize(512),
+			},
+			override: AgentOverride{},
+			defaults: DefaultsConfig{
+				CPUs: 6,
+			},
+			want: agent.Agent{
+				Name:                 "a",
+				Image:                "i:l",
+				Command:              []string{"c"},
+				DefaultCPUs:          6,
 				DefaultMemory:        bytesize.ByteSize(4096),
 				DefaultTmpSize:       bytesize.ByteSize(512),
-				DefaultEgressProfile: egress.ProfileStandard,
+				DefaultEgressProfile: egress.ProfilePermissive,
 			},
 		},
 		{
@@ -587,6 +619,64 @@ func TestMerge(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestMerge_FullPrecedenceCascade(t *testing.T) {
+	t.Parallel()
+
+	agentBuiltIn := agent.Agent{
+		Name:           "a",
+		Image:          "i:l",
+		Command:        []string{"c"},
+		DefaultCPUs:    2,
+		DefaultMemory:  bytesize.ByteSize(4096),
+		DefaultTmpSize: bytesize.ByteSize(512),
+	}
+
+	t.Run("only agent built-in — agent values used", func(t *testing.T) {
+		t.Parallel()
+		got := Merge(agentBuiltIn, AgentOverride{}, DefaultsConfig{})
+		assert.Equal(t, uint32(2), got.DefaultCPUs)
+		assert.Equal(t, bytesize.ByteSize(4096), got.DefaultMemory)
+		assert.Equal(t, bytesize.ByteSize(512), got.DefaultTmpSize)
+	})
+
+	t.Run("global defaults override agent built-in", func(t *testing.T) {
+		t.Parallel()
+		got := Merge(agentBuiltIn, AgentOverride{}, DefaultsConfig{
+			CPUs:    4,
+			Memory:  bytesize.ByteSize(8192),
+			TmpSize: bytesize.ByteSize(1024),
+		})
+		assert.Equal(t, uint32(4), got.DefaultCPUs)
+		assert.Equal(t, bytesize.ByteSize(8192), got.DefaultMemory)
+		assert.Equal(t, bytesize.ByteSize(1024), got.DefaultTmpSize)
+	})
+
+	t.Run("override beats global defaults and agent built-in", func(t *testing.T) {
+		t.Parallel()
+		got := Merge(agentBuiltIn, AgentOverride{
+			CPUs:    8,
+			Memory:  bytesize.ByteSize(16384),
+			TmpSize: bytesize.ByteSize(2048),
+		}, DefaultsConfig{
+			CPUs:    4,
+			Memory:  bytesize.ByteSize(8192),
+			TmpSize: bytesize.ByteSize(1024),
+		})
+		assert.Equal(t, uint32(8), got.DefaultCPUs)
+		assert.Equal(t, bytesize.ByteSize(16384), got.DefaultMemory)
+		assert.Equal(t, bytesize.ByteSize(2048), got.DefaultTmpSize)
+	})
+
+	t.Run("nothing set — zero preserved", func(t *testing.T) {
+		t.Parallel()
+		zeroAgent := agent.Agent{Name: "a", Image: "i:l", Command: []string{"c"}}
+		got := Merge(zeroAgent, AgentOverride{}, DefaultsConfig{})
+		assert.Equal(t, uint32(0), got.DefaultCPUs)
+		assert.Equal(t, bytesize.ByteSize(0), got.DefaultMemory)
+		assert.Equal(t, bytesize.ByteSize(0), got.DefaultTmpSize)
+	})
 }
 
 func TestToEgressHosts(t *testing.T) {
