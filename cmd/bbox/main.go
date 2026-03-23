@@ -93,6 +93,7 @@ func rootCmd() *cobra.Command {
 		noImageCache      bool
 		timings           bool
 		exec              string
+		envForward        []string
 	)
 
 	cmd := &cobra.Command{
@@ -118,6 +119,7 @@ Example:
   bbox claude-code --allow-host "custom-api.example.com:443"
   bbox claude-code --no-mcp
   bbox claude-code --mcp-group "coding-tools"
+  bbox claude-code --env-forward ANTHROPIC_API_KEY --env-forward 'OPENCODE_*'
   bbox claude-code -- --help
   bbox claude-code --exec /bin/bash`,
 		Args:    cobra.MinimumNArgs(1),
@@ -156,6 +158,7 @@ Example:
 				timings:           timings,
 				exec:              exec,
 				commandArgs:       commandArgs,
+				envForward:        envForward,
 			})
 		},
 		SilenceUsage:  true,
@@ -189,6 +192,7 @@ Example:
 	cmd.Flags().BoolVar(&noImageCache, "no-image-cache", false, "Disable OCI image caching (fresh pull every run)")
 	cmd.Flags().BoolVar(&timings, "timings", false, "Print per-phase timing summary after run")
 	cmd.Flags().StringVar(&exec, "exec", "", "Override the agent command (e.g. /bin/bash for debugging)")
+	cmd.Flags().StringSliceVar(&envForward, "env-forward", nil, "Forward host env var into VM (exact name or glob like 'PREFIX_*', repeatable)")
 
 	// Add subcommands.
 	cmd.AddCommand(listCmd())
@@ -343,6 +347,7 @@ type runFlags struct {
 	timings           bool
 	exec              string
 	commandArgs       []string
+	envForward        []string
 }
 
 func run(parentCtx context.Context, agentName string, flags runFlags) error {
@@ -806,6 +811,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		CommandOverride: commandOverride,
 		LogLevel:        logLevel,
 		CommandArgs:     flags.commandArgs,
+		EnvForwardExtra: flags.envForward,
 		Snapshot: sandbox.SnapshotOpts{
 			Enabled:         true,
 			SnapshotMatcher: snapshotMatcher,

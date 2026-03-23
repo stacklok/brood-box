@@ -94,6 +94,10 @@ type RunOpts struct {
 	// TmpSizeMiB overrides the /tmp tmpfs size in MiB (0 = use agent/global default).
 	TmpSizeMiB uint32
 
+	// EnvForwardExtra holds additional env var patterns from CLI flags.
+	// These are merged with the agent's configured patterns.
+	EnvForwardExtra []string
+
 	// Terminal provides I/O streams for the session. Required for Run().
 	Terminal session.Terminal
 }
@@ -347,6 +351,9 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	}
 
 	allPatterns := ag.EnvForward
+	if len(opts.EnvForwardExtra) > 0 {
+		allPatterns = mergeEnvPatterns(allPatterns, opts.EnvForwardExtra)
+	}
 	if opts.GitTokenEnabled {
 		allPatterns = mergeEnvPatterns(allPatterns, domaingit.CommonEnvPatterns())
 	}
