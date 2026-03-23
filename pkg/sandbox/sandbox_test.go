@@ -851,6 +851,84 @@ func TestSandboxRunner_Prepare_Success(t *testing.T) {
 	assert.True(t, cloner.createCalled)
 }
 
+func TestSandboxRunner_Prepare_EnvForwardExtra(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name            string
+		agentEnvForward []string
+		envForwardExtra []string
+		envVars         []string
+		wantKeys        []string
+		desc            string
+	}{
+		{
+			name:            "extra patterns merge with agent patterns",
+			agentEnvForward: []string{"AGENT_KEY"},
+			envForwardExtra: []string{"CLI_KEY"},
+			envVars:         []string{"AGENT_KEY=a", "CLI_KEY=b"},
+			wantKeys:        []string{"AGENT_KEY", "CLI_KEY"},
+			desc:            "both agent and CLI-forwarded vars appear",
+		},
+		{
+			name:            "duplicate pattern is deduplicated",
+			agentEnvForward: []string{"SHARED"},
+			envForwardExtra: []string{"SHARED", "EXTRA"},
+			envVars:         []string{"SHARED=s", "EXTRA=e"},
+			wantKeys:        []string{"SHARED", "EXTRA"},
+			desc:            "overlapping pattern doesn't cause duplicate matching",
+		},
+		{
+			name:            "nil extra does not alter agent patterns",
+			agentEnvForward: []string{"ONLY_AGENT"},
+			envForwardExtra: nil,
+			envVars:         []string{"ONLY_AGENT=x"},
+			wantKeys:        []string{"ONLY_AGENT"},
+			desc:            "nil EnvForwardExtra is a no-op",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			testAgent := agent.Agent{
+				Name:          "test-agent",
+				Image:         "test-image:latest",
+				Command:       []string{"test-cmd"},
+				EnvForward:    tt.agentEnvForward,
+				DefaultCPUs:   2,
+				DefaultMemory: bytesize.ByteSize(2048),
+			}
+
+			mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+			runner := NewSandboxRunner(SandboxDeps{
+				Registry: &mockRegistry{agents: map[string]agent.Agent{
+					"test-agent": testAgent,
+				}},
+				VMRunner:      &mockVMRunner{vm: mvm},
+				SessionRunner: &mockSessionRunner{},
+				Config:        &SandboxConfig{},
+				EnvProvider:   &mockEnvProvider{vars: tt.envVars},
+				Logger:        testLogger(),
+			})
+
+			sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+				Workspace:       t.TempDir(),
+				EgressProfile:   string(egress.ProfilePermissive),
+				SessionID:       "abcd1234",
+				EnvForwardExtra: tt.envForwardExtra,
+			})
+			require.NoError(t, err)
+			defer func() { _ = sb.Cleanup() }()
+
+			for _, key := range tt.wantKeys {
+				assert.Contains(t, sb.EnvVars, key, tt.desc)
+			}
+		})
+	}
+}
+
 func TestSandboxRunner_Prepare_AgentNotFound(t *testing.T) {
 	t.Parallel()
 
