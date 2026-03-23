@@ -13,8 +13,7 @@ permissions:
   contents: read
 
 env:
-  GOPRIVATE: github.com/stacklok/*
-  GH_TOKEN: ${{ secrets.GO_MODULE_TOKEN || github.token }}
+  GH_TOKEN: ${{ github.token }}
 
 jobs:
   test:
@@ -32,10 +31,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Configure Git for private modules
-        run: |
-          git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Task
         uses: go-task/setup-task@v2
@@ -61,10 +56,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Configure Git for private modules
-        run: |
-          git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Task
         uses: go-task/setup-task@v2
@@ -96,10 +87,6 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Configure Git for private modules
-        run: |
-          git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
-
       - name: Install Task
         uses: go-task/setup-task@v2
 
@@ -118,10 +105,6 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Configure Git for private modules
-        run: |
-          git config --global url."https://${{ github.actor }}:${{ secrets.GO_MODULE_TOKEN }}@github.com/".insteadOf "https://github.com/"
 
       - name: Install Task
         uses: go-task/setup-task@v2
