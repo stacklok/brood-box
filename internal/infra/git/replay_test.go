@@ -63,12 +63,14 @@ func TestReplay_NoNewCommits(t *testing.T) {
 	t.Parallel()
 
 	snapshot := t.TempDir()
-	original := t.TempDir()
-
 	initRepo(t, snapshot)
 	baseRef := getHEAD(t, snapshot)
 
-	initRepo(t, original)
+	// Clone to share the same base commit (avoids divergence guard).
+	original := t.TempDir()
+	run(t, "", "git", "clone", snapshot, original)
+	run(t, original, "git", "config", "user.name", "Test Author")
+	run(t, original, "git", "config", "user.email", "test@example.com")
 
 	replayer := newTestReplayer()
 	result, err := replayer.Replay(context.Background(), original, snapshot, baseRef, nil)
@@ -309,8 +311,12 @@ func TestReplay_MergeCommitSkipped(t *testing.T) {
 
 	run(t, snapshot, "git", "merge", "feature", "--no-ff", "--no-edit")
 
+	// Clone snapshot to create original with the same base commit (avoids divergence guard).
 	original := t.TempDir()
-	initRepo(t, original)
+	run(t, "", "git", "clone", snapshot, original)
+	run(t, original, "git", "reset", "--hard", baseRef)
+	run(t, original, "git", "config", "user.name", "Test Author")
+	run(t, original, "git", "config", "user.email", "test@example.com")
 
 	// Simulate flush.
 	writeFile(t, filepath.Join(original, "feature.txt"), "feat\n")
