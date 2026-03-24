@@ -198,6 +198,7 @@ Example:
 	cmd.AddCommand(listCmd())
 	cmd.AddCommand(authCmd())
 	cmd.AddCommand(configCmd())
+	cmd.AddCommand(cacheCmd())
 
 	return cmd
 }
