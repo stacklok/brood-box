@@ -30,8 +30,14 @@ RUN apk add --no-cache \
     npm \
     rust
 
-# Put Go and user-local binaries on PATH for all shells
+# Put Go and user-local binaries on PATH for all shells.
+# NOTE: Docker ENV PATH is NOT enough — Wolfi's /etc/profile rebuilds PATH
+# from scratch, and the SSH session sources /etc/profile. We must use a
+# profile.d drop-in so the paths survive into the agent's shell.
 ENV PATH="/usr/lib/go/bin:/home/sandbox/go/bin:/home/sandbox/.local/bin:${PATH}"
+RUN printf '%s\n' \
+    'export PATH="/usr/lib/go/bin:/home/sandbox/go/bin:/home/sandbox/.local/bin:${PATH}"' \
+    > /etc/profile.d/broodbox-path.sh
 
 # Ensure /usr/local/bin exists (not present in Wolfi by default)
 RUN mkdir -p /usr/local/bin
