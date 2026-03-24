@@ -71,7 +71,6 @@ func DefaultSecurityPatterns() []string {
 		".yarnrc.yml",
 		".pypirc",
 		".docker/config.json",
-		".git/config",
 		".kube/config",
 		".gnupg/",
 		".pgpass",
@@ -93,16 +92,22 @@ func DefaultSecurityPatterns() []string {
 }
 
 // DefaultDiffSecurityPatterns returns non-overridable patterns applied only
-// during diff/flush. These protect files that must exist in the snapshot
-// (the agent needs them) but should never be diffed or flushed back.
+// during diff/flush. These protect files that should never be flushed back
+// to the original workspace even though they exist in the snapshot.
 func DefaultDiffSecurityPatterns() []string {
 	return []string{
-		// Covers .git file (worktree pointer) and .git/ directory + contents.
-		// The agent needs .git in the snapshot for git operations, but nothing
-		// under .git is agent output and must not be flushed back. Without this,
-		// the sanitizer's replacement of the .git worktree file with a directory
-		// causes the differ to mark the original .git file as deleted.
-		".git",
+		// Protect the original .git/config from being overwritten with the
+		// sanitized version. The sanitizer strips credentials for the snapshot
+		// but the original must keep its unsanitized config.
+		// Other .git/ contents (objects, refs, HEAD, branches, etc.) ARE
+		// synced back so the agent's git operations persist.
+		".git/config",
+		// Block git hooks at the diff layer so they never enter the flush
+		// pipeline regardless of how the SDK is consumed. This is defense-
+		// in-depth: the auto-accept reviewer also rejects hooks (TierAutoExec),
+		// but blocking here is layer-independent and protects SDK consumers
+		// who call Flush() directly without Review().
+		".git/hooks/",
 	}
 }
 

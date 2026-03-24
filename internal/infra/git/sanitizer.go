@@ -46,10 +46,14 @@ func NewConfigSanitizer(logger *slog.Logger) *ConfigSanitizer {
 }
 
 // Process reads .git/config from originalPath, sanitizes it, and writes
-// the result into snapshotPath/.git/config. Supports both normal repos
-// (where .git is a directory) and git worktrees (where .git is a file
-// pointing to the main repo's gitdir).
+// the result into the correct location in snapshotPath. Supports both
+// normal repos (where .git is a directory) and in-workspace worktrees
+// (where .git is a file pointing to a gitdir within the workspace).
+//
+// For external worktrees (where git metadata lives outside the workspace),
+// sanitization is skipped because the config is not present in the snapshot.
 func (s *ConfigSanitizer) Process(_ context.Context, originalPath, snapshotPath string) error {
+	// Find the git config source on the host filesystem.
 	srcPath, err := resolveGitConfigPath(originalPath)
 	if err != nil {
 		s.logger.Warn("could not resolve git config path, skipping sanitization",
@@ -70,112 +74,142 @@ func (s *ConfigSanitizer) Process(_ context.Context, originalPath, snapshotPath 
 
 	sanitized := SanitizeConfig(string(data))
 
-	dstDir := filepath.Join(snapshotPath, ".git")
-
-	// In worktree snapshots, .git may be a file (the worktree pointer).
-	// Remove it so MkdirAll can create the directory.
-	if err := removeIfFile(dstDir); err != nil {
-		return fmt.Errorf("removing .git file in snapshot: %w", err)
+	// Determine where the sanitized config should be written in the snapshot.
+	dstPath := s.resolveSnapshotConfigDest(originalPath, snapshotPath)
+	if dstPath == "" {
+		return nil
 	}
 
-	if err := os.MkdirAll(dstDir, 0o755); err != nil {
-		return fmt.Errorf("creating .git directory in snapshot: %w", err)
+	// Ensure parent directory exists. Normally the snapshot creator copies
+	// .git/ first, but be defensive for edge cases and tests.
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
+		return fmt.Errorf("creating git config directory in snapshot: %w", err)
 	}
 
-	dstPath := filepath.Join(dstDir, "config")
 	if err := os.WriteFile(dstPath, []byte(sanitized), 0o644); err != nil {
 		return fmt.Errorf("writing sanitized git config: %w", err)
 	}
 
-	// For worktree snapshots, create minimal git directory structure
-	// so that git recognizes this as a valid repository.
-	if isWorktree(originalPath) {
-		if err := initWorktreeGitDir(originalPath, dstDir); err != nil {
-			s.logger.Warn("could not initialize worktree git structure",
-				"path", originalPath, "error", err)
-		}
-	}
-
 	return nil
 }
 
-// isWorktree returns true if the workspace is a git worktree
-// (i.e. .git is a regular file, not a directory).
-func isWorktree(workspacePath string) bool {
-	info, err := os.Lstat(filepath.Join(workspacePath, ".git"))
+// resolveSnapshotConfigDest determines where to write the sanitized git config
+// within the snapshot directory. Returns "" if the destination cannot be
+// determined (e.g. external worktree where git metadata is outside the snapshot).
+func (s *ConfigSanitizer) resolveSnapshotConfigDest(originalPath, snapshotPath string) string {
+	dotGit := filepath.Join(snapshotPath, ".git")
+
+	info, err := os.Lstat(dotGit)
 	if err != nil {
-		return false
+		if !errors.Is(err, fs.ErrNotExist) {
+			s.logger.Warn("unexpected error checking .git in snapshot",
+				"path", dotGit, "error", err)
+			return ""
+		}
+		// No .git in snapshot yet. Check what the original has.
+		origInfo, origErr := os.Lstat(filepath.Join(originalPath, ".git"))
+		if origErr != nil {
+			return "" // Not a git repo.
+		}
+		if origInfo.IsDir() {
+			// Normal repo — return the standard path (caller creates dir).
+			return filepath.Join(dotGit, "config")
+		}
+		// Original is a worktree (.git is a file) but it wasn't copied
+		// to the snapshot. Can't determine destination.
+		s.logger.Warn("worktree .git file not present in snapshot, skipping sanitization")
+		return ""
 	}
-	return !info.IsDir()
+
+	if info.IsDir() {
+		// Normal repo — config is at .git/config.
+		return filepath.Join(dotGit, "config")
+	}
+
+	// Workspace root is a worktree (.git is a file). The gitdir it points
+	// to may be inside or outside the workspace. Try to remap the path
+	// from the original workspace into the snapshot.
+	dest, err := s.resolveWorktreeSnapshotConfig(originalPath, snapshotPath)
+	if err != nil {
+		s.logger.Warn("workspace root is a git worktree with external git metadata; "+
+			"git config cannot be sanitized in the snapshot. "+
+			"Consider running from the main repository root.",
+			"path", originalPath, "error", err)
+		return ""
+	}
+	return dest
 }
 
-// resolveWorktreeGitDir parses the gitdir path from a worktree's .git file.
-func resolveWorktreeGitDir(workspacePath string) (string, error) {
-	data, err := os.ReadFile(filepath.Join(workspacePath, ".git"))
+// resolveWorktreeSnapshotConfig follows the worktree .git file chain to find
+// the config path within the snapshot. The .git file contains an absolute host
+// path that must be remapped into the snapshot directory tree.
+func (s *ConfigSanitizer) resolveWorktreeSnapshotConfig(originalPath, snapshotPath string) (string, error) {
+	dotGitData, err := os.ReadFile(filepath.Join(snapshotPath, ".git"))
 	if err != nil {
-		return "", fmt.Errorf("reading .git file: %w", err)
+		return "", fmt.Errorf("reading .git file in snapshot: %w", err)
 	}
 
-	content := strings.TrimSpace(string(data))
+	content := strings.TrimSpace(string(dotGitData))
 	if !strings.HasPrefix(content, "gitdir: ") {
 		return "", fmt.Errorf("malformed .git file: missing 'gitdir: ' prefix")
 	}
 
-	gitdir := strings.TrimPrefix(content, "gitdir: ")
-	if !filepath.IsAbs(gitdir) {
-		gitdir = filepath.Join(workspacePath, gitdir)
-	}
-	gitdir = filepath.Clean(gitdir)
+	gitdirPath := strings.TrimPrefix(content, "gitdir: ")
 
-	// Defense-in-depth: verify the resolved path looks like a git
-	// directory. Without this, a malicious .git file could point to
-	// an arbitrary path and leak file contents into the snapshot.
-	if _, err := os.Stat(filepath.Join(gitdir, "HEAD")); err != nil {
-		return "", fmt.Errorf("resolved gitdir %q does not contain HEAD: %w", gitdir, err)
-	}
-
-	return gitdir, nil
-}
-
-// initWorktreeGitDir creates the minimal git directory structure
-// (HEAD, objects/, refs/) needed for git to recognize a worktree
-// snapshot as a valid repository.
-func initWorktreeGitDir(originalPath, dstDir string) error {
-	// Create objects/ and refs/ directories.
-	for _, sub := range []string{"objects", "refs"} {
-		if err := os.MkdirAll(filepath.Join(dstDir, sub), 0o755); err != nil {
-			return fmt.Errorf("creating %s directory: %w", sub, err)
+	// Remap the gitdir from host paths to snapshot paths.
+	var snapshotGitdir string
+	if filepath.IsAbs(gitdirPath) {
+		// Absolute path — check if it's within the original workspace.
+		absOriginal, absErr := filepath.Abs(originalPath)
+		if absErr != nil {
+			return "", fmt.Errorf("resolving original path: %w", absErr)
 		}
+		rel, relErr := filepath.Rel(absOriginal, gitdirPath)
+		if relErr != nil {
+			return "", fmt.Errorf("computing relative path for gitdir %q: %w", gitdirPath, relErr)
+		}
+		if strings.HasPrefix(rel, "..") {
+			return "", fmt.Errorf("gitdir %q is outside workspace %q", gitdirPath, absOriginal)
+		}
+		snapshotGitdir = filepath.Clean(filepath.Join(snapshotPath, rel))
+	} else {
+		// Relative path — resolves naturally within the snapshot.
+		snapshotGitdir = filepath.Clean(filepath.Join(snapshotPath, gitdirPath))
 	}
 
-	// Resolve the worktree's gitdir to read its HEAD.
-	gitdir, err := resolveWorktreeGitDir(originalPath)
+	// Follow the commondir chain within the snapshot to find the shared config.
+	commondirData, err := os.ReadFile(filepath.Join(snapshotGitdir, "commondir"))
 	if err != nil {
-		return fmt.Errorf("resolving worktree gitdir: %w", err)
+		if errors.Is(err, fs.ErrNotExist) {
+			// No commondir — config is in the gitdir itself (e.g. submodule).
+			return filepath.Join(snapshotGitdir, "config"), nil
+		}
+		return "", fmt.Errorf("reading commondir: %w", err)
 	}
 
-	headContent, err := os.ReadFile(filepath.Join(gitdir, "HEAD"))
+	commondir := strings.TrimSpace(string(commondirData))
+	if !filepath.IsAbs(commondir) {
+		commondir = filepath.Join(snapshotGitdir, commondir)
+	}
+	commondir = filepath.Clean(commondir)
+
+	// Defense-in-depth: verify the resolved commondir stays within the
+	// snapshot. A malicious commondir could point outside and cause the
+	// sanitizer to write to an arbitrary path.
+	absSnapshot, err := filepath.Abs(snapshotPath)
 	if err != nil {
-		// Fallback if HEAD is unreadable.
-		headContent = []byte("ref: refs/heads/main\n")
+		return "", fmt.Errorf("resolving snapshot path: %w", err)
+	}
+	absCommondir, err := filepath.Abs(commondir)
+	if err != nil {
+		return "", fmt.Errorf("resolving commondir path: %w", err)
+	}
+	rel, err := filepath.Rel(absSnapshot, absCommondir)
+	if err != nil || strings.HasPrefix(rel, "..") {
+		return "", fmt.Errorf("commondir %q escapes snapshot %q", commondir, snapshotPath)
 	}
 
-	head := strings.TrimSpace(string(headContent))
-
-	// If HEAD is not a well-formed symbolic ref, use a safe fallback.
-	// A raw SHA with empty objects/ causes git errors; a symbolic ref
-	// to a missing branch works fine (same as git init). We require
-	// "ref: refs/" (not just "ref: ") to prevent leaking content from
-	// non-git files that happen to start with "ref: ".
-	if !strings.HasPrefix(head, "ref: refs/") {
-		head = "ref: refs/heads/main"
-	}
-
-	if err := os.WriteFile(filepath.Join(dstDir, "HEAD"), []byte(head+"\n"), 0o644); err != nil {
-		return fmt.Errorf("writing HEAD: %w", err)
-	}
-
-	return nil
+	return filepath.Join(commondir, "config"), nil
 }
 
 // resolveGitConfigPath returns the path to the git config file for the
@@ -240,22 +274,6 @@ func resolveWorktreeConfigPath(workspacePath string, dotGitData []byte) (string,
 	}
 
 	return filepath.Join(commondir, "config"), nil
-}
-
-// removeIfFile removes the path if it exists and is not a directory.
-// No-op if the path does not exist or is already a directory.
-func removeIfFile(path string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		if errors.Is(err, fs.ErrNotExist) {
-			return nil
-		}
-		return err
-	}
-	if info.IsDir() {
-		return nil
-	}
-	return os.Remove(path)
 }
 
 // SanitizeConfig parses a git config file and returns a sanitized version

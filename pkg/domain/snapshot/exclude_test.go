@@ -53,7 +53,6 @@ func TestDefaultSecurityPatterns(t *testing.T) {
 		".git-credentials",
 		".yarnrc.yml",
 		".docker/config.json",
-		".git/config",
 		".pgpass",
 		".vault-token",
 		"*.tfvars",
@@ -66,6 +65,11 @@ func TestDefaultSecurityPatterns(t *testing.T) {
 	for _, pat := range expected {
 		assert.Contains(t, patterns, pat, "missing security pattern: %s", pat)
 	}
+
+	// .git/config is NOT a security pattern — it's copied into the snapshot
+	// and sanitized by the ConfigSanitizer post-processor.
+	assert.NotContains(t, patterns, ".git/config",
+		".git/config should not be a security exclude — it is sanitized by post-processor")
 }
 
 func TestDefaultDiffSecurityPatterns(t *testing.T) {
@@ -73,7 +77,16 @@ func TestDefaultDiffSecurityPatterns(t *testing.T) {
 
 	patterns := DefaultDiffSecurityPatterns()
 	assert.NotEmpty(t, patterns)
-	assert.Contains(t, patterns, ".git", "diff security patterns must exclude .git")
+
+	// .git/config is excluded — preserves the original unsanitized config.
+	assert.Contains(t, patterns, ".git/config",
+		"diff security patterns must exclude .git/config")
+	// .git/hooks/ is excluded — defense-in-depth against hook injection.
+	assert.Contains(t, patterns, ".git/hooks/",
+		"diff security patterns must exclude .git/hooks/")
+	// .git itself should NOT be broadly excluded — objects, refs, HEAD sync back.
+	assert.NotContains(t, patterns, ".git",
+		".git should not be broadly excluded from diff")
 }
 
 func TestDefaultPerformancePatterns(t *testing.T) {

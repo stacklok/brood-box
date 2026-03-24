@@ -4,7 +4,6 @@
 package git
 
 import (
-	"context"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -324,7 +323,7 @@ func TestProcess_ReadsAndWritesSanitizedConfig(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
+	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
 	// Read the sanitized config from the snapshot.
@@ -357,7 +356,7 @@ func TestProcess_NoGitConfig_NoOp(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
+	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
 	// Snapshot should not have a .git directory.
@@ -649,12 +648,69 @@ func TestResolveGitConfigPath(t *testing.T) {
 	})
 }
 
-func TestProcess_Worktree(t *testing.T) {
+func TestProcess_ExternalWorktree_SkipsSanitization(t *testing.T) {
 	t.Parallel()
 
-	// Set up a main repo with .git directory.
+	// Set up a main repo with .git directory OUTSIDE the workspace.
 	mainRepo := t.TempDir()
 	mainGitDir := filepath.Join(mainRepo, ".git")
+	require.NoError(t, os.MkdirAll(filepath.Join(mainGitDir, "worktrees", "wt1"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+
+	configContent := strings.Join([]string{
+		"[core]",
+		"\tbare = false",
+		"[credential]",
+		"\thelper = store",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "config"), []byte(configContent), 0o644))
+
+	wtGitDir := filepath.Join(mainGitDir, "worktrees", "wt1")
+	require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../.."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "HEAD"), []byte("ref: refs/heads/feature-wt1\n"), 0o644))
+
+	// Original workspace: .git is a file pointing OUTSIDE the workspace.
+	originalDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(originalDir, ".git"),
+		[]byte("gitdir: "+wtGitDir+"\n"),
+		0o644,
+	))
+
+	// Snapshot: also has .git as a file (copied by snapshot walker).
+	snapshotDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(snapshotDir, ".git"),
+		[]byte("gitdir: "+wtGitDir+"\n"),
+		0o644,
+	))
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	sanitizer := NewConfigSanitizer(logger)
+
+	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
+	require.NoError(t, err)
+
+	// The .git file should be PRESERVED (not replaced with a directory).
+	// This is the key behavioral change — we no longer destroy worktree pointers.
+	info, err := os.Lstat(filepath.Join(snapshotDir, ".git"))
+	require.NoError(t, err)
+	assert.False(t, info.IsDir(), ".git should remain a file for external worktrees")
+}
+
+func TestProcess_InWorkspaceWorktree_SanitizesConfig(t *testing.T) {
+	t.Parallel()
+
+	// Simulate Claude Code's pattern: workspace root is a normal repo,
+	// worktree is inside .claude/worktrees/. This tests the case where
+	// the workspace ROOT is a worktree that points back INTO the workspace.
+
+	// Create a workspace that IS a worktree pointing to a gitdir within itself.
+	workspace := t.TempDir()
+
+	// Set up the main .git structure at workspace/.git-main (simulating
+	// a layout where the main repo's git dir is inside the workspace).
+	mainGitDir := filepath.Join(workspace, ".git-main")
 	require.NoError(t, os.MkdirAll(filepath.Join(mainGitDir, "worktrees", "wt1"), 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
 
@@ -668,21 +724,29 @@ func TestProcess_Worktree(t *testing.T) {
 	}, "\n")
 	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "config"), []byte(configContent), 0o644))
 
-	// Set up worktree gitdir with commondir and HEAD.
 	wtGitDir := filepath.Join(mainGitDir, "worktrees", "wt1")
 	require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../.."), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "HEAD"), []byte("ref: refs/heads/feature-wt1\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "HEAD"), []byte("ref: refs/heads/feature\n"), 0o644))
 
-	// Original workspace: .git is a file.
-	originalDir := t.TempDir()
+	// The workspace .git file points to the in-workspace gitdir (absolute path).
 	require.NoError(t, os.WriteFile(
-		filepath.Join(originalDir, ".git"),
+		filepath.Join(workspace, ".git"),
 		[]byte("gitdir: "+wtGitDir+"\n"),
 		0o644,
 	))
 
-	// Snapshot: also has .git as a file (mimicking snapshot walker behavior).
+	// Create snapshot with the same structure.
 	snapshotDir := t.TempDir()
+	snapshotMainGitDir := filepath.Join(snapshotDir, ".git-main")
+	require.NoError(t, os.MkdirAll(filepath.Join(snapshotMainGitDir, "worktrees", "wt1"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotMainGitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotMainGitDir, "config"), []byte(configContent), 0o644))
+
+	snapshotWtGitDir := filepath.Join(snapshotMainGitDir, "worktrees", "wt1")
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotWtGitDir, "commondir"), []byte("../.."), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotWtGitDir, "HEAD"), []byte("ref: refs/heads/feature\n"), 0o644))
+
+	// Snapshot .git file points to the original workspace path (as copied).
 	require.NoError(t, os.WriteFile(
 		filepath.Join(snapshotDir, ".git"),
 		[]byte("gitdir: "+wtGitDir+"\n"),
@@ -692,15 +756,16 @@ func TestProcess_Worktree(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
+	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
 	require.NoError(t, err)
 
-	// The .git should now be a directory with a sanitized config.
-	info, err := os.Stat(filepath.Join(snapshotDir, ".git"))
+	// The .git file should remain a file (not converted to directory).
+	info, err := os.Lstat(filepath.Join(snapshotDir, ".git"))
 	require.NoError(t, err)
-	assert.True(t, info.IsDir())
+	assert.False(t, info.IsDir(), ".git should remain a file for worktrees")
 
-	result, err := os.ReadFile(filepath.Join(snapshotDir, ".git", "config"))
+	// The config in the snapshot's main git dir should be sanitized.
+	result, err := os.ReadFile(filepath.Join(snapshotMainGitDir, "config"))
 	require.NoError(t, err)
 
 	expected := strings.Join([]string{
@@ -710,25 +775,12 @@ func TestProcess_Worktree(t *testing.T) {
 		"\turl = https://github.com/org/repo.git",
 	}, "\n")
 	assert.Equal(t, expected, string(result))
-
-	// Verify worktree git structure: HEAD, objects/, refs/.
-	headData, err := os.ReadFile(filepath.Join(snapshotDir, ".git", "HEAD"))
-	require.NoError(t, err)
-	assert.Equal(t, "ref: refs/heads/feature-wt1\n", string(headData))
-
-	objInfo, err := os.Stat(filepath.Join(snapshotDir, ".git", "objects"))
-	require.NoError(t, err)
-	assert.True(t, objInfo.IsDir())
-
-	refsInfo, err := os.Stat(filepath.Join(snapshotDir, ".git", "refs"))
-	require.NoError(t, err)
-	assert.True(t, refsInfo.IsDir())
 }
 
-func TestProcess_WorktreeNoCommondir(t *testing.T) {
+func TestProcess_ExternalWorktreeNoCommondir_SkipsSanitization(t *testing.T) {
 	t.Parallel()
 
-	// Set up a gitdir without commondir (e.g. submodule).
+	// Set up a gitdir without commondir (e.g. submodule) OUTSIDE workspace.
 	gitdir := t.TempDir()
 	configContent := strings.Join([]string{
 		"[core]",
@@ -737,9 +789,8 @@ func TestProcess_WorktreeNoCommondir(t *testing.T) {
 		"\thelper = store",
 	}, "\n")
 	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "config"), []byte(configContent), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
 
-	// Original workspace: .git is a file pointing to gitdir.
+	// Original workspace: .git is a file pointing to external gitdir.
 	originalDir := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(originalDir, ".git"),
@@ -747,96 +798,19 @@ func TestProcess_WorktreeNoCommondir(t *testing.T) {
 		0o644,
 	))
 
+	// Snapshot has no .git (it was a file pointing outside, snapshot may
+	// or may not have it depending on whether it was excluded).
 	snapshotDir := t.TempDir()
 
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
+	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
-	result, err := os.ReadFile(filepath.Join(snapshotDir, ".git", "config"))
-	require.NoError(t, err)
-
-	expected := strings.Join([]string{
-		"[core]",
-		"\tbare = false",
-	}, "\n")
-	assert.Equal(t, expected, string(result))
-
-	// Verify worktree git structure: HEAD, objects/, refs/.
-	headData, err := os.ReadFile(filepath.Join(snapshotDir, ".git", "HEAD"))
-	require.NoError(t, err)
-	assert.Equal(t, "ref: refs/heads/main\n", string(headData))
-
-	_, err = os.Stat(filepath.Join(snapshotDir, ".git", "objects"))
-	require.NoError(t, err)
-
-	_, err = os.Stat(filepath.Join(snapshotDir, ".git", "refs"))
-	require.NoError(t, err)
-}
-
-func TestProcess_Worktree_DetachedHEAD(t *testing.T) {
-	t.Parallel()
-
-	// Set up a gitdir with a detached HEAD (raw SHA).
-	gitdir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "config"), []byte("[core]\n\tbare = false\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "HEAD"), []byte("abc123def456789\n"), 0o644))
-
-	originalDir := t.TempDir()
-	require.NoError(t, os.WriteFile(
-		filepath.Join(originalDir, ".git"),
-		[]byte("gitdir: "+gitdir+"\n"),
-		0o644,
-	))
-
-	snapshotDir := t.TempDir()
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	sanitizer := NewConfigSanitizer(logger)
-
-	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
-	require.NoError(t, err)
-
-	// Detached HEAD should fall back to refs/heads/main.
-	headData, err := os.ReadFile(filepath.Join(snapshotDir, ".git", "HEAD"))
-	require.NoError(t, err)
-	assert.Equal(t, "ref: refs/heads/main\n", string(headData))
-}
-
-func TestProcess_Worktree_CustomBranch(t *testing.T) {
-	t.Parallel()
-
-	mainRepo := t.TempDir()
-	mainGitDir := filepath.Join(mainRepo, ".git")
-	require.NoError(t, os.MkdirAll(filepath.Join(mainGitDir, "worktrees", "wt-feat"), 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "config"), []byte("[core]\n\tbare = false\n"), 0o644))
-
-	// Worktree on feature-x branch.
-	wtGitDir := filepath.Join(mainGitDir, "worktrees", "wt-feat")
-	require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../.."), 0o644))
-	require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "HEAD"), []byte("ref: refs/heads/feature-x\n"), 0o644))
-
-	originalDir := t.TempDir()
-	require.NoError(t, os.WriteFile(
-		filepath.Join(originalDir, ".git"),
-		[]byte("gitdir: "+wtGitDir+"\n"),
-		0o644,
-	))
-
-	snapshotDir := t.TempDir()
-
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
-	sanitizer := NewConfigSanitizer(logger)
-
-	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
-	require.NoError(t, err)
-
-	headData, err := os.ReadFile(filepath.Join(snapshotDir, ".git", "HEAD"))
-	require.NoError(t, err)
-	assert.Equal(t, "ref: refs/heads/feature-x\n", string(headData))
+	// No config should be written for external worktrees.
+	_, err = os.Stat(filepath.Join(snapshotDir, ".git", "config"))
+	assert.True(t, os.IsNotExist(err), "should not create config for external worktree")
 }
 
 func TestProcess_NormalRepo_NoDoubleCreate(t *testing.T) {
@@ -854,7 +828,7 @@ func TestProcess_NormalRepo_NoDoubleCreate(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
+	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
 	// For normal repos, Process should NOT create HEAD/objects/refs
@@ -872,18 +846,8 @@ func TestProcess_NormalRepo_NoDoubleCreate(t *testing.T) {
 func TestProcess_Worktree_MaliciousGitdir(t *testing.T) {
 	t.Parallel()
 
-	// A .git file pointing to an arbitrary path (path traversal attempt).
-	// The resolved gitdir does not contain HEAD, so initWorktreeGitDir
-	// should fail gracefully without leaking file contents.
-	originalDir := t.TempDir()
-	require.NoError(t, os.WriteFile(
-		filepath.Join(originalDir, ".git"),
-		[]byte("gitdir: ../../../etc\n"),
-		0o644,
-	))
-
-	// We still need a valid config for resolveGitConfigPath to find.
-	// Create a fake gitdir that has a config but no HEAD.
+	// A .git file pointing to an arbitrary external path.
+	// The sanitizer should skip since the gitdir is outside the workspace.
 	fakeGitdir := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(fakeGitdir, "config"),
@@ -891,7 +855,7 @@ func TestProcess_Worktree_MaliciousGitdir(t *testing.T) {
 		0o644,
 	))
 
-	// Point .git at the fake gitdir (which has config but no HEAD).
+	originalDir := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(originalDir, ".git"),
 		[]byte("gitdir: "+fakeGitdir+"\n"),
@@ -903,15 +867,202 @@ func TestProcess_Worktree_MaliciousGitdir(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	// Process should succeed (worktree init failure is non-fatal).
-	err := sanitizer.Process(context.Background(), originalDir, snapshotDir)
+	// Process should succeed — external worktrees are skipped.
+	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
-	// Config should be written (sanitizer resolves config independently).
-	_, err = os.ReadFile(filepath.Join(snapshotDir, ".git", "config"))
+	// No config should be written since gitdir is external.
+	_, err = os.Stat(filepath.Join(snapshotDir, ".git", "config"))
+	assert.True(t, os.IsNotExist(err), "should not create config for external gitdir")
+}
+
+func TestProcess_InWorkspaceWorktree_RelativeGitdir(t *testing.T) {
+	t.Parallel()
+
+	// Create a workspace where .git is a file with a RELATIVE gitdir path.
+	workspace := t.TempDir()
+
+	// Main git dir inside workspace at .git-main/
+	mainGitDir := filepath.Join(workspace, ".git-main")
+	require.NoError(t, os.MkdirAll(filepath.Join(mainGitDir, "worktrees", "wt1"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+
+	configContent := strings.Join([]string{
+		"[core]",
+		"\tbare = false",
+		"[credential]",
+		"\thelper = store",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(mainGitDir, "config"), []byte(configContent), 0o644))
+
+	wtGitDir := filepath.Join(mainGitDir, "worktrees", "wt1")
+	require.NoError(t, os.WriteFile(filepath.Join(wtGitDir, "commondir"), []byte("../.."), 0o644))
+
+	// .git file with RELATIVE path.
+	require.NoError(t, os.WriteFile(
+		filepath.Join(workspace, ".git"),
+		[]byte("gitdir: .git-main/worktrees/wt1\n"),
+		0o644,
+	))
+
+	// Snapshot mirrors the workspace.
+	snapshotDir := t.TempDir()
+	snapshotMainGitDir := filepath.Join(snapshotDir, ".git-main")
+	require.NoError(t, os.MkdirAll(filepath.Join(snapshotMainGitDir, "worktrees", "wt1"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotMainGitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotMainGitDir, "config"), []byte(configContent), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotMainGitDir, "worktrees", "wt1", "commondir"), []byte("../.."), 0o644))
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(snapshotDir, ".git"),
+		[]byte("gitdir: .git-main/worktrees/wt1\n"),
+		0o644,
+	))
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	sanitizer := NewConfigSanitizer(logger)
+
+	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
 	require.NoError(t, err)
 
-	// HEAD should NOT be created since gitdir validation failed.
-	_, err = os.Stat(filepath.Join(snapshotDir, ".git", "HEAD"))
-	assert.True(t, os.IsNotExist(err), "HEAD should not be created for malicious gitdir")
+	// Config should be sanitized at the correct location.
+	result, err := os.ReadFile(filepath.Join(snapshotMainGitDir, "config"))
+	require.NoError(t, err)
+
+	expected := strings.Join([]string{
+		"[core]",
+		"\tbare = false",
+	}, "\n")
+	assert.Equal(t, expected, string(result))
+}
+
+func TestProcess_InWorkspaceWorktree_NoCommondir(t *testing.T) {
+	t.Parallel()
+
+	// In-workspace worktree (e.g. submodule) without a commondir file.
+	// Config should be written to gitdir/config within the snapshot.
+	workspace := t.TempDir()
+
+	// Gitdir inside workspace at .modules/sub/
+	gitdir := filepath.Join(workspace, ".modules", "sub")
+	require.NoError(t, os.MkdirAll(gitdir, 0o755))
+
+	configContent := strings.Join([]string{
+		"[core]",
+		"\tbare = false",
+		"[credential]",
+		"\thelper = store",
+	}, "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "config"), []byte(configContent), 0o644))
+	// No commondir file — this is a submodule-like layout.
+
+	// .git file points to in-workspace gitdir (absolute path).
+	require.NoError(t, os.WriteFile(
+		filepath.Join(workspace, ".git"),
+		[]byte("gitdir: "+gitdir+"\n"),
+		0o644,
+	))
+
+	// Snapshot mirrors the workspace.
+	snapshotDir := t.TempDir()
+	snapshotGitdir := filepath.Join(snapshotDir, ".modules", "sub")
+	require.NoError(t, os.MkdirAll(snapshotGitdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotGitdir, "config"), []byte(configContent), 0o644))
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(snapshotDir, ".git"),
+		[]byte("gitdir: "+gitdir+"\n"),
+		0o644,
+	))
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	sanitizer := NewConfigSanitizer(logger)
+
+	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
+	require.NoError(t, err)
+
+	// Config should be sanitized at gitdir/config (no commondir fallback).
+	result, err := os.ReadFile(filepath.Join(snapshotGitdir, "config"))
+	require.NoError(t, err)
+
+	expected := strings.Join([]string{
+		"[core]",
+		"\tbare = false",
+	}, "\n")
+	assert.Equal(t, expected, string(result))
+}
+
+func TestProcess_Worktree_CommondirEscapesSnapshot(t *testing.T) {
+	t.Parallel()
+
+	// Defense-in-depth: a malicious commondir pointing outside the snapshot
+	// should be rejected, not followed.
+	workspace := t.TempDir()
+
+	gitdir := filepath.Join(workspace, ".git-main", "worktrees", "wt1")
+	require.NoError(t, os.MkdirAll(gitdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".git-main", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(workspace, ".git-main", "config"), []byte("[core]\n\tbare = false\n"), 0o644))
+	// commondir points to an absolute path outside the workspace.
+	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "commondir"), []byte("/tmp\n"), 0o644))
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(workspace, ".git"),
+		[]byte("gitdir: "+gitdir+"\n"),
+		0o644,
+	))
+
+	// Snapshot mirrors the workspace.
+	snapshotDir := t.TempDir()
+	snapshotGitdir := filepath.Join(snapshotDir, ".git-main", "worktrees", "wt1")
+	require.NoError(t, os.MkdirAll(snapshotGitdir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotDir, ".git-main", "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotDir, ".git-main", "config"), []byte("[core]\n\tbare = false\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotGitdir, "commondir"), []byte("/tmp\n"), 0o644))
+
+	require.NoError(t, os.WriteFile(
+		filepath.Join(snapshotDir, ".git"),
+		[]byte("gitdir: "+gitdir+"\n"),
+		0o644,
+	))
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	sanitizer := NewConfigSanitizer(logger)
+
+	// Process should succeed (escaping commondir is non-fatal, just skipped).
+	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
+	require.NoError(t, err)
+
+	// Should NOT have written to /tmp/config.
+	_, err = os.Stat("/tmp/config")
+	assert.True(t, os.IsNotExist(err), "must not write config outside snapshot")
+}
+
+func TestProcess_Worktree_MalformedGitFileInSnapshot(t *testing.T) {
+	t.Parallel()
+
+	// Snapshot .git file has garbage content (not a valid gitdir pointer).
+	workspace := t.TempDir()
+	// Need a valid .git on the original for resolveGitConfigPath to work.
+	gitdir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(gitdir, "config"), []byte("[core]\n\tbare = false\n"), 0o644))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(workspace, ".git"),
+		[]byte("gitdir: "+gitdir+"\n"),
+		0o644,
+	))
+
+	snapshotDir := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(snapshotDir, ".git"),
+		[]byte("garbage content\n"),
+		0o644,
+	))
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	sanitizer := NewConfigSanitizer(logger)
+
+	// Process should succeed (malformed snapshot .git is non-fatal).
+	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
+	require.NoError(t, err)
 }
