@@ -69,7 +69,6 @@ type DefaultSandboxDepsOpts struct {
 	// Defaults to ~/.cache/broodbox/snapshots/ (XDG_CACHE_HOME), falling
 	// back to os.TempDir() if XDG resolution fails.
 	SnapshotDir string
-
 }
 
 // NewDefaultSandboxDeps wires Brood Box's standard infrastructure dependencies.

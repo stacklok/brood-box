@@ -47,7 +47,7 @@ func cacheListCmd() *cobra.Command {
 			}
 
 			w := tabwriter.NewWriter(os.Stdout, 0, 4, 2, ' ', 0)
-			fmt.Fprintln(w, "DIGEST\tSIZE\tLAST USED\tIMAGE")
+			_, _ = fmt.Fprintln(w, "DIGEST\tSIZE\tLAST USED\tIMAGE")
 
 			var totalRootfs int64
 			orphans := 0
@@ -64,7 +64,7 @@ func cacheListCmd() *cobra.Command {
 				} else {
 					orphans++
 				}
-				fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", digest, size, age, ref)
+				_, _ = fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", digest, size, age, ref)
 				totalRootfs += e.Size
 			}
 			_ = w.Flush()
@@ -160,7 +160,7 @@ func cachePurgeCmd() *cobra.Command {
 				fmt.Fprintf(os.Stderr, "This will remove all cached images at %s\n", dir)
 				fmt.Fprint(os.Stderr, "Continue? [y/N] ")
 				var answer string
-				fmt.Scanln(&answer)
+				_, _ = fmt.Scanln(&answer)
 				if answer != "y" && answer != "Y" {
 					fmt.Println("Aborted")
 					return nil
