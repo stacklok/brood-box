@@ -735,7 +735,6 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 	deps.Flusher = review.NewFSFlusher()
 	deps.Differ = diff.NewFSDiffer()
-	deps.CommitReplayer = infragit.NewGitCommitReplayer(logger)
 
 	// Wire snapshot post-processors (git config sanitizer).
 	deps.SnapshotPostProcessors = []workspace.SnapshotPostProcessor{
@@ -854,9 +853,6 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 				reviewErr = fmt.Errorf("reviewing changes: %w", revErr)
 			} else if len(result.Accepted) > 0 {
 				reviewErr = runner.Flush(sb, result.Accepted)
-				if reviewErr == nil {
-					runner.ReplayCommits(ctx, sb, result.Accepted)
-				}
 			} else {
 				observer.Warn("No changes accepted")
 			}

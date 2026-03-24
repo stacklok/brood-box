@@ -89,10 +89,14 @@ func TestNewDiffMatcher_MergesDiffSecurityPatterns(t *testing.T) {
 
 	// Shared security pattern should match.
 	assert.True(t, m.Match(".env"), "shared security pattern .env should match")
-	// Diff-only security pattern should match .git file (worktree pointer).
-	assert.True(t, m.Match(".git"), "diff security pattern .git should match")
-	// Diff-only security pattern should match .git/ directory contents.
-	assert.True(t, m.Match(".git/hooks/pre-commit"), ".git/ contents should match via diff security")
+	// Diff-only security pattern should match .git/config (preserve original unsanitized).
+	assert.True(t, m.Match(".git/config"), "diff security pattern .git/config should match")
+	// Diff-only security pattern should match .git/hooks/ (block hook injection).
+	assert.True(t, m.Match(".git/hooks/pre-commit"), ".git/hooks should be excluded from diff")
+	assert.True(t, m.Match(".git/hooks/post-checkout"), ".git/hooks should be excluded from diff")
+	// Other .git/ contents should NOT match — they sync back.
+	assert.False(t, m.Match(".git/refs/heads/main"), ".git/refs should sync back")
+	assert.False(t, m.Match(".git/HEAD"), ".git/HEAD should sync back")
 	// Regular file should not match.
 	assert.False(t, m.Match("main.go"), "regular file should not match")
 }
