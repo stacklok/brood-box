@@ -20,6 +20,8 @@ RUN apk add --no-cache \
     curl \
     openssh-client \
     make \
+    gcc \
+    glibc-dev \
     go \
     python3 \
     py3-pip \
@@ -27,6 +29,9 @@ RUN apk add --no-cache \
     nodejs \
     npm \
     rust
+
+# Put Go and user-local binaries on PATH for all shells
+ENV PATH="/usr/lib/go/bin:/home/sandbox/go/bin:/home/sandbox/.local/bin:${PATH}"
 
 # Ensure /usr/local/bin exists (not present in Wolfi by default)
 RUN mkdir -p /usr/local/bin
