@@ -48,8 +48,9 @@ type claudeCodeConfig struct {
 
 // claudeCodeServer describes a single MCP server entry for Claude Code.
 type claudeCodeServer struct {
-	Type string `json:"type"`
-	URL  string `json:"url"`
+	Type    string            `json:"type"`
+	URL     string            `json:"url"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // injectClaudeCodeMCP merges an MCP server entry into ~/.claude.json,
@@ -63,6 +64,9 @@ func injectClaudeCodeMCP(rootfsPath, gatewayIP string, port uint16, chown ChownF
 		"sandbox-tools": {
 			Type: "http",
 			URL:  fmt.Sprintf("http://%s:%d/mcp", gatewayIP, port),
+			Headers: map[string]string{
+				"Authorization": "Bearer anonymous",
+			},
 		},
 	}
 
