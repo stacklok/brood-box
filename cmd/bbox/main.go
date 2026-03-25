@@ -871,9 +871,14 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 
 	if err != nil {
-		// Propagate the agent's exit code without printing an error.
+		// Propagate the agent's exit code.
 		var exitErr *infrassh.ExitError
 		if errors.As(err, &exitErr) {
+			// Print a diagnostic for unexpected terminations (OOM, crash, etc.)
+			// but stay quiet for normal exits and user-initiated signals.
+			if hint := exitErr.SignalHint(); hint != "" {
+				_, _ = fmt.Fprintf(os.Stderr, "\nSession ended unexpectedly: %s\n", hint)
+			}
 			// os.Exit bypasses defers, so clean up snapshot and flush
 			// the timing summary now.
 			if sb.Snapshot != nil {

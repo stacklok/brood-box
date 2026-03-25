@@ -11,10 +11,12 @@ import (
 	"net"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+	"golang.org/x/sys/unix"
 
 	domainagent "github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/session"
@@ -46,11 +48,52 @@ func NewInteractiveSession(logger *slog.Logger) *InteractiveSession {
 
 // ExitError represents a non-zero exit code from the remote command.
 type ExitError struct {
-	Code int
+	Code   int
+	Signal string // SSH signal name (e.g. "KILL", "SEGV"), empty for normal exits
 }
 
 func (e *ExitError) Error() string {
+	if e.Signal != "" {
+		return fmt.Sprintf("remote command killed by signal SIG%s (exit code %d)", e.Signal, e.Code)
+	}
 	return fmt.Sprintf("remote command exited with code %d", e.Code)
+}
+
+// SignalHint returns a human-readable hint for unexpected terminations
+// (OOM kill, crash, etc.). Returns empty string for normal exits and
+// user-initiated signals (INT, TERM) which are expected.
+func (e *ExitError) SignalHint() string {
+	sigName := e.Signal
+	if sigName == "" {
+		// No SSH signal — check if exit code encodes one (128 + N convention).
+		sigName = signalNameFromCode(e.Code)
+	}
+	switch sigName {
+	case "KILL":
+		return "process was forcefully killed (likely out of memory — try increasing VM memory with --memory)"
+	case "SEGV":
+		return "process crashed with a segmentation fault"
+	case "ABRT":
+		return "process aborted (assertion failure or fatal error)"
+	default:
+		return ""
+	}
+}
+
+// signalNameFromCode returns the SSH-style signal name (e.g. "KILL") for an
+// exit code that follows the 128+N convention, or empty string if the code
+// does not encode a known signal.
+func signalNameFromCode(code int) string {
+	if code <= 128 {
+		return ""
+	}
+	sig := syscall.Signal(code - 128)
+	name := unix.SignalName(sig)
+	if name == "" {
+		return ""
+	}
+	// unix.SignalName returns "SIGKILL"; strip the "SIG" prefix.
+	return strings.TrimPrefix(name, "SIG")
 }
 
 // Run establishes an SSH connection, requests a PTY, and runs the command
@@ -167,7 +210,18 @@ func (s *InteractiveSession) Run(ctx context.Context, opts session.SessionOpts) 
 	case err := <-done:
 		if err != nil {
 			if exitErr, ok := err.(*ssh.ExitError); ok {
-				return &ExitError{Code: exitErr.ExitStatus()}
+				code := exitErr.ExitStatus()
+				sig := exitErr.Signal()
+				// When killed by signal, SSH may report exit code 0 or -1.
+				// Use the conventional 128+N code instead.
+				if sig != "" && code <= 0 {
+					if n := unix.SignalNum("SIG" + sig); n > 0 {
+						code = 128 + int(n)
+					} else if code <= 0 {
+						code = 1
+					}
+				}
+				return &ExitError{Code: code, Signal: sig}
 			}
 			return fmt.Errorf("remote command failed: %w", err)
 		}
