@@ -16,7 +16,7 @@ require (
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stacklok/go-microvm v0.0.26
-	github.com/stacklok/toolhive v0.13.0
+	github.com/stacklok/toolhive v0.13.1
 	github.com/stacklok/toolhive-core v0.0.12
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
