@@ -451,6 +451,9 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		diffMatcher = snapshot.NopMatcher
 	}
 
+	var extraMounts []workspace.MountRequest
+	var extraDiffExclude []string
+
 	if opts.Snapshot.Enabled && s.workspaceCloner != nil {
 		_, snapSpan := tracer.Start(ctx, "bbox.CreateSnapshot")
 		s.observer.Start(progress.PhaseCreatingSnapshot, "Creating workspace snapshot...")
@@ -467,17 +470,27 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 			"snapshot", snap.SnapshotPath,
 		)
 
-		// Run post-processors on the snapshot (e.g., git config sanitizer).
+		// Run post-processors on the snapshot (e.g., git config sanitizer, worktree processor).
 		// Failures abort VM start — post-processors are security-relevant
 		// (credential stripping) and must not be silently skipped.
 		for _, pp := range s.snapshotPostProcessors {
-			if ppErr := pp.Process(ctx, snap.OriginalPath, snap.SnapshotPath); ppErr != nil {
+			ppResult, ppErr := pp.Process(ctx, snap.OriginalPath, snap.SnapshotPath)
+			if ppErr != nil {
 				s.observer.Fail("Snapshot post-processing failed")
 				if cleanErr := snap.Cleanup(); cleanErr != nil {
 					s.logger.Error("failed to clean up snapshot after post-processor failure", "error", cleanErr)
 				}
 				return nil, fmt.Errorf("snapshot post-processing: %w", ppErr)
 			}
+			if ppResult != nil {
+				extraMounts = append(extraMounts, ppResult.Mounts...)
+				extraDiffExclude = append(extraDiffExclude, ppResult.DiffExclude...)
+			}
+		}
+
+		// If post-processors added diff excludes, compose them with the existing matcher.
+		if len(extraDiffExclude) > 0 {
+			diffMatcher = composeMatcher(diffMatcher, extraDiffExclude)
 		}
 
 		workspacePath = snap.SnapshotPath
@@ -507,6 +520,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		LogLevel:         opts.LogLevel,
 		TmpSize:          ag.DefaultTmpSize,
 		SettingsManifest: settingsManifest,
+		ExtraMounts:      extraMounts,
 	}
 
 	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)
@@ -845,4 +859,29 @@ func (s *SandboxRunner) resolveMCPConfig(cfg *SandboxConfig, agentName string) c
 	}
 
 	return mcpCfg
+}
+
+// composeMatcher wraps an existing snapshot.Matcher with additional gitignore-style
+// exclude patterns. Paths matching either the original matcher or any of the extra
+// patterns are excluded from the diff.
+func composeMatcher(base snapshot.Matcher, extraPatterns []string) snapshot.Matcher {
+	return &compositeMatcher{base: base, extra: extraPatterns}
+}
+
+// compositeMatcher combines a base matcher with a set of literal path prefixes.
+type compositeMatcher struct {
+	base  snapshot.Matcher
+	extra []string
+}
+
+func (c *compositeMatcher) Match(path string) bool {
+	if c.base != nil && c.base.Match(path) {
+		return true
+	}
+	for _, pattern := range c.extra {
+		if path == pattern || strings.HasPrefix(path, strings.TrimSuffix(pattern, "/")+"/") {
+			return true
+		}
+	}
+	return false
 }

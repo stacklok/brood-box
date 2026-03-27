@@ -1680,3 +1680,33 @@ func TestSandboxRunner_Prepare_MCPSuccess_AddsHostServices(t *testing.T) {
 	assert.Equal(t, "mcp", sb.VMConfig.HostServices[0].Name)
 	assert.Equal(t, uint16(4483), sb.VMConfig.HostServices[0].Port)
 }
+
+func TestComposeMatcher(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		patterns []string
+		path     string
+		want     bool
+	}{
+		{"exact match", []string{".git"}, ".git", true},
+		{"prefix match with slash", []string{".git"}, ".git/config", true},
+		{"prefix match trailing slash pattern", []string{".git/"}, ".git/refs/heads", true},
+		{"no false positive on .github", []string{".git"}, ".github/workflows/ci.yml", false},
+		{"no false positive on .gitignore", []string{".git"}, ".gitignore", false},
+		{"no false positive on .gitmodules", []string{".git"}, ".gitmodules", false},
+		{"no match", []string{".git"}, "src/main.go", false},
+		{"multiple patterns", []string{".git", "vendor"}, "vendor/lib/foo.go", true},
+		{"base matcher delegates", []string{}, ".git", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := composeMatcher(snapshot.NopMatcher, tt.patterns)
+			got := m.Match(tt.path)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
