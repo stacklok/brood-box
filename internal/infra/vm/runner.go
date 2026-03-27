@@ -257,6 +257,13 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 		))
 	}
 
+	// Add mount config injection hook if extra mounts are requested.
+	if len(cfg.ExtraMounts) > 0 {
+		opts = append(opts, microvm.WithRootFSHook(
+			InjectMountConfig(cfg.ExtraMounts),
+		))
+	}
+
 	// Add backend options if runner path, lib dir, or embedded sources are specified.
 	var backendOpts []libkrun.Option
 	if r.runnerPath != "" {
@@ -297,6 +304,14 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 		opts = append(opts, microvm.WithVirtioFS(microvm.VirtioFSMount{
 			Tag:      "workspace",
 			HostPath: absPath,
+		}))
+	}
+
+	// Add extra mounts requested by post-processors (e.g. git objects).
+	for _, m := range cfg.ExtraMounts {
+		opts = append(opts, microvm.WithVirtioFS(microvm.VirtioFSMount{
+			Tag:      m.Tag,
+			HostPath: m.HostPath,
 		}))
 	}
 

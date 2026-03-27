@@ -323,7 +323,7 @@ func TestProcess_ReadsAndWritesSanitizedConfig(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
 	// Read the sanitized config from the snapshot.
@@ -356,7 +356,7 @@ func TestProcess_NoGitConfig_NoOp(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
 	// Snapshot should not have a .git directory.
@@ -688,7 +688,7 @@ func TestProcess_ExternalWorktree_SkipsSanitization(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
 	// The .git file should be PRESERVED (not replaced with a directory).
@@ -756,7 +756,7 @@ func TestProcess_InWorkspaceWorktree_SanitizesConfig(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), workspace, snapshotDir)
 	require.NoError(t, err)
 
 	// The .git file should remain a file (not converted to directory).
@@ -805,7 +805,7 @@ func TestProcess_ExternalWorktreeNoCommondir_SkipsSanitization(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
 	// No config should be written for external worktrees.
@@ -828,7 +828,7 @@ func TestProcess_NormalRepo_NoDoubleCreate(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
 	// For normal repos, Process should NOT create HEAD/objects/refs
@@ -868,7 +868,7 @@ func TestProcess_Worktree_MaliciousGitdir(t *testing.T) {
 	sanitizer := NewConfigSanitizer(logger)
 
 	// Process should succeed — external worktrees are skipped.
-	err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), originalDir, snapshotDir)
 	require.NoError(t, err)
 
 	// No config should be written since gitdir is external.
@@ -922,7 +922,7 @@ func TestProcess_InWorkspaceWorktree_RelativeGitdir(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), workspace, snapshotDir)
 	require.NoError(t, err)
 
 	// Config should be sanitized at the correct location.
@@ -978,7 +978,7 @@ func TestProcess_InWorkspaceWorktree_NoCommondir(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	sanitizer := NewConfigSanitizer(logger)
 
-	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), workspace, snapshotDir)
 	require.NoError(t, err)
 
 	// Config should be sanitized at gitdir/config (no commondir fallback).
@@ -1030,7 +1030,7 @@ func TestProcess_Worktree_CommondirEscapesSnapshot(t *testing.T) {
 	sanitizer := NewConfigSanitizer(logger)
 
 	// Process should succeed (escaping commondir is non-fatal, just skipped).
-	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), workspace, snapshotDir)
 	require.NoError(t, err)
 
 	// Should NOT have written to /tmp/config.
@@ -1063,6 +1063,6 @@ func TestProcess_Worktree_MalformedGitFileInSnapshot(t *testing.T) {
 	sanitizer := NewConfigSanitizer(logger)
 
 	// Process should succeed (malformed snapshot .git is non-fatal).
-	err := sanitizer.Process(t.Context(), workspace, snapshotDir)
+	_, err := sanitizer.Process(t.Context(), workspace, snapshotDir)
 	require.NoError(t, err)
 }

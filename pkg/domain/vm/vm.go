@@ -15,6 +15,7 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/git"
 	"github.com/stacklok/brood-box/pkg/domain/settings"
+	"github.com/stacklok/brood-box/pkg/domain/workspace"
 )
 
 // VMConfig holds the parameters needed to start a sandbox VM.
@@ -78,6 +79,10 @@ type VMConfig struct {
 
 	// SettingsManifest declares agent settings to inject into the rootfs.
 	SettingsManifest *settings.Manifest
+
+	// ExtraMounts are additional virtiofs mounts requested by snapshot
+	// post-processors (e.g. git objects for worktree support).
+	ExtraMounts []workspace.MountRequest
 }
 
 // HostService describes an HTTP service exposed from host to guest.

@@ -86,6 +86,10 @@ func main() {
 			"error", err)
 	}
 
+	if err := mountExtras(logger); err != nil {
+		logger.Warn("failed to mount extras", "error", err)
+	}
+
 	if err := harden.ApplySeccomp(); err != nil {
 		logger.Error("seccomp filter failed", "error", err)
 		halt()

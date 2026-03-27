@@ -52,24 +52,24 @@ func NewConfigSanitizer(logger *slog.Logger) *ConfigSanitizer {
 //
 // For external worktrees (where git metadata lives outside the workspace),
 // sanitization is skipped because the config is not present in the snapshot.
-func (s *ConfigSanitizer) Process(_ context.Context, originalPath, snapshotPath string) error {
+func (s *ConfigSanitizer) Process(_ context.Context, originalPath, snapshotPath string) (*workspace.PostProcessResult, error) {
 	// Find the git config source on the host filesystem.
 	srcPath, err := resolveGitConfigPath(originalPath)
 	if err != nil {
 		s.logger.Warn("could not resolve git config path, skipping sanitization",
 			"path", originalPath, "error", err)
-		return nil
+		return nil, nil
 	}
 	if srcPath == "" {
-		return nil
+		return nil, nil
 	}
 
 	data, err := os.ReadFile(srcPath)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
-			return nil
+			return nil, nil
 		}
-		return fmt.Errorf("reading git config: %w", err)
+		return nil, fmt.Errorf("reading git config: %w", err)
 	}
 
 	sanitized := SanitizeConfig(string(data))
@@ -77,20 +77,20 @@ func (s *ConfigSanitizer) Process(_ context.Context, originalPath, snapshotPath 
 	// Determine where the sanitized config should be written in the snapshot.
 	dstPath := s.resolveSnapshotConfigDest(originalPath, snapshotPath)
 	if dstPath == "" {
-		return nil
+		return nil, nil
 	}
 
 	// Ensure parent directory exists. Normally the snapshot creator copies
 	// .git/ first, but be defensive for edge cases and tests.
 	if err := os.MkdirAll(filepath.Dir(dstPath), 0o755); err != nil {
-		return fmt.Errorf("creating git config directory in snapshot: %w", err)
+		return nil, fmt.Errorf("creating git config directory in snapshot: %w", err)
 	}
 
 	if err := os.WriteFile(dstPath, []byte(sanitized), 0o644); err != nil {
-		return fmt.Errorf("writing sanitized git config: %w", err)
+		return nil, fmt.Errorf("writing sanitized git config: %w", err)
 	}
 
-	return nil
+	return nil, nil
 }
 
 // resolveSnapshotConfigDest determines where to write the sanitized git config
