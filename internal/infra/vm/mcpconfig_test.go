@@ -216,7 +216,8 @@ func TestInjectClaudeCodeMCP_NoExtraFields(t *testing.T) {
 	assert.Len(t, servers, 1, "should have only sandbox-tools")
 
 	entry := servers["sandbox-tools"].(map[string]any)
-	assert.Len(t, entry, 2, "server entry should have only type and url")
+	assert.Len(t, entry, 3, "server entry should have type, url, and headers")
+	assert.Contains(t, entry, "headers")
 }
 
 func TestInjectCodexMCP(t *testing.T) {
