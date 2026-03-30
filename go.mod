@@ -17,7 +17,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stacklok/go-microvm v0.0.26
 	github.com/stacklok/toolhive v0.13.1
-	github.com/stacklok/toolhive-core v0.0.12
+	github.com/stacklok/toolhive-core v0.0.13
 	github.com/stretchr/testify v1.11.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.49.0
