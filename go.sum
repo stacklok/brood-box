@@ -646,6 +646,8 @@ github.com/stacklok/toolhive v0.13.1 h1:L4Xs4yUbsUp15BQcbvJk/Z+LewfKH9j0hYeJs9zA
 github.com/stacklok/toolhive v0.13.1/go.mod h1:mtGolKBvh5IP7p0rnjqMk9isHahfVCFkgUzsuyOTNHc=
 github.com/stacklok/toolhive-core v0.0.12 h1:jKrgbXSXTkLkLMrcv3u/ozGeFhM0vd0jamVnQX9trEw=
 github.com/stacklok/toolhive-core v0.0.12/go.mod h1:lfOrVDcQ74LlOsMgRn80QfriFDfy9c6BsYKu+uYsRVk=
+github.com/stacklok/toolhive-core v0.0.13 h1:iKMnI7VIVeBXkeCccF5UdOMy5RUPeL+Bmg4DjgFeiHU=
+github.com/stacklok/toolhive-core v0.0.13/go.mod h1:AAeOC8CxDVtburJEkVVdR2bO5z2fiY9dgYRnhcjkHvI=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.2.0/go.mod h1:qt09Ya8vawLte6SNmTgCsAVtYtaKzEcn8ATUoHMkEqE=
