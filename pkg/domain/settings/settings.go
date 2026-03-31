@@ -91,9 +91,15 @@ type InjectionResult struct {
 	TotalBytes int64
 }
 
-// Injector copies filtered settings from the host into the guest rootfs.
+// Injector copies filtered settings between the host and guest rootfs.
 type Injector interface {
 	// Inject processes each entry in the manifest, copying files from
 	// hostHomeDir into rootfsPath according to each entry's Kind.
 	Inject(rootfsPath, hostHomeDir string, manifest Manifest) (InjectionResult, error)
+
+	// Extract copies settings files from the guest rootfs back to the
+	// host home directory. Only files present in the guest are written;
+	// KindMergeFile entries are only extracted when the host file does
+	// not already exist (to avoid overwriting filtered fields).
+	Extract(rootfsPath, hostHomeDir string, manifest Manifest) (InjectionResult, error)
 }

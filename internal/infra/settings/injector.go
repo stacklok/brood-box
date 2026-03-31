@@ -72,6 +72,184 @@ func (f *FSInjector) Inject(rootfsPath, hostHomeDir string, manifest settings.Ma
 	return result, nil
 }
 
+// Extract copies settings files from the guest rootfs back to the host
+// home directory. For KindFile and KindDirectory entries the guest file is
+// copied directly. For KindMergeFile entries the guest file is only written
+// when the host file does not already exist — this prevents overwriting
+// filtered fields that were stripped during injection.
+func (f *FSInjector) Extract(rootfsPath, hostHomeDir string, manifest settings.Manifest) (settings.InjectionResult, error) {
+	c := &counters{}
+
+	for _, entry := range manifest.Entries {
+		if err := f.extractEntry(rootfsPath, hostHomeDir, entry, c); err != nil {
+			return settings.InjectionResult{}, fmt.Errorf("extracting %q: %w", entry.GuestPath, err)
+		}
+	}
+
+	result := settings.InjectionResult{
+		FileCount:  c.fileCount,
+		TotalBytes: c.totalSize,
+	}
+
+	f.logger.Info("settings extraction complete",
+		"files", result.FileCount, "total_bytes", result.TotalBytes)
+	return result, nil
+}
+
+func (f *FSInjector) extractEntry(
+	rootfsPath, hostHomeDir string,
+	entry settings.Entry,
+	c *counters,
+) error {
+	guestPath := filepath.Join(rootfsPath, sandboxHome, entry.GuestPath)
+
+	info, err := os.Lstat(guestPath)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			f.logger.Debug("guest file not found, skipping extraction", "path", entry.GuestPath)
+			return nil
+		}
+		return fmt.Errorf("stat guest file: %w", err)
+	}
+
+	// Skip symlinks.
+	if info.Mode()&os.ModeSymlink != 0 {
+		f.logger.Warn("skipping symlink during extraction", "path", entry.GuestPath)
+		return nil
+	}
+
+	// For merge files, only extract if the host file does NOT exist.
+	// This prevents overwriting fields that were filtered during injection.
+	if entry.Kind == settings.KindMergeFile {
+		hostPath := filepath.Join(hostHomeDir, entry.HostPath)
+		if _, statErr := os.Lstat(hostPath); statErr == nil {
+			f.logger.Debug("host merge file exists, skipping extraction to avoid overwriting filtered fields",
+				"path", entry.HostPath)
+			return nil
+		}
+	}
+
+	if info.IsDir() {
+		return f.extractDirectory(rootfsPath, hostHomeDir, entry, c, 0)
+	}
+	return f.extractFile(rootfsPath, hostHomeDir, entry, c)
+}
+
+func (f *FSInjector) extractFile(
+	rootfsPath, hostHomeDir string,
+	entry settings.Entry,
+	c *counters,
+) error {
+	guestPath := filepath.Join(rootfsPath, sandboxHome, entry.GuestPath)
+
+	if err := validateContainment(filepath.Join(rootfsPath, sandboxHome), guestPath); err != nil {
+		return fmt.Errorf("guest path containment: %w", err)
+	}
+
+	data, err := readFileNoFollow(guestPath)
+	if err != nil {
+		return fmt.Errorf("reading guest file: %w", err)
+	}
+
+	dataSize := int64(len(data))
+	if dataSize > settings.MaxFileSize {
+		return fmt.Errorf("file %q exceeds max size (%d > %d)", entry.GuestPath, dataSize, settings.MaxFileSize)
+	}
+	if c.fileCount >= settings.MaxFileCount {
+		return fmt.Errorf("file count would exceed limit (%d)", settings.MaxFileCount)
+	}
+	if c.totalSize+dataSize > settings.MaxTotalSize {
+		return fmt.Errorf("aggregate size would exceed limit (%d)", settings.MaxTotalSize)
+	}
+
+	dstPath := filepath.Join(hostHomeDir, entry.HostPath)
+
+	if err := validateContainment(hostHomeDir, dstPath); err != nil {
+		return fmt.Errorf("host path containment: %w", err)
+	}
+
+	if err := os.MkdirAll(filepath.Dir(dstPath), dirPerm); err != nil {
+		return fmt.Errorf("creating parent dirs: %w", err)
+	}
+
+	if err := os.WriteFile(dstPath, data, filePerm); err != nil {
+		return fmt.Errorf("writing host file: %w", err)
+	}
+
+	c.fileCount++
+	c.totalSize += dataSize
+
+	f.logger.Debug("extracted file", "src", entry.GuestPath, "dst", entry.HostPath)
+	return nil
+}
+
+func (f *FSInjector) extractDirectory(
+	rootfsPath, hostHomeDir string,
+	entry settings.Entry,
+	c *counters,
+	depth int,
+) error {
+	if depth >= settings.MaxDepth {
+		f.logger.Warn("skipping directory exceeding max depth during extraction", "path", entry.GuestPath, "depth", depth)
+		return nil
+	}
+
+	guestPath := filepath.Join(rootfsPath, sandboxHome, entry.GuestPath)
+
+	if err := validateContainment(filepath.Join(rootfsPath, sandboxHome), guestPath); err != nil {
+		return fmt.Errorf("guest path containment: %w", err)
+	}
+
+	entries, err := os.ReadDir(guestPath)
+	if err != nil {
+		return fmt.Errorf("reading guest directory: %w", err)
+	}
+
+	dstPath := filepath.Join(hostHomeDir, entry.HostPath)
+
+	if err := validateContainment(hostHomeDir, dstPath); err != nil {
+		return fmt.Errorf("host path containment: %w", err)
+	}
+
+	if err := os.MkdirAll(dstPath, dirPerm); err != nil {
+		return fmt.Errorf("creating host directory: %w", err)
+	}
+
+	for _, de := range entries {
+		childGuestPath := filepath.Join(entry.GuestPath, de.Name())
+		childHostPath := filepath.Join(entry.HostPath, de.Name())
+
+		childInfo, err := os.Lstat(filepath.Join(rootfsPath, sandboxHome, childGuestPath))
+		if err != nil {
+			return fmt.Errorf("lstat %q: %w", childGuestPath, err)
+		}
+
+		if childInfo.Mode()&os.ModeSymlink != 0 {
+			f.logger.Warn("skipping symlink during extraction", "path", childGuestPath)
+			continue
+		}
+
+		childEntry := settings.Entry{
+			HostPath:  childHostPath,
+			GuestPath: childGuestPath,
+		}
+
+		if childInfo.IsDir() {
+			childEntry.Kind = settings.KindDirectory
+			if err := f.extractDirectory(rootfsPath, hostHomeDir, childEntry, c, depth+1); err != nil {
+				return err
+			}
+		} else {
+			childEntry.Kind = settings.KindFile
+			if err := f.extractFile(rootfsPath, hostHomeDir, childEntry, c); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
 func (f *FSInjector) processEntry(
 	rootfsPath, hostHomeDir string,
 	entry settings.Entry,

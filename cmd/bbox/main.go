@@ -626,9 +626,10 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 
 	// Wire settings injector (enabled by default, --no-settings to disable).
+	var settingsInjector *infrasettings.FSInjector
 	settingsEnabled := cfg.SettingsImport.IsEnabled() && !flags.noSettings
 	if settingsEnabled {
-		settingsInjector := infrasettings.NewFSInjector(logger)
+		settingsInjector = infrasettings.NewFSInjector(logger)
 		vmRunnerOpts = append(vmRunnerOpts, infravm.WithSettingsInjector(settingsInjector))
 	} else if flags.noSettings {
 		// Ensure sandbox config reflects disabled state for the application layer.
@@ -638,14 +639,15 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	// Wire dependencies.
 	deps := sandbox.SandboxDeps{
-		Registry:        registry,
-		VMRunner:        infravm.NewMicroVMRunner(logger, vmRunnerOpts...),
-		SessionRunner:   infrassh.NewInteractiveSession(logger),
-		Config:          sandboxCfg,
-		EnvProvider:     agent.NewOSEnvProvider(os.Environ),
-		Logger:          logger,
-		Observer:        observer,
-		CredentialStore: credentialStore,
+		Registry:         registry,
+		VMRunner:         infravm.NewMicroVMRunner(logger, vmRunnerOpts...),
+		SessionRunner:    infrassh.NewInteractiveSession(logger),
+		Config:           sandboxCfg,
+		EnvProvider:      agent.NewOSEnvProvider(os.Environ),
+		Logger:           logger,
+		Observer:         observer,
+		CredentialStore:  credentialStore,
+		SettingsInjector: settingsInjector,
 	}
 
 	// Validate MCP authz profile flag early (before wiring).

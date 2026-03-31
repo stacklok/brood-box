@@ -32,6 +32,10 @@ func (m *mockInjector) Inject(rootfsPath, hostHomeDir string, manifest settings.
 	return settings.InjectionResult{FileCount: len(manifest.Entries)}, nil
 }
 
+func (m *mockInjector) Extract(_, _ string, _ settings.Manifest) (settings.InjectionResult, error) {
+	return settings.InjectionResult{}, nil
+}
+
 func TestInjectSettings_NilManifest(t *testing.T) {
 	t.Parallel()
 

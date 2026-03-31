@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"log/slog"
+	"os"
 	"strings"
 	"time"
 
@@ -143,6 +144,9 @@ type SandboxDeps struct {
 	// CredentialStore persists agent credentials between sessions (nil = disabled).
 	CredentialStore credential.Store
 
+	// SettingsInjector handles host-to-guest settings injection and extraction (nil = disabled).
+	SettingsInjector settings.Injector
+
 	// MCPProvider creates host services for MCP proxy (nil = disabled).
 	MCPProvider hostservice.Provider
 
@@ -156,16 +160,17 @@ type SandboxDeps struct {
 // Sandbox holds the state of a running sandbox session.
 // Created by Prepare, consumed by Attach/Stop/Changes/Flush/Cleanup.
 type Sandbox struct {
-	Agent           agent.Agent
-	VM              domvm.VM
-	VMConfig        domvm.VMConfig
-	Snapshot        *workspace.Snapshot
-	WorkspacePath   string
-	DiffMatcher     snapshot.Matcher
-	EnvVars         map[string]string
-	ResolvedCommand []string
-	SSHAgentForward bool
-	SSHAuthSock     string
+	Agent              agent.Agent
+	VM                 domvm.VM
+	VMConfig           domvm.VMConfig
+	Snapshot           *workspace.Snapshot
+	WorkspacePath      string
+	DiffMatcher        snapshot.Matcher
+	EnvVars            map[string]string
+	ResolvedCommand    []string
+	SSHAgentForward    bool
+	SSHAuthSock        string
+	SettingsManifest   *settings.Manifest
 }
 
 // Cleanup releases resources (snapshot dir). Safe to call multiple times.
@@ -198,6 +203,7 @@ type SandboxRunner struct {
 	flusher                snapshot.Flusher
 	differ                 snapshot.Differ
 	credentialStore        credential.Store
+	settingsInjector       settings.Injector
 	mcpProvider            hostservice.Provider
 	snapshotPostProcessors []workspace.SnapshotPostProcessor
 	gitIdentityProvider    domaingit.IdentityProvider
@@ -222,6 +228,7 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 		flusher:                deps.Flusher,
 		differ:                 deps.Differ,
 		credentialStore:        deps.CredentialStore,
+		settingsInjector:       deps.SettingsInjector,
 		mcpProvider:            deps.MCPProvider,
 		snapshotPostProcessors: deps.SnapshotPostProcessors,
 		gitIdentityProvider:    deps.GitIdentityProvider,
@@ -502,16 +509,17 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	s.observer.Complete("Sandbox ready")
 
 	return &Sandbox{
-		Agent:           ag,
-		VM:              sandboxVM,
-		VMConfig:        vmCfg,
-		Snapshot:        snap,
-		WorkspacePath:   workspacePath,
-		DiffMatcher:     diffMatcher,
-		EnvVars:         envVars,
-		ResolvedCommand: command,
-		SSHAgentForward: opts.SSHAgentForward,
-		SSHAuthSock:     opts.SSHAuthSock,
+		Agent:            ag,
+		VM:               sandboxVM,
+		VMConfig:         vmCfg,
+		Snapshot:         snap,
+		WorkspacePath:    workspacePath,
+		DiffMatcher:      diffMatcher,
+		EnvVars:          envVars,
+		ResolvedCommand:  command,
+		SSHAgentForward:  opts.SSHAgentForward,
+		SSHAuthSock:      opts.SSHAuthSock,
+		SettingsManifest: settingsManifest,
 	}, nil
 }
 
@@ -558,6 +566,37 @@ func (s *SandboxRunner) ExtractCredentials(sb *Sandbox) {
 		return
 	}
 	s.observer.Complete(fmt.Sprintf("Saved credentials for %s", sb.Agent.Name))
+}
+
+// ExtractSettings saves agent settings from the guest rootfs back to the host.
+// Errors are logged as warnings, not fatal — settings save failure should
+// not prevent the user from working.
+func (s *SandboxRunner) ExtractSettings(sb *Sandbox) {
+	if s.settingsInjector == nil || sb.SettingsManifest == nil || len(sb.SettingsManifest.Entries) == 0 {
+		return
+	}
+	s.observer.Start(progress.PhaseSavingSettings, "Saving settings...")
+	rootfsPath := sb.VM.RootFSPath()
+
+	hostHome, err := os.UserHomeDir()
+	if err != nil {
+		s.observer.Warn("Could not resolve home directory for settings extraction")
+		s.logger.Warn("failed to resolve host home for settings extraction", "error", err)
+		return
+	}
+
+	result, err := s.settingsInjector.Extract(rootfsPath, hostHome, *sb.SettingsManifest)
+	if err != nil {
+		s.observer.Warn(fmt.Sprintf("Could not save settings for %s — see logs with --debug", sb.Agent.Name))
+		s.logger.Warn("failed to extract settings", "agent", sb.Agent.Name, "error", err)
+		return
+	}
+
+	if result.FileCount > 0 {
+		s.observer.Complete(fmt.Sprintf("Saved %d settings file(s) for %s", result.FileCount, sb.Agent.Name))
+	} else {
+		s.observer.Complete("No settings to save")
+	}
 }
 
 // Stop gracefully shuts down the sandbox VM.
@@ -629,6 +668,7 @@ func (s *SandboxRunner) Run(ctx context.Context, agentName string, opts RunOpts)
 	termErr := s.Attach(ctx, sb, opts.Terminal)
 
 	s.ExtractCredentials(sb)
+	s.ExtractSettings(sb)
 
 	if stopErr := s.Stop(sb); stopErr != nil {
 		s.logger.Error("failed to stop VM", "error", stopErr)

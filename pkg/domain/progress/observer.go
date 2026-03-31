@@ -27,6 +27,8 @@ const (
 	PhaseConfiguringMCP
 	// PhaseSavingCredentials is the credential persistence phase.
 	PhaseSavingCredentials
+	// PhaseSavingSettings is the settings persistence phase.
+	PhaseSavingSettings
 	// PhaseCleaning is the snapshot cleanup phase.
 	PhaseCleaning
 )

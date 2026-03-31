@@ -135,6 +135,7 @@ func NewDefaultSandboxDeps(opts DefaultSandboxDepsOpts) sandbox.SandboxDeps {
 		),
 		Differ:                 infradiff.NewFSDiffer(),
 		Flusher:                infrareview.NewFSFlusher(),
+		SettingsInjector:       settingsInjector,
 		MCPProvider:            opts.MCPProvider,
 		SnapshotPostProcessors: opts.SnapshotPostProcessors,
 		GitIdentityProvider:    gitIdentityProvider,
