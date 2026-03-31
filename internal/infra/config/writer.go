@@ -116,6 +116,27 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   # VM before the agent starts (default: false).
 #   seed_host_credentials: false
 
+# Agent settings injection into the VM.
+# Copies host agent settings (rules, skills, themes, etc.) into the guest.
+# Equivalent of --no-settings when set to enabled: false.
+# settings_import:
+#   # Enable or disable all settings injection (default: true).
+#   # Set to false to disable (same as --no-settings flag).
+#   enabled: true
+#
+#   # Control which categories of settings are imported.
+#   # Each category defaults to true when omitted or null.
+#   # categories:
+#   #   settings: true
+#   #   instructions: true
+#   #   rules: true
+#   #   agents: true
+#   #   skills: true
+#   #   commands: true
+#   #   tools: true
+#   #   plugins: true
+#   #   themes: true
+
 # Host runtime dependency configuration.
 # runtime:
 #   # Download libkrunfw firmware at runtime (default: true).
@@ -159,6 +180,14 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   #     enabled: true
 #   #     authz:
 #   #       profile: "full-access"
+#   #
+#   #   # Override settings injection for this agent.
+#   #   # Can only tighten (disable), not enable if globally disabled.
+#   #   settings_import:
+#   #     enabled: true
+#   #     categories:
+#   #       rules: true
+#   #       skills: true
 `
 
 // WriteDefault writes the default config template to the given path.

@@ -126,7 +126,8 @@ func TestWriteDefault(t *testing.T) {
 				for _, section := range []string{
 					"defaults:", "review:", "network:",
 					"mcp:", "authz:", "config:",
-					"git:", "auth:", "runtime:", "agents:",
+					"git:", "auth:", "settings_import:",
+					"runtime:", "agents:",
 				} {
 					assert.Contains(t, content, section,
 						"template should contain section %q", section)
