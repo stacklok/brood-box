@@ -53,18 +53,23 @@ type counters struct {
 
 // Inject processes each entry in the manifest, copying files from hostHomeDir
 // into rootfsPath according to each entry's Kind.
-func (f *FSInjector) Inject(rootfsPath, hostHomeDir string, manifest settings.Manifest) error {
+func (f *FSInjector) Inject(rootfsPath, hostHomeDir string, manifest settings.Manifest) (settings.InjectionResult, error) {
 	c := &counters{}
 
 	for _, entry := range manifest.Entries {
 		if err := f.processEntry(rootfsPath, hostHomeDir, entry, c); err != nil {
-			return fmt.Errorf("injecting %q: %w", entry.HostPath, err)
+			return settings.InjectionResult{}, fmt.Errorf("injecting %q: %w", entry.HostPath, err)
 		}
 	}
 
+	result := settings.InjectionResult{
+		FileCount:  c.fileCount,
+		TotalBytes: c.totalSize,
+	}
+
 	f.logger.Info("settings injection complete",
-		"files", c.fileCount, "total_bytes", c.totalSize)
-	return nil
+		"files", result.FileCount, "total_bytes", result.TotalBytes)
+	return result, nil
 }
 
 func (f *FSInjector) processEntry(

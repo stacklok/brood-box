@@ -23,13 +23,13 @@ type mockInjectCall struct {
 	Manifest    settings.Manifest
 }
 
-func (m *mockInjector) Inject(rootfsPath, hostHomeDir string, manifest settings.Manifest) error {
+func (m *mockInjector) Inject(rootfsPath, hostHomeDir string, manifest settings.Manifest) (settings.InjectionResult, error) {
 	m.calls = append(m.calls, mockInjectCall{
 		RootfsPath:  rootfsPath,
 		HostHomeDir: hostHomeDir,
 		Manifest:    manifest,
 	})
-	return nil
+	return settings.InjectionResult{FileCount: len(manifest.Entries)}, nil
 }
 
 func TestInjectSettings_NilManifest(t *testing.T) {

@@ -145,7 +145,7 @@ func TestFSInjector_File(t *testing.T) {
 
 			inj := NewFSInjector(testLogger())
 			manifest := settings.Manifest{Entries: []settings.Entry{tt.entry}}
-			err := inj.Inject(rootfs, hostHome, manifest)
+			_, err := inj.Inject(rootfs, hostHome, manifest)
 
 			if tt.wantErr != "" {
 				require.Error(t, err)
@@ -313,7 +313,7 @@ func TestFSInjector_Directory(t *testing.T) {
 
 			inj := NewFSInjector(testLogger())
 			manifest := settings.Manifest{Entries: []settings.Entry{tt.entry}}
-			err := inj.Inject(rootfs, hostHome, manifest)
+			_, err := inj.Inject(rootfs, hostHome, manifest)
 
 			if tt.wantErr != "" {
 				require.Error(t, err)
@@ -417,7 +417,7 @@ func TestFSInjector_MergeFileJSON(t *testing.T) {
 
 			inj := NewFSInjector(testLogger())
 			manifest := settings.Manifest{Entries: []settings.Entry{tt.entry}}
-			err := inj.Inject(rootfs, hostHome, manifest)
+			_, err := inj.Inject(rootfs, hostHome, manifest)
 			require.NoError(t, err)
 
 			dstPath := filepath.Join(rootfs, sandboxHome, tt.entry.GuestPath)
@@ -513,7 +513,7 @@ func TestFSInjector_MergeFileTOML(t *testing.T) {
 
 			inj := NewFSInjector(testLogger())
 			manifest := settings.Manifest{Entries: []settings.Entry{tt.entry}}
-			err := inj.Inject(rootfs, hostHome, manifest)
+			_, err := inj.Inject(rootfs, hostHome, manifest)
 			require.NoError(t, err)
 
 			dstPath := filepath.Join(rootfs, sandboxHome, tt.entry.GuestPath)
@@ -625,7 +625,7 @@ func TestFSInjector_MergeFileJSONC(t *testing.T) {
 
 	inj := NewFSInjector(testLogger())
 	manifest := settings.Manifest{Entries: []settings.Entry{entry}}
-	err := inj.Inject(rootfs, hostHome, manifest)
+	_, err := inj.Inject(rootfs, hostHome, manifest)
 	require.NoError(t, err)
 
 	data, err := os.ReadFile(filepath.Join(rootfs, sandboxHome, "settings.json"))

@@ -30,6 +30,15 @@ func InjectSettings(injector settings.Injector, manifest *settings.Manifest) fun
 			"entries", len(manifest.Entries),
 		)
 
-		return injector.Inject(rootfsPath, hostHome, *manifest)
+		result, err := injector.Inject(rootfsPath, hostHome, *manifest)
+		if err != nil {
+			return err
+		}
+
+		if result.FileCount == 0 {
+			slog.Info("no host settings files found to inject")
+		}
+
+		return nil
 	}
 }

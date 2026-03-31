@@ -82,9 +82,18 @@ const (
 	MaxDepth = 8
 )
 
+// InjectionResult summarises what was actually injected.
+type InjectionResult struct {
+	// FileCount is the number of files written into the guest rootfs.
+	FileCount int
+
+	// TotalBytes is the aggregate size of all written files.
+	TotalBytes int64
+}
+
 // Injector copies filtered settings from the host into the guest rootfs.
 type Injector interface {
 	// Inject processes each entry in the manifest, copying files from
 	// hostHomeDir into rootfsPath according to each entry's Kind.
-	Inject(rootfsPath, hostHomeDir string, manifest Manifest) error
+	Inject(rootfsPath, hostHomeDir string, manifest Manifest) (InjectionResult, error)
 }
