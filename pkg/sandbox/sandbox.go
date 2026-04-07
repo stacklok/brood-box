@@ -12,6 +12,11 @@ import (
 	"strings"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/trace"
+
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	"github.com/stacklok/brood-box/pkg/domain/config"
@@ -160,17 +165,17 @@ type SandboxDeps struct {
 // Sandbox holds the state of a running sandbox session.
 // Created by Prepare, consumed by Attach/Stop/Changes/Flush/Cleanup.
 type Sandbox struct {
-	Agent              agent.Agent
-	VM                 domvm.VM
-	VMConfig           domvm.VMConfig
-	Snapshot           *workspace.Snapshot
-	WorkspacePath      string
-	DiffMatcher        snapshot.Matcher
-	EnvVars            map[string]string
-	ResolvedCommand    []string
-	SSHAgentForward    bool
-	SSHAuthSock        string
-	SettingsManifest   *settings.Manifest
+	Agent            agent.Agent
+	VM               domvm.VM
+	VMConfig         domvm.VMConfig
+	Snapshot         *workspace.Snapshot
+	WorkspacePath    string
+	DiffMatcher      snapshot.Matcher
+	EnvVars          map[string]string
+	ResolvedCommand  []string
+	SSHAgentForward  bool
+	SSHAuthSock      string
+	SettingsManifest *settings.Manifest
 }
 
 // Cleanup releases resources (snapshot dir). Safe to call multiple times.
@@ -239,6 +244,11 @@ func NewSandboxRunner(deps SandboxDeps) *SandboxRunner {
 // workspace snapshot (if enabled), and starts the VM.
 // The caller must call Cleanup() on the returned Sandbox when done.
 func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunOpts) (*Sandbox, error) {
+	tracer := otel.Tracer("github.com/stacklok/brood-box")
+	ctx, rootSpan := tracer.Start(ctx, "bbox.Prepare",
+		trace.WithAttributes(attribute.String("bbox.agent", agentName)))
+	defer rootSpan.End()
+
 	// 0. Validate session ID.
 	if opts.SessionID == "" || len(opts.SessionID) > 16 || !isHexString(opts.SessionID) {
 		return nil, fmt.Errorf("session ID must be 1-16 hex characters, got %q", opts.SessionID)
@@ -410,6 +420,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	var hostServices []domvm.HostService
 	mcpCfg := s.resolveMCPConfig(cfg, agentName)
 	if mcpCfg.IsEnabled() && s.mcpProvider != nil {
+		_, mcpSpan := tracer.Start(ctx, "bbox.ConfigureMCP")
 		s.observer.Start(progress.PhaseConfiguringMCP, "Discovering MCP servers...")
 		services, mcpErr := s.mcpProvider.Services(ctx)
 		if mcpErr != nil {
@@ -423,6 +434,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 			}
 			s.observer.Complete(fmt.Sprintf("MCP proxy ready on port %d", mcpCfg.Port))
 		}
+		mcpSpan.End()
 	}
 
 	// 5. Set up workspace path (possibly with snapshot isolation).
@@ -440,6 +452,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	}
 
 	if opts.Snapshot.Enabled && s.workspaceCloner != nil {
+		_, snapSpan := tracer.Start(ctx, "bbox.CreateSnapshot")
 		s.observer.Start(progress.PhaseCreatingSnapshot, "Creating workspace snapshot...")
 
 		snap, err = s.workspaceCloner.CreateSnapshot(ctx, workspacePath, snapshotMatcher)
@@ -468,9 +481,11 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		}
 
 		workspacePath = snap.SnapshotPath
+		snapSpan.End()
 	}
 
 	// 6. Start VM with (possibly overridden) workspace path.
+	_, vmSpan := tracer.Start(ctx, "bbox.StartVM")
 	s.observer.Start(progress.PhaseStartingVM, "Starting sandbox VM...")
 
 	vmCfg := domvm.VMConfig{
@@ -496,6 +511,9 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 
 	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)
 	if err != nil {
+		vmSpan.RecordError(err)
+		vmSpan.SetStatus(codes.Error, err.Error())
+		vmSpan.End()
 		s.observer.Fail("Failed to start VM")
 		// Clean up snapshot if we created one before VM start failed.
 		if snap != nil {
@@ -505,6 +523,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		}
 		return nil, fmt.Errorf("starting sandbox VM: %w", err)
 	}
+	vmSpan.End()
 
 	s.observer.Complete("Sandbox ready")
 

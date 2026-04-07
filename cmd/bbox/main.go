@@ -25,6 +25,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stacklok/go-microvm/extract"
 	"github.com/stacklok/go-microvm/image"
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	infraagent "github.com/stacklok/brood-box/internal/infra/agent"
 	infraconfig "github.com/stacklok/brood-box/internal/infra/config"
@@ -39,6 +41,7 @@ import (
 	infrasettings "github.com/stacklok/brood-box/internal/infra/settings"
 	infrassh "github.com/stacklok/brood-box/internal/infra/ssh"
 	infraterminal "github.com/stacklok/brood-box/internal/infra/terminal"
+	infratracing "github.com/stacklok/brood-box/internal/infra/tracing"
 	infravm "github.com/stacklok/brood-box/internal/infra/vm"
 	infraruntime "github.com/stacklok/brood-box/internal/infra/vm/runtimebin"
 	infraws "github.com/stacklok/brood-box/internal/infra/workspace"
@@ -91,6 +94,7 @@ func rootCmd() *cobra.Command {
 		noSettings        bool
 		noFirmwareDL      bool
 		noImageCache      bool
+		traceEnabled      bool
 		timings           bool
 		exec              string
 		envForward        []string
@@ -155,6 +159,7 @@ Example:
 				noSettings:        noSettings,
 				noFirmwareDL:      noFirmwareDL,
 				noImageCache:      noImageCache,
+				traceEnabled:      traceEnabled || os.Getenv("BBOX_TRACE") == "1",
 				timings:           timings,
 				exec:              exec,
 				commandArgs:       commandArgs,
@@ -190,6 +195,7 @@ Example:
 	cmd.Flags().BoolVar(&noSettings, "no-settings", false, "Disable injecting host agent settings (rules, skills, etc.) into the VM")
 	cmd.Flags().BoolVar(&noFirmwareDL, "no-firmware-download", false, "Disable firmware download (use system libkrunfw only)")
 	cmd.Flags().BoolVar(&noImageCache, "no-image-cache", false, "Disable OCI image caching (fresh pull every run)")
+	cmd.Flags().BoolVar(&traceEnabled, "trace", false, "Enable OpenTelemetry tracing (writes trace.json to VM data dir)")
 	cmd.Flags().BoolVar(&timings, "timings", false, "Print per-phase timing summary after run")
 	cmd.Flags().StringVar(&exec, "exec", "", "Override the agent command (e.g. /bin/bash for debugging)")
 	cmd.Flags().StringSliceVar(&envForward, "env-forward", nil, "Forward host env var into VM (exact name or glob like 'PREFIX_*', repeatable)")
@@ -345,6 +351,7 @@ type runFlags struct {
 	noSettings        bool
 	noFirmwareDL      bool
 	noImageCache      bool
+	traceEnabled      bool
 	timings           bool
 	exec              string
 	commandArgs       []string
@@ -411,6 +418,21 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		timingObs = infraprogress.NewTimingObserver(observer)
 		observer = timingObs
 		defer timingObs.Summary(os.Stderr)
+	}
+
+	// Set up OpenTelemetry tracing when --trace or BBOX_TRACE=1.
+	var tracerProvider *sdktrace.TracerProvider
+	if flags.traceEnabled {
+		tracePath := filepath.Join(filepath.Dir(logPath), "trace.json")
+		tp, tpErr := infratracing.NewProvider(tracePath)
+		if tpErr != nil {
+			logger.Warn("failed to initialize tracing", "error", tpErr)
+		} else {
+			tracerProvider = tp
+			otel.SetTracerProvider(tp)
+			defer infratracing.Shutdown(context.Background(), tp)
+			_, _ = fmt.Fprintf(os.Stderr, "Trace output: %s\n", tracePath)
+		}
 	}
 
 	// Use the workspace resolved above for VM naming.
@@ -891,6 +913,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			if timingObs != nil {
 				timingObs.Summary(os.Stderr)
 			}
+			infratracing.Shutdown(context.Background(), tracerProvider)
 			os.Exit(exitErr.Code)
 		}
 		// Print available agents on not-found errors.
