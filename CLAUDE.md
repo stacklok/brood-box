@@ -83,6 +83,7 @@ This project follows DDD layered architecture with dependency injection **strict
 - `internal/infra/terminal/` — OS terminal wrapper (raw mode, SIGWINCH)
 - `internal/infra/progress/` — Spinner, simple, and log-based progress observers
 - `internal/infra/process/` — Process management utilities
+- `internal/infra/tracing/` — OpenTelemetry TracerProvider factory (file exporter, sync flush)
 
 **Guest VM** (`internal/guest/` + `cmd/bbox-init/`, Linux only — runs inside the microVM):
 - `internal/guest/homefs/` — Writable home directory overlay (overlayfs/tmpfs)
@@ -216,6 +217,57 @@ Image tagging is `:latest` only — images are not versioned with release tags. 
 - **Domain purity**: `pkg/domain/` must never import from `internal/infra/` or `pkg/sandbox/`. This is the most important architectural invariant — break it and you break the entire DDD foundation.
 - **Always use `task`**: Never run `go build`, `go test ./...`, `golangci-lint`, `go fmt`, or `goimports` directly. The Taskfile sets critical env vars and flags. Raw commands will silently produce wrong results.
 - **macOS entitlements**: `go-microvm-runner` must be code-signed with `assets/entitlements.plist` on macOS (Hypervisor.framework requirement). `task build-dev-system-darwin` handles this automatically. On macOS, install libkrun via `brew tap slp/krun && brew install libkrun libkrunfw`.
+
+## Debugging & Profiling
+
+### Startup timing
+
+```bash
+bbox claude-code --timings                    # Per-phase timing summary (user-facing)
+bbox claude-code --trace                      # OTel trace JSON to VM data dir
+bbox claude-code --trace --timings            # Both
+BBOX_TRACE=1 bbox claude-code                 # Env var alternative to --trace
+```
+
+`--timings` prints a human-readable summary to stderr. `--trace` writes detailed OTel spans (with parent-child hierarchy) to `trace.json` in the VM data dir. View traces with `cat trace.json | jq .` or import into Jaeger.
+
+Key spans in the trace hierarchy:
+```
+bbox.Prepare → bbox.StartVM → microvm.Run → microvm.RootfsClone / microvm.SSHWaitReady
+```
+
+### Preserving VM data for debugging
+
+By default, the VM data directory (console.log, vm.log, rootfs-work) is cleaned up after each run. To preserve it:
+
+```bash
+BBOX_KEEP_VM_DATA=1 bbox claude-code --trace
+```
+
+The data dir path is logged in broodbox.log. Note: the VM data dir path differs from the session dir — check the log for the actual path.
+
+### Local go-microvm development
+
+To test changes to go-microvm locally without publishing a release:
+
+```bash
+# Add replace directive to go.mod (do NOT commit this)
+echo 'replace github.com/stacklok/go-microvm => ../go-microvm' >> go.mod
+go mod tidy
+
+# Rebuild — must force bbox-init since it embeds go-microvm guest code
+task build-init --force && task build --force
+```
+
+**Gotcha**: `task build` runs `fetch-runtime` which downloads runtime binaries from the go-microvm GitHub Release matching the tag in go.mod. If your go-microvm tag has no release assets (e.g. a quick patch release), `fetch-runtime` will fail. Workaround: the runtime binary (`go-microvm-runner` + `libkrun.so`) rarely changes — skip `fetch-runtime` and build directly:
+
+```bash
+task build-init --force
+# build bbox directly (runtime from previous version is fine)
+task build
+```
+
+Remove the `replace` directive before committing.
 
 ## Verification
 
