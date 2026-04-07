@@ -13,6 +13,9 @@ import (
 	"path/filepath"
 	"time"
 
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 	"golang.org/x/crypto/ssh"
 
 	microvm "github.com/stacklok/go-microvm"
@@ -107,6 +110,14 @@ func NewMicroVMRunner(logger *slog.Logger, opts ...RunnerOption) *MicroVMRunner 
 
 // Start boots a microVM using go-microvm.
 func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM, error) {
+	tracer := otel.Tracer("github.com/stacklok/brood-box")
+	ctx, span := tracer.Start(ctx, "bbox.vm.Start",
+		trace.WithAttributes(
+			attribute.String("vm.name", cfg.Name),
+			attribute.String("vm.image", cfg.Image),
+		))
+	defer span.End()
+
 	r.logger.Info("starting sandbox VM",
 		"name", cfg.Name,
 		"image", cfg.Image,
@@ -332,6 +343,19 @@ type microvmVM struct {
 
 func (v *microvmVM) Stop(ctx context.Context) error {
 	v.logger.Info("stopping sandbox VM")
+
+	// BBOX_KEEP_VM_DATA=1 preserves the data dir (console.log, vm.log)
+	// for post-mortem debugging. The VM process is still stopped.
+	if os.Getenv("BBOX_KEEP_VM_DATA") == "1" {
+		v.logger.Info("BBOX_KEEP_VM_DATA set, preserving VM data dir", "dir", v.vm.DataDir())
+		err := v.vm.Stop(ctx)
+		_ = os.RemoveAll(v.sshKeyDir)
+		if err != nil {
+			return fmt.Errorf("stopping VM: %w", err)
+		}
+		return nil
+	}
+
 	err := v.vm.Remove(ctx)
 	// Clean up ephemeral SSH keys regardless of stop outcome.
 	_ = os.RemoveAll(v.sshKeyDir)
