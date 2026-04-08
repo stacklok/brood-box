@@ -306,8 +306,10 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 			return nil, fmt.Errorf("resolving workspace path: %w", err)
 		}
 		opts = append(opts, microvm.WithVirtioFS(microvm.VirtioFSMount{
-			Tag:      "workspace",
-			HostPath: absPath,
+			Tag:         "workspace",
+			HostPath:    absPath,
+			OverrideUID: sandboxUID,
+			OverrideGID: sandboxGID,
 		}))
 	}
 
