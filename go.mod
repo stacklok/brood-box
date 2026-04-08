@@ -15,7 +15,7 @@ require (
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
-	github.com/stacklok/go-microvm v0.0.30
+	github.com/stacklok/go-microvm v0.0.31
 	github.com/stacklok/toolhive v0.15.0
 	github.com/stacklok/toolhive-core v0.0.14
 	github.com/stretchr/testify v1.11.1
@@ -26,7 +26,7 @@ require (
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.49.0
 	golang.org/x/sync v0.20.0
-	golang.org/x/sys v0.42.0
+	golang.org/x/sys v0.43.0
 	golang.org/x/term v0.41.0
 	gopkg.in/yaml.v3 v3.0.1
 )

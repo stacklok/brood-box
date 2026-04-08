@@ -630,6 +630,8 @@ github.com/stacklok/go-microvm v0.0.29 h1:W+/MIb6L9hqo0WwCFPxiGoCnBSCMQARqNJVHe0
 github.com/stacklok/go-microvm v0.0.29/go.mod h1:/mjVp0XWom80wgimZsFLM+rH+oKBeuxqv034kxtPb2c=
 github.com/stacklok/go-microvm v0.0.30 h1:x0bHwJpOXgJ56OZ0VDs394RdLkYjYU5lYxOvuepSi+w=
 github.com/stacklok/go-microvm v0.0.30/go.mod h1:/mjVp0XWom80wgimZsFLM+rH+oKBeuxqv034kxtPb2c=
+github.com/stacklok/go-microvm v0.0.31 h1:1qSJjocPXgWGxNLsNHp8kB1RSG+JHNjqbEED5tY12LU=
+github.com/stacklok/go-microvm v0.0.31/go.mod h1:vo40sP6cA5rI87XRhRGdCy95cgls91IQdkYLlFUd8HY=
 github.com/stacklok/toolhive v0.15.0 h1:R9rg0e8x91zx3F9F0CPLNsJUZ7YTSK2JnkvbT4Eibro=
 github.com/stacklok/toolhive v0.15.0/go.mod h1:ila+KB7eSJ0FsxjPF/MOtPKME5ZnTS2tLGLBURN6GBc=
 github.com/stacklok/toolhive-core v0.0.14 h1:/tyTrtoAMDPH66q1aeKIDDe50P4RGxKGP+bG+7MZ7gs=
@@ -883,6 +885,8 @@ golang.org/x/sys v0.10.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.17.0/go.mod h1:/VUhepiaJMQUp4+oa/7Zr1D23ma6VTLIYjOOTFZPUcA=
 golang.org/x/sys v0.42.0 h1:omrd2nAlyT5ESRdCLYdm3+fMfNFE/+Rf4bDIQImRJeo=
 golang.org/x/sys v0.42.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
+golang.org/x/sys v0.43.0 h1:Rlag2XtaFTxp19wS8MXlJwTvoh8ArU6ezoyFsMyCTNI=
+golang.org/x/sys v0.43.0/go.mod h1:4GL1E5IUh+htKOUEOaiffhrAeqysfVGipDYzABqnCmw=
 golang.org/x/telemetry v0.0.0-20260311193753-579e4da9a98c h1:6a8FdnNk6bTXBjR4AGKFgUKuo+7GnR3FX5L7CbveeZc=
 golang.org/x/telemetry v0.0.0-20260311193753-579e4da9a98c/go.mod h1:TpUTTEp9frx7rTdLpC9gFG9kdI7zVLFTFFlqaH2Cncw=
 golang.org/x/term v0.0.0-20201117132131-f5c789dd3221/go.mod h1:Nr5EML6q2oocZ2LXRh80K7BxOlk5/8JxuGnuhpl+muw=
