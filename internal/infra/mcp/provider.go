@@ -243,7 +243,7 @@ func (p *VMCPProvider) resolveAuthMiddleware(
 					"(authz.policies)", domainconfig.MCPAuthzProfileCustom)
 		}
 		authMw, authzMw, authInfoH, err = vmcpauthfactory.NewIncomingAuthMiddleware(
-			ctx, vmcpIncomingAuth, nil, nil,
+			ctx, vmcpIncomingAuth, nil, nil, nil,
 		)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("creating custom MCP auth middleware: %w", err)
@@ -271,7 +271,7 @@ func (p *VMCPProvider) resolveAuthMiddleware(
 				Policies: policies,
 			},
 		},
-		nil, nil,
+		nil, nil, nil,
 	)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("creating MCP auth middleware: %w", err)
