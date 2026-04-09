@@ -458,6 +458,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	cfg, err := cfgLoader.Load()
 	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to load config %s: %s (using defaults)\n", cfgLoader.Path(), err)
 		logger.Warn("failed to load config, using defaults", "error", err)
 	}
 	if cfg == nil {
@@ -465,8 +466,10 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	}
 
 	// Load per-workspace config and merge.
-	localCfg, err := infraconfig.LoadFromPath(filepath.Join(ws, domainconfig.LocalConfigFile))
+	localCfgPath := filepath.Join(ws, domainconfig.LocalConfigFile)
+	localCfg, err := infraconfig.LoadFromPath(localCfgPath)
 	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to load local config %s: %s (ignoring)\n", localCfgPath, err)
 		logger.Warn("failed to load local config, ignoring", "error", err)
 	}
 	warnLocalConfigOverrides(os.Stderr, localCfg, cfg)
