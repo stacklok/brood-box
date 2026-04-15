@@ -83,6 +83,11 @@ type VMConfig struct {
 	// ExtraMounts are additional virtiofs mounts requested by snapshot
 	// post-processors (e.g. git objects for worktree support).
 	ExtraMounts []workspace.MountRequest
+
+	// PullPolicy controls when to pull the OCI image from the registry.
+	// Valid values: "always", "if-not-present", "never".
+	// Empty defaults to "if-not-present".
+	PullPolicy string
 }
 
 // HostService describes an HTTP service exposed from host to guest.

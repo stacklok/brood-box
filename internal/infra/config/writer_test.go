@@ -125,6 +125,7 @@ func TestWriteDefault(t *testing.T) {
 				content := string(data)
 				for _, section := range []string{
 					"defaults:", "review:", "network:",
+					"image:", "pull:",
 					"mcp:", "authz:", "config:",
 					"git:", "auth:", "settings_import:",
 					"runtime:", "agents:",

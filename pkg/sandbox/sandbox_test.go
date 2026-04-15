@@ -1710,3 +1710,136 @@ func TestComposeMatcher(t *testing.T) {
 		})
 	}
 }
+
+func TestResolvePullPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		cliOverride string
+		cfg         *SandboxConfig
+		want        string
+	}{
+		{
+			name:        "CLI override takes precedence",
+			cliOverride: domainconfig.PullAlways,
+			cfg:         &SandboxConfig{Image: domainconfig.ImageConfig{Pull: domainconfig.PullNever}},
+			want:        domainconfig.PullAlways,
+		},
+		{
+			name:        "config used when CLI empty",
+			cliOverride: "",
+			cfg:         &SandboxConfig{Image: domainconfig.ImageConfig{Pull: domainconfig.PullNever}},
+			want:        domainconfig.PullNever,
+		},
+		{
+			name:        "defaults to background",
+			cliOverride: "",
+			cfg:         &SandboxConfig{},
+			want:        domainconfig.PullBackground,
+		},
+		{
+			name:        "nil config defaults to background",
+			cliOverride: "",
+			cfg:         nil,
+			want:        domainconfig.PullBackground,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := resolvePullPolicy(tt.cliOverride, tt.cfg)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestSandboxRunner_Prepare_PullPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		cliPolicy  string
+		cfgPolicy  string
+		wantPolicy string
+	}{
+		{
+			name:       "CLI flag takes precedence over config",
+			cliPolicy:  domainconfig.PullAlways,
+			cfgPolicy:  domainconfig.PullNever,
+			wantPolicy: domainconfig.PullAlways,
+		},
+		{
+			name:       "config used when CLI flag is empty",
+			cliPolicy:  "",
+			cfgPolicy:  domainconfig.PullNever,
+			wantPolicy: domainconfig.PullNever,
+		},
+		{
+			name:       "defaults to background when both empty",
+			cliPolicy:  "",
+			cfgPolicy:  "",
+			wantPolicy: domainconfig.PullBackground,
+		},
+		{
+			name:       "CLI never overrides config always",
+			cliPolicy:  domainconfig.PullNever,
+			cfgPolicy:  domainconfig.PullAlways,
+			wantPolicy: domainconfig.PullNever,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			workspaceDir := t.TempDir()
+			snapshotDir := t.TempDir()
+
+			testAgent := agent.Agent{
+				Name:          "test-agent",
+				Image:         "test-image:latest",
+				Command:       []string{"test-cmd"},
+				DefaultCPUs:   2,
+				DefaultMemory: bytesize.ByteSize(2048),
+			}
+
+			mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+			vmRunner := &mockVMRunner{vm: mvm}
+			cloner := &mockWorkspaceCloner{
+				snapshot: &workspace.Snapshot{
+					OriginalPath: workspaceDir,
+					SnapshotPath: snapshotDir,
+					Cleanup:      func() error { return nil },
+				},
+			}
+
+			runner := NewSandboxRunner(SandboxDeps{
+				Registry: &mockRegistry{agents: map[string]agent.Agent{
+					"test-agent": testAgent,
+				}},
+				VMRunner:        vmRunner,
+				SessionRunner:   &mockSessionRunner{},
+				Config:          &SandboxConfig{Image: domainconfig.ImageConfig{Pull: tt.cfgPolicy}},
+				EnvProvider:     &mockEnvProvider{},
+				Logger:          testLogger(),
+				WorkspaceCloner: cloner,
+				Differ:          &mockDiffer{},
+				Reviewer:        &mockReviewer{},
+				Flusher:         &mockFlusher{},
+			})
+
+			sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+				Workspace:  workspaceDir,
+				Snapshot:   SnapshotOpts{Enabled: true},
+				SessionID:  "abcd1234",
+				PullPolicy: tt.cliPolicy,
+			})
+			require.NoError(t, err)
+			defer func() { _ = sb.Cleanup() }()
+
+			assert.Equal(t, tt.wantPolicy, vmRunner.startCfg.PullPolicy)
+		})
+	}
+}

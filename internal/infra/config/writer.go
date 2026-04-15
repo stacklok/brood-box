@@ -63,6 +63,18 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   #     ports: [443]
 #   #     protocol: 6  # TCP
 
+# OCI image pulling behavior.
+# image:
+#   # Image pull policy: always, background, if-not-present, never.
+#   # "always" — always check the registry for a new digest before starting;
+#   #   still uses the digest-based cache so unchanged images are not re-extracted.
+#   # "background" — use the cached image instantly, check the registry in the
+#   #   background; a newer image is cached for the next run (default).
+#   # "if-not-present" — use the cache if available, otherwise pull.
+#   # "never" — use the cache only; fail if the image is not cached.
+#   #   Useful for airgapped/offline environments and CI.
+#   pull: "background"
+
 # MCP (Model Context Protocol) proxy configuration.
 # The MCP proxy discovers servers from ToolHive and makes them
 # available to the agent inside the VM.

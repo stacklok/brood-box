@@ -1861,3 +1861,66 @@ func TestMCPFileConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestIsValidPullPolicy(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, IsValidPullPolicy(PullAlways))
+	assert.True(t, IsValidPullPolicy(PullBackground))
+	assert.True(t, IsValidPullPolicy(PullIfNotPresent))
+	assert.True(t, IsValidPullPolicy(PullNever))
+	assert.False(t, IsValidPullPolicy(""))
+	assert.False(t, IsValidPullPolicy("invalid"))
+	assert.False(t, IsValidPullPolicy("Always")) // case-sensitive
+}
+
+func TestValidPullPolicies(t *testing.T) {
+	t.Parallel()
+
+	policies := ValidPullPolicies()
+	assert.Equal(t, []string{PullAlways, PullBackground, PullIfNotPresent, PullNever}, policies)
+}
+
+func TestMergeConfigs_ImagePullPolicy(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		global     *Config
+		local      *Config
+		wantPolicy string
+	}{
+		{
+			name:       "local overrides global when set",
+			global:     &Config{Image: ImageConfig{Pull: PullIfNotPresent}},
+			local:      &Config{Image: ImageConfig{Pull: PullAlways}},
+			wantPolicy: PullAlways,
+		},
+		{
+			name:       "global preserved when local is empty",
+			global:     &Config{Image: ImageConfig{Pull: PullAlways}},
+			local:      &Config{},
+			wantPolicy: PullAlways,
+		},
+		{
+			name:       "nil local returns global unchanged",
+			global:     &Config{Image: ImageConfig{Pull: PullNever}},
+			local:      nil,
+			wantPolicy: PullNever,
+		},
+		{
+			name:       "both empty stays empty",
+			global:     &Config{},
+			local:      &Config{},
+			wantPolicy: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			result := MergeConfigs(tt.global, tt.local)
+			assert.Equal(t, tt.wantPolicy, result.Image.Pull)
+		})
+	}
+}

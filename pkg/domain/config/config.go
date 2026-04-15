@@ -28,6 +28,9 @@ type Config struct {
 	// Network configures egress networking.
 	Network NetworkConfig `yaml:"network"`
 
+	// Image configures OCI image pulling behavior.
+	Image ImageConfig `yaml:"image"`
+
 	// MCP configures the in-process MCP proxy.
 	MCP MCPConfig `yaml:"mcp"`
 
@@ -160,6 +163,49 @@ type RuntimeConfig struct {
 	// FirmwareDownload controls whether libkrunfw is downloaded at runtime.
 	// nil = default true.
 	FirmwareDownload *bool `yaml:"firmware_download,omitempty"`
+}
+
+// ImageConfig configures OCI image pulling behavior.
+type ImageConfig struct {
+	// Pull controls the image pull policy.
+	// Valid values: "always", "if-not-present", "never".
+	// Default: "if-not-present".
+	Pull string `yaml:"pull,omitempty"`
+}
+
+const (
+	// PullAlways always checks the registry for a new digest before
+	// starting the VM. Still uses the digest-based cache — if the
+	// registry returns the same digest, the cached extraction is reused.
+	PullAlways = "always"
+
+	// PullBackground uses the cached image for the current run (instant
+	// start) and checks the registry in the background. If a newer image
+	// is found, it is cached for the next run. This is the default.
+	PullBackground = "background"
+
+	// PullIfNotPresent uses the cache if available, otherwise pulls from
+	// the registry.
+	PullIfNotPresent = "if-not-present"
+
+	// PullNever uses the cache only. Returns an error if the image is not
+	// cached. Useful for airgapped/offline environments and CI.
+	PullNever = "never"
+)
+
+// IsValidPullPolicy reports whether the given pull policy name is recognized.
+func IsValidPullPolicy(policy string) bool {
+	switch policy {
+	case PullAlways, PullBackground, PullIfNotPresent, PullNever:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidPullPolicies returns the list of valid pull policy names.
+func ValidPullPolicies() []string {
+	return []string{PullAlways, PullBackground, PullIfNotPresent, PullNever}
 }
 
 // GitTokenEnabled returns whether git token forwarding is enabled.
@@ -582,6 +628,11 @@ func MergeConfigs(global, local *Config) *Config {
 
 	// Runtime: local overrides global when explicitly set.
 	result.Runtime = mergeRuntimeConfig(global.Runtime, local.Runtime)
+
+	// Image: local overrides global when non-empty.
+	if local.Image.Pull != "" {
+		result.Image.Pull = local.Image.Pull
+	}
 
 	// MCP.Authz: local can only tighten (not widen). Same security pattern
 	// as egress profiles — a workspace config cannot escalate permissions.

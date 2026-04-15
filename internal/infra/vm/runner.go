@@ -28,6 +28,7 @@ import (
 	microvmssh "github.com/stacklok/go-microvm/ssh"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/config"
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/settings"
 	domvm "github.com/stacklok/brood-box/pkg/domain/vm"
@@ -306,6 +307,24 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 		opts = append(opts, microvm.WithImageCache(image.NewCache(r.imageCacheDir)))
 	}
 
+	// Apply image pull policy.
+	switch cfg.PullPolicy {
+	case config.PullAlways:
+		// Delete the ref index entry so PullWithFetcher skips the fast
+		// path and contacts the registry for a fresh digest. The digest-
+		// based cache still avoids re-extraction for unchanged images.
+		if r.imageCacheDir != "" {
+			if err := deleteRefIndex(r.imageCacheDir, cfg.Image); err != nil {
+				r.logger.Warn("failed to clear ref index for --pull=always", "error", err)
+			}
+		}
+	case config.PullNever:
+		// Use a fetcher that always fails. If the ref index hits, the
+		// fetcher is never called. If it misses, the error is returned.
+		opts = append(opts, microvm.WithImageFetcher(neverPullFetcher{}))
+	}
+	// PullIfNotPresent (default): no additional options needed.
+
 	// Add workspace mount if specified.
 	if cfg.WorkspacePath != "" {
 		absPath, err := filepath.Abs(cfg.WorkspacePath)
@@ -341,6 +360,12 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 		return nil, fmt.Errorf("starting VM: %w", err)
 	}
 	r.logger.Debug("sandbox VM started", "elapsed", time.Since(start))
+
+	// Background pull: refresh the image cache asynchronously so the
+	// next run picks up any newer image. The current VM is unaffected.
+	if cfg.PullPolicy == config.PullBackground && r.imageCacheDir != "" {
+		go backgroundImageRefresh(r.imageCacheDir, cfg.Image, r.logger)
+	}
 
 	return &microvmVM{
 		vm:         pvm,
