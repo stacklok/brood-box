@@ -94,6 +94,7 @@ func rootCmd() *cobra.Command {
 		noSettings        bool
 		noFirmwareDL      bool
 		noImageCache      bool
+		pull              string
 		traceEnabled      bool
 		timings           bool
 		exec              string
@@ -159,6 +160,7 @@ Example:
 				noSettings:        noSettings,
 				noFirmwareDL:      noFirmwareDL,
 				noImageCache:      noImageCache,
+				pull:              pull,
 				traceEnabled:      traceEnabled || os.Getenv("BBOX_TRACE") == "1",
 				timings:           timings,
 				exec:              exec,
@@ -195,6 +197,7 @@ Example:
 	cmd.Flags().BoolVar(&noSettings, "no-settings", false, "Disable injecting host agent settings (rules, skills, etc.) into the VM")
 	cmd.Flags().BoolVar(&noFirmwareDL, "no-firmware-download", false, "Disable firmware download (use system libkrunfw only)")
 	cmd.Flags().BoolVar(&noImageCache, "no-image-cache", false, "Disable OCI image caching (fresh pull every run)")
+	cmd.Flags().StringVar(&pull, "pull", "", "Image pull policy: always, background, if-not-present, never (default: background)")
 	cmd.Flags().BoolVar(&traceEnabled, "trace", false, "Enable OpenTelemetry tracing (writes trace.json to VM data dir)")
 	cmd.Flags().BoolVar(&timings, "timings", false, "Print per-phase timing summary after run")
 	cmd.Flags().StringVar(&exec, "exec", "", "Override the agent command (e.g. /bin/bash for debugging)")
@@ -351,6 +354,7 @@ type runFlags struct {
 	noSettings        bool
 	noFirmwareDL      bool
 	noImageCache      bool
+	pull              string
 	traceEnabled      bool
 	timings           bool
 	exec              string
@@ -366,6 +370,19 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Validate agent name before using it in filesystem paths or VM names.
 	if err := agent.ValidateName(agentName); err != nil {
 		return fmt.Errorf("invalid agent name: %w", err)
+	}
+
+	// Validate --pull flag early.
+	if flags.pull != "" && !domainconfig.IsValidPullPolicy(flags.pull) {
+		return fmt.Errorf("invalid --pull %q: valid values are %v",
+			flags.pull, domainconfig.ValidPullPolicies())
+	}
+
+	// --no-image-cache + --pull=never is a contradiction: "never" requires the
+	// cache to serve hits, but "no-image-cache" disables it entirely.
+	if flags.noImageCache && flags.pull == domainconfig.PullNever {
+		return fmt.Errorf("--no-image-cache and --pull=never are incompatible: "+
+			"pull policy %q requires a cache to serve hits", domainconfig.PullNever)
 	}
 
 	// Resolve workspace early so we can derive a deterministic VM name.
@@ -544,6 +561,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		Defaults:         cfg.Defaults,
 		AgentOverrides:   cfg.Agents,
 		ExtraEgressHosts: configEgressHosts,
+		Image:            cfg.Image,
 		MCP:              cfg.MCP,
 		SettingsImport:   cfg.SettingsImport,
 	}
@@ -840,6 +858,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		LogLevel:        logLevel,
 		CommandArgs:     flags.commandArgs,
 		EnvForwardExtra: flags.envForward,
+		PullPolicy:      flags.pull,
 		Snapshot: sandbox.SnapshotOpts{
 			Enabled:         true,
 			SnapshotMatcher: snapshotMatcher,

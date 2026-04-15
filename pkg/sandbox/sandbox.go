@@ -104,6 +104,9 @@ type RunOpts struct {
 	// These are merged with the agent's configured patterns.
 	EnvForwardExtra []string
 
+	// PullPolicy overrides the image pull policy (empty = use config default).
+	PullPolicy string
+
 	// Terminal provides I/O streams for the session. Required for Run().
 	Terminal session.Terminal
 }
@@ -122,6 +125,9 @@ type SandboxConfig struct {
 	// (network.allow_hosts). CLI consumers call config.ToEgressHosts()
 	// before populating this field.
 	ExtraEgressHosts []egress.Host
+
+	// Image configures OCI image pulling behavior.
+	Image config.ImageConfig
 
 	// MCP configures the in-process MCP proxy.
 	MCP config.MCPConfig
@@ -521,6 +527,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		TmpSize:          ag.DefaultTmpSize,
 		SettingsManifest: settingsManifest,
 		ExtraMounts:      extraMounts,
+		PullPolicy:       resolvePullPolicy(opts.PullPolicy, cfg),
 	}
 
 	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)
@@ -785,6 +792,18 @@ func VMName(agentName, workspacePath, sessionID string) string {
 }
 
 // isHexString returns true if s consists entirely of lowercase hex digits.
+// resolvePullPolicy returns the effective pull policy.
+// CLI flag takes precedence over config file; empty defaults to background.
+func resolvePullPolicy(cliOverride string, cfg *SandboxConfig) string {
+	if cliOverride != "" {
+		return cliOverride
+	}
+	if cfg != nil && cfg.Image.Pull != "" {
+		return cfg.Image.Pull
+	}
+	return config.PullBackground
+}
+
 func isHexString(s string) bool {
 	for _, c := range s {
 		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
