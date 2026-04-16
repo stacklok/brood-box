@@ -368,6 +368,14 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		envVars["NODE_OPTIONS"] = fmt.Sprintf("--max-old-space-size=%d", heapMiB)
 	}
 
+	// Cap Go GC soft memory limit. The Go runtime does not auto-detect VM
+	// memory boundaries (no cgroup), so without GOMEMLIMIT tools like
+	// golangci-lint grow unbounded until the OOM killer fires.
+	if ag.GoMemLimitPercent > 0 {
+		limitMiB := ag.DefaultMemory.MiB() * ag.GoMemLimitPercent / 100
+		envVars["GOMEMLIMIT"] = fmt.Sprintf("%dMiB", limitMiB)
+	}
+
 	allPatterns := ag.EnvForward
 	if len(opts.EnvForwardExtra) > 0 {
 		allPatterns = mergeEnvPatterns(allPatterns, opts.EnvForwardExtra)
