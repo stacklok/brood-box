@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 
 	"github.com/stacklok/brood-box/internal/infra/diff"
+	"github.com/stacklok/brood-box/internal/infra/safeio"
 	infraws "github.com/stacklok/brood-box/internal/infra/workspace"
 	"github.com/stacklok/brood-box/pkg/domain/snapshot"
 )
@@ -88,7 +89,9 @@ func (f *FSFlusher) Flush(originalDir, snapshotDir string, accepted []snapshot.F
 }
 
 // copyFilePreserveMode copies src to dst preserving file permissions.
-// Setuid/setgid bits are stripped for security.
+// Setuid/setgid bits are stripped for security. The destination is
+// opened with O_NOFOLLOW: if dst is a pre-existing symlink, the open
+// fails cleanly rather than writing through to the symlink's target.
 func copyFilePreserveMode(src, dst string) error {
 	sf, err := os.Open(src)
 	if err != nil {
@@ -104,7 +107,7 @@ func copyFilePreserveMode(src, dst string) error {
 	// Strip setuid/setgid/sticky bits — only preserve rwx permissions.
 	mode := info.Mode().Perm()
 
-	df, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	df, err := safeio.OpenForWrite(dst, mode)
 	if err != nil {
 		return err
 	}

@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/stacklok/brood-box/internal/infra/safeio"
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 )
 
@@ -119,7 +120,10 @@ func (s *FSStore) injectFile(src, dst string) error {
 	}
 	defer func() { _ = sf.Close() }()
 
-	df, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, filePerm)
+	// O_NOFOLLOW: refuse to follow a pre-existing symlink at dst.
+	// A malicious or buggy base image could otherwise redirect
+	// credential writes out of the rootfs to an attacker-chosen path.
+	df, err := safeio.OpenForWrite(dst, filePerm)
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}

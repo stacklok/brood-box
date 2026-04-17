@@ -19,6 +19,7 @@ import (
 
 	toml "github.com/pelletier/go-toml/v2"
 
+	"github.com/stacklok/brood-box/internal/infra/safeio"
 	"github.com/stacklok/brood-box/pkg/domain/settings"
 )
 
@@ -172,7 +173,10 @@ func (f *FSInjector) extractFile(
 		return fmt.Errorf("creating parent dirs: %w", err)
 	}
 
-	if err := os.WriteFile(dstPath, data, filePerm); err != nil {
+	// O_NOFOLLOW: a pre-existing symlink at the host settings path
+	// would otherwise let the guest redirect an extraction write to
+	// an attacker-chosen target.
+	if err := safeio.WriteFileNoFollow(dstPath, data, filePerm); err != nil {
 		return fmt.Errorf("writing host file: %w", err)
 	}
 
@@ -331,7 +335,9 @@ func (f *FSInjector) injectFile(
 	}
 	bestEffortChown(f.logger, filepath.Dir(dstPath))
 
-	if err := os.WriteFile(dstPath, data, filePerm); err != nil {
+	// O_NOFOLLOW: refuse to follow a pre-existing symlink planted by
+	// a malicious or buggy guest base image.
+	if err := safeio.WriteFileNoFollow(dstPath, data, filePerm); err != nil {
 		return fmt.Errorf("writing destination: %w", err)
 	}
 	bestEffortChown(f.logger, dstPath)
@@ -518,7 +524,9 @@ func (f *FSInjector) injectMergeFile(
 	}
 	bestEffortChown(f.logger, filepath.Dir(dstPath))
 
-	if err := os.WriteFile(dstPath, output, filePerm); err != nil {
+	// O_NOFOLLOW: same concern as the plain-copy path above — a
+	// symlink in the guest rootfs could redirect this merged write.
+	if err := safeio.WriteFileNoFollow(dstPath, output, filePerm); err != nil {
 		return fmt.Errorf("writing merged file: %w", err)
 	}
 	bestEffortChown(f.logger, dstPath)
