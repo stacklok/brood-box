@@ -8,6 +8,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -175,7 +177,17 @@ func TestWriteSentinel(t *testing.T) {
 
 	data, err := os.ReadFile(filepath.Join(dir, LogSentinel))
 	require.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("%d", os.Getpid()), string(data))
+
+	// Sentinel format: `PID\nEXEPATH`. PID is on line 1.
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	assert.Equal(t, fmt.Sprintf("%d", os.Getpid()), lines[0])
+
+	// os.Executable is expected to succeed in the test environment, so
+	// the sentinel should carry an exe path fingerprint too.
+	require.Len(t, lines, 2, "sentinel should carry PID + exe path")
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	assert.Equal(t, exe, lines[1])
 }
 
 func TestWriteSentinel_FilePermissions(t *testing.T) {
@@ -203,7 +215,8 @@ func TestWriteSentinel_Overwrite(t *testing.T) {
 
 	data, err := os.ReadFile(filepath.Join(dir, LogSentinel))
 	require.NoError(t, err)
-	assert.Equal(t, fmt.Sprintf("%d", os.Getpid()), string(data),
+	lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+	assert.Equal(t, fmt.Sprintf("%d", os.Getpid()), lines[0],
 		"sentinel should contain current PID after overwrite")
 }
 
@@ -212,4 +225,107 @@ func TestWriteSentinel_NonexistentDirectory(t *testing.T) {
 
 	err := WriteSentinel(filepath.Join(t.TempDir(), "nonexistent"))
 	assert.Error(t, err, "writing sentinel to nonexistent directory should fail")
+}
+
+func TestCleanupStaleLogs_FingerprintMismatchRemoved(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS != "linux" {
+		// /proc/<pid>/exe is Linux-only; on darwin IsExpectedProcess
+		// falls back to plain liveness and cannot detect PID reuse.
+		t.Skip("fingerprint check is Linux-only")
+	}
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+	// Simulate PID reuse: the sentinel claims the current PID was bbox
+	// with a fake exe path that /proc/self/exe will NOT match.
+	// IsExpectedProcess returns false → directory is treated as stale.
+	dir := filepath.Join(vmsDir, "recycled-pid")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	content := fmt.Sprintf("%d\n/nonexistent/fake-bbox-binary", os.Getpid())
+	require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), []byte(content), 0o600))
+
+	CleanupStaleLogs(vmsDir, testLogger())
+
+	_, err := os.Stat(dir)
+	assert.True(t, os.IsNotExist(err),
+		"directory whose sentinel names a different binary should be removed")
+}
+
+func TestCleanupStaleLogs_FingerprintMatchPreserved(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+	// Sentinel claims the current PID running the real test binary —
+	// fingerprint matches (Linux) or legacy-liveness matches (darwin) —
+	// directory must be preserved.
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	dir := filepath.Join(vmsDir, "live-bbox")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	content := fmt.Sprintf("%d\n%s", os.Getpid(), exe)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), []byte(content), 0o600))
+
+	CleanupStaleLogs(vmsDir, testLogger())
+
+	_, err = os.Stat(dir)
+	assert.NoError(t, err, "directory with matching fingerprint should remain")
+}
+
+func TestCleanupStaleLogs_OversizedSentinelSkipped(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+	// Planted giant sentinel (8 KiB > 4 KiB cap). Cleanup must not
+	// read it into memory and must leave the dir alone — the file is
+	// suspicious and silently nuking would be worse than skipping.
+	dir := filepath.Join(vmsDir, "giant-sentinel")
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	huge := make([]byte, 8192)
+	for i := range huge {
+		huge[i] = '1'
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), huge, 0o600))
+
+	CleanupStaleLogs(vmsDir, testLogger())
+
+	_, err := os.Stat(dir)
+	assert.NoError(t, err, "directory with oversized sentinel should be left alone")
+}
+
+func TestCleanupStaleLogs_LegacyPIDOnlySentinelStillWorks(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+	// Legacy v1 sentinel (just a PID, no exe path) written by an older
+	// bbox build. Cleanup must fall back to a plain liveness check.
+
+	// Live PID, legacy format — preserved.
+	liveDir := filepath.Join(vmsDir, "live-legacy")
+	require.NoError(t, os.MkdirAll(liveDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(liveDir, LogSentinel),
+		[]byte(fmt.Sprintf("%d", os.Getpid())), 0o600))
+
+	// Dead PID, legacy format — removed.
+	staleDir := filepath.Join(vmsDir, "stale-legacy")
+	require.NoError(t, os.MkdirAll(staleDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(staleDir, LogSentinel),
+		[]byte("2147483647"), 0o600))
+
+	CleanupStaleLogs(vmsDir, testLogger())
+
+	_, err := os.Stat(liveDir)
+	assert.NoError(t, err, "legacy sentinel with live PID should preserve directory")
+
+	_, err = os.Stat(staleDir)
+	assert.True(t, os.IsNotExist(err), "legacy sentinel with dead PID should remove directory")
 }
