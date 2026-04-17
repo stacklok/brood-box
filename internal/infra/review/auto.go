@@ -51,7 +51,9 @@ func (a *AutoAcceptReviewer) Review(changes []snapshot.FileChange) (snapshot.Rev
 		case snapshot.TierAutoExec:
 			result.Rejected = append(result.Rejected, ch)
 			rejected++
-			_, _ = fmt.Fprintf(a.stderr, "REJECTED: %s — %s\n", ch.RelPath, reason)
+			_, _ = fmt.Fprintf(a.stderr,
+				"REJECTED: %s — %s (re-run with --review to approve)\n",
+				ch.RelPath, reason)
 			a.logger.Warn("auto-rejected security-sensitive path",
 				"path", ch.RelPath, "tier", tier.String(), "reason", reason)
 		case snapshot.TierBuildCI:

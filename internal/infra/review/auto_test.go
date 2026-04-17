@@ -119,13 +119,15 @@ func TestAutoAcceptReviewer_MixedTiers(t *testing.T) {
 	result, err := r.Review(changes)
 	require.NoError(t, err)
 
-	// Tier 1 (.git/hooks, .envrc) rejected; Tier 2 (.github/workflows) + normal accepted.
-	assert.Len(t, result.Rejected, 2)
-	assert.Len(t, result.Accepted, 2)
+	// Tier 1 (.git/hooks) rejected; Tier 2 (.github/workflows, .envrc) +
+	// normal accepted. .envrc is now Tier 2 because direnv gates
+	// execution via `direnv allow`, a user-action-required step.
+	assert.Len(t, result.Rejected, 1)
+	assert.Len(t, result.Accepted, 3)
 
 	output := stderr.String()
-	assert.Contains(t, output, "2 file(s) auto-rejected")
-	assert.Contains(t, output, "1 file(s) warned")
+	assert.Contains(t, output, "1 file(s) auto-rejected")
+	assert.Contains(t, output, "2 file(s) warned")
 }
 
 func TestAutoAcceptReviewer_NoSummaryForNormalFiles(t *testing.T) {

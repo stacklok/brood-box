@@ -83,13 +83,28 @@ func exactRootRule(name, reason string, tier SensitivityTier) SensitivePathRule 
 	}
 }
 
+// pathSuffixRule matches a path whose trailing components exactly
+// equal suffix — e.g. suffix = ".vscode/tasks.json" matches both the
+// workspace-root `.vscode/tasks.json` AND a monorepo-nested
+// `packages/foo/.vscode/tasks.json`. The separator-aware check
+// prevents false positives on paths like `foo.vscode/tasks.json`
+// (filename that happens to end with ".vscode").
+func pathSuffixRule(suffix, reason string, tier SensitivityTier) SensitivePathRule {
+	return SensitivePathRule{
+		Match: func(relPath string) bool {
+			return relPath == suffix || strings.HasSuffix(relPath, "/"+suffix)
+		},
+		Tier:   tier,
+		Reason: reason,
+	}
+}
+
 // DefaultSensitivePathRules returns the built-in set of sensitive path rules.
 func DefaultSensitivePathRules() []SensitivePathRule {
 	return []SensitivePathRule{
 		// Tier 1 — auto-exec on host (no explicit user action needed)
 		prefixRule(".git/hooks/", "git hook — auto-executes on git operations", TierAutoExec),
 		prefixRule(".husky/", "husky git hook — auto-executes on git operations", TierAutoExec),
-		exactRootRule(".envrc", "direnv config — auto-executes on directory entry", TierAutoExec),
 		exactRootRule(".pre-commit-config.yaml", "pre-commit config — auto-executes on git commit", TierAutoExec),
 
 		// Tier 2 — CI/build (requires explicit user action)
@@ -129,6 +144,38 @@ func DefaultSensitivePathRules() []SensitivePathRule {
 		// Flushing in-progress rebase state is a legitimate workflow
 		// (resume a rebase started in the VM), so warn rather than block.
 		exactRootRule(".git/rebase-merge/git-rebase-todo", "rebase todo — `exec` directives run on `git rebase --continue`", TierBuildCI),
+		// VSCode executes tasks.json tasks on user action (F5, Run Task
+		// palette) and launch.json configurations on debug start. Flag
+		// only these two — .vscode/settings.json / extensions.json carry
+		// no exec surface and routine edits would be noisy.
+		pathSuffixRule(".vscode/tasks.json", "VSCode tasks — execute on user action (Run Task, F5)", TierBuildCI),
+		pathSuffixRule(".vscode/launch.json", "VSCode launch config — runs debugger command on debug start", TierBuildCI),
+		// Devcontainer's postCreateCommand / postStartCommand execute on
+		// "Reopen in Container". Flag only the config entrypoints; users
+		// edit Dockerfiles and scripts in .devcontainer/ routinely.
+		exactRootRule(".devcontainer.json", "devcontainer config — lifecycle commands execute on Reopen in Container", TierBuildCI),
+		exactRootRule(".devcontainer/devcontainer.json", "devcontainer config — lifecycle commands execute on Reopen in Container", TierBuildCI),
+		// package.json scripts (preinstall/install/postinstall/prepare/
+		// prepublish) execute on npm install / npm publish. Warn-level
+		// so routine dependency-bump edits by the agent still flow
+		// through — a compromised agent is expected to visibly modify
+		// package.json scripts for the attack to fire.
+		basenameRule("package.json", "Node package manifest — scripts.{pre,post}{install,prepare,…} execute on npm/yarn install", TierBuildCI),
+		// pyproject.toml build-system hooks and script entries run on
+		// `pip install` / `poetry install`. Same reasoning as package.json.
+		basenameRule("pyproject.toml", "Python project manifest — build hooks and scripts execute on pip/poetry install", TierBuildCI),
+		// setup.py is arbitrary Python that runs on `pip install .` or
+		// `python setup.py <cmd>`. Explicit user action required, so
+		// warn-level.
+		basenameRule("setup.py", "Python setup script — executes on pip install . or python setup.py", TierBuildCI),
+		// direnv walks upward from the user's shell cwd, so a `.envrc`
+		// in any subdirectory fires on `cd sub/`. direnv gates execution
+		// behind `direnv allow` after each change (similar to how
+		// package.json scripts require `npm install`), which makes this
+		// a user-action-required exec surface — Tier 2 warn rather than
+		// Tier 1 reject, so routine edits in direnv-heavy monorepos
+		// aren't destroyed by auto-accept.
+		basenameRule(".envrc", "direnv config — runs on `cd` after `direnv allow`", TierBuildCI),
 	}
 }
 
