@@ -145,3 +145,58 @@ func TestLoader_DefaultPath(t *testing.T) {
 	assert.Contains(t, loader.Path(), "broodbox")
 	assert.Contains(t, loader.Path(), "config.yaml")
 }
+
+func TestLoader_Load_RejectsWildcardEnvForward(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+agents:
+  claude-code:
+    env_forward:
+      - "*"
+`), 0o644))
+
+	loader := NewLoader(path)
+	_, err := loader.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validating config file")
+	assert.Contains(t, err.Error(), "agents.claude-code")
+	assert.Contains(t, err.Error(), `bare "*"`)
+}
+
+func TestLoadFromPath_RejectsWildcardEnvForward(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".broodbox.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+agents:
+  claude-code:
+    env_forward:
+      - "*"
+`), 0o644))
+
+	_, err := LoadFromPath(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "validating config file")
+	assert.Contains(t, err.Error(), `bare "*"`)
+}
+
+func TestLoadFromPath_RejectsEmptyEnvForward(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".broodbox.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+agents:
+  claude-code:
+    env_forward:
+      - ""
+`), 0o644))
+
+	_, err := LoadFromPath(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "empty pattern")
+}

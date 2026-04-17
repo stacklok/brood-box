@@ -379,6 +379,13 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			flags.pull, domainconfig.ValidPullPolicies())
 	}
 
+	// Validate --env-forward flag. Bare "*" / empty / leading-star would
+	// either forward every host env var (exfiltration footgun) or silently
+	// match nothing (useless typo); reject here with a clear error.
+	if err := agent.ValidateEnvForwardPatterns(flags.envForward); err != nil {
+		return fmt.Errorf("invalid --env-forward: %w", err)
+	}
+
 	// --no-image-cache + --pull=never is a contradiction: "never" requires the
 	// cache to serve hits, but "no-image-cache" disables it entirely.
 	if flags.noImageCache && flags.pull == domainconfig.PullNever {
@@ -476,14 +483,21 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	cfg, err := cfgLoader.Load()
 	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to load config %s: %s (using defaults)\n", cfgLoader.Path(), err)
-		logger.Warn("failed to load config, using defaults", "error", err)
+		// Fail fast on global config errors. Silently discarding every
+		// override because one line fails validation (or the file is
+		// unreadable) is worse UX than a hard error naming the file and
+		// the exact problem — the user owns this file and wants to know.
+		return fmt.Errorf("loading global config %s: %w", cfgLoader.Path(), err)
 	}
 	if cfg == nil {
 		cfg = &domainconfig.Config{}
 	}
 
-	// Load per-workspace config and merge.
+	// Load per-workspace config and merge. Unlike the global config, a
+	// bad workspace config is warn-and-skip: a malicious or corrupted
+	// `.broodbox.yaml` shipped by an untrusted repo must not be able to
+	// DOS the user's session — the operator can always run from a
+	// different directory or delete the file.
 	localCfgPath := filepath.Join(ws, domainconfig.LocalConfigFile)
 	localCfg, err := infraconfig.LoadFromPath(localCfgPath)
 	if err != nil {

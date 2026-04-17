@@ -50,6 +50,26 @@ type Config struct {
 	Agents map[string]AgentOverride `yaml:"agents"`
 }
 
+// Validate checks user-supplied fields for footguns that must be
+// rejected at load time. Today this scope is narrow:
+//
+//   - Per-agent env_forward patterns cannot be a bare "*" / empty /
+//     leading-star — see agent.ValidateEnvForwardPatterns for the full
+//     rationale. Applies to both the global and the workspace-local
+//     config (each gets validated at its own load site).
+//
+// Other validation lives with the types it guards (e.g. MCPFileConfig
+// has its own Validate). Add more here as new classes of footgun
+// emerge.
+func (c *Config) Validate() error {
+	for name, override := range c.Agents {
+		if err := agent.ValidateEnvForwardPatterns(override.EnvForward); err != nil {
+			return fmt.Errorf("agents.%s.%w", name, err)
+		}
+	}
+	return nil
+}
+
 // GitConfig configures git identity and authentication forwarding
 // into the sandbox VM.
 type GitConfig struct {

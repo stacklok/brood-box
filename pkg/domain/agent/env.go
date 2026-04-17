@@ -4,8 +4,45 @@
 package agent
 
 import (
+	"fmt"
 	"strings"
 )
+
+// ValidateEnvForwardPatterns rejects env-forward patterns that would
+// match every (or no) host environment variable. Specifically:
+//
+//   - An empty / whitespace-only pattern matches the empty string key,
+//     which is never a real env var but is also clearly a typo.
+//   - A bare "*" (or whitespace-trimmed "*") matches every key because
+//     its trimmed prefix is the empty string — this is a blanket
+//     "forward everything" that lets an untrusted workspace config
+//     or a footgun CLI flag scoop up secrets like SSH_AUTH_SOCK,
+//     GITHUB_TOKEN, AWS_*, etc., without the operator knowing.
+//   - A leading-star pattern like "*_API_KEY" is silently useless
+//     (only trailing-star globs are honored by matchPattern). Reject
+//     it with a clear error so users learn the correct syntax.
+//
+// Explicit exact names ("HOME") and trailing-star globs with a
+// non-empty prefix ("AWS_*", "CARGO_*") are always accepted.
+//
+// Callers should apply this to every user-supplied source:
+// global config, workspace-local config, and CLI flags. The matcher
+// also defensively skips empty/bare-"*" patterns at evaluation time.
+func ValidateEnvForwardPatterns(patterns []string) error {
+	for i, p := range patterns {
+		trimmed := strings.TrimSpace(p)
+		if trimmed == "" {
+			return fmt.Errorf("env_forward[%d]: empty pattern — specify an exact name or a prefix like \"AWS_*\"", i)
+		}
+		if trimmed == "*" {
+			return fmt.Errorf("env_forward[%d]: bare \"*\" matches every host env var — specify an exact name or a prefix like \"AWS_*\"", i)
+		}
+		if strings.HasPrefix(trimmed, "*") {
+			return fmt.Errorf("env_forward[%d]: leading-star patterns are not supported (%q) — only trailing-star globs like \"AWS_*\"", i, trimmed)
+		}
+	}
+	return nil
+}
 
 // EnvProvider abstracts access to environment variables for testability.
 type EnvProvider interface {
@@ -70,9 +107,21 @@ func matchesAny(key string, patterns []string) bool {
 
 // matchPattern checks if key matches the pattern.
 // Supports exact match and glob suffix (e.g., "CLAUDE_*").
+//
+// Defense-in-depth: an empty pattern or a bare "*" (after whitespace
+// trimming) is never a match — callers should reject these via
+// ValidateEnvForwardPatterns at load time, but this guard makes sure a
+// bypass cannot silently forward every host env var.
 func matchPattern(key, pattern string) bool {
+	trimmed := strings.TrimSpace(pattern)
+	if trimmed == "" || trimmed == "*" {
+		return false
+	}
 	if strings.HasSuffix(pattern, "*") {
 		prefix := strings.TrimSuffix(pattern, "*")
+		if prefix == "" {
+			return false
+		}
 		return strings.HasPrefix(key, prefix)
 	}
 	return key == pattern

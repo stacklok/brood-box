@@ -112,6 +112,61 @@ func TestForwardEnv(t *testing.T) {
 	}
 }
 
+func TestValidateEnvForwardPatterns(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name     string
+		patterns []string
+		wantErr  bool
+		errSub   string // substring the error must contain
+	}{
+		{name: "empty list is fine", patterns: nil, wantErr: false},
+		{name: "exact names pass", patterns: []string{"HOME", "USER", "GITHUB_TOKEN"}, wantErr: false},
+		{name: "trailing glob passes", patterns: []string{"AWS_*", "CLAUDE_*"}, wantErr: false},
+		{name: "mixed exact and glob", patterns: []string{"HOME", "AWS_*"}, wantErr: false},
+
+		{name: "bare star rejected", patterns: []string{"*"}, wantErr: true, errSub: "bare \"*\""},
+		{name: "bare star with surrounding whitespace rejected", patterns: []string{"  *  "}, wantErr: true, errSub: "bare \"*\""},
+		{name: "empty string rejected", patterns: []string{""}, wantErr: true, errSub: "empty pattern"},
+		{name: "whitespace-only rejected", patterns: []string{"   "}, wantErr: true, errSub: "empty pattern"},
+		{name: "leading star rejected", patterns: []string{"*_API_KEY"}, wantErr: true, errSub: "leading-star"},
+		{name: "bare star mixed with valid patterns still rejects", patterns: []string{"HOME", "*"}, wantErr: true, errSub: "bare \"*\""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			err := ValidateEnvForwardPatterns(tt.patterns)
+			if tt.wantErr {
+				require.Error(t, err)
+				if tt.errSub != "" {
+					assert.Contains(t, err.Error(), tt.errSub)
+				}
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+func TestMatchPattern_DefensiveBypassGuard(t *testing.T) {
+	t.Parallel()
+
+	// Even if ValidateEnvForwardPatterns is bypassed (e.g. by a caller
+	// constructing patterns programmatically), matchPattern must NOT
+	// let a bare "*" or empty pattern swallow every key.
+	keys := []string{"HOME", "GITHUB_TOKEN", "SSH_AUTH_SOCK", "AWS_ACCESS_KEY_ID", ""}
+	bad := []string{"*", "", "   ", "  *  "}
+
+	for _, pattern := range bad {
+		for _, key := range keys {
+			assert.False(t, matchPattern(key, pattern),
+				"pattern %q must not match key %q", pattern, key)
+		}
+	}
+}
+
 func TestShellEscape(t *testing.T) {
 	t.Parallel()
 

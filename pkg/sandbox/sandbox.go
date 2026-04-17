@@ -260,6 +260,14 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		return nil, fmt.Errorf("session ID must be 1-16 hex characters, got %q", opts.SessionID)
 	}
 
+	// Validate SDK-supplied env-forward patterns. The CLI validates the
+	// --env-forward flag in run(), but SDK consumers constructing RunOpts
+	// directly bypass that path. Re-check here so the footgun is closed
+	// at the SDK boundary too.
+	if err := agent.ValidateEnvForwardPatterns(opts.EnvForwardExtra); err != nil {
+		return nil, fmt.Errorf("invalid EnvForwardExtra: %w", err)
+	}
+
 	// 1. Resolve agent from registry.
 	s.observer.Start(progress.PhaseResolvingAgent, "Resolving agent...")
 	ag, err := s.registry.Get(agentName)
