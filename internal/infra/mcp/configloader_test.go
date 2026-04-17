@@ -132,6 +132,39 @@ func TestLoadMCPFileConfig_EmptyFile(t *testing.T) {
 	assert.Nil(t, cfg.Aggregation)
 }
 
+func TestLoadMCPFileConfig_RejectsUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	// `authz.polices` (typo for `policies`) must not be silently
+	// dropped — otherwise the operator would end up with no Cedar
+	// policies and a silently open custom profile.
+	content := `
+authz:
+  polices:
+    - 'permit(principal, action, resource);'
+`
+	path := writeTestFile(t, content)
+	_, err := LoadMCPFileConfig(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing MCP config")
+}
+
+func TestLoadMCPFileConfig_RejectsOversizedFile(t *testing.T) {
+	t.Parallel()
+
+	big := make([]byte, 2*1024*1024)
+	for i := range big {
+		big[i] = '#'
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "mcp-config.yaml")
+	require.NoError(t, os.WriteFile(path, big, 0o600))
+
+	_, err := LoadMCPFileConfig(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
+}
+
 func writeTestFile(t *testing.T, content string) string {
 	t.Helper()
 	dir := t.TempDir()

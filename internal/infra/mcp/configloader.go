@@ -6,18 +6,20 @@ package mcp
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
-	"os"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/stacklok/brood-box/internal/infra/configfile"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
 )
 
-// LoadMCPFileConfig reads and validates an MCP config from a YAML file.
+// LoadMCPFileConfig reads and validates an MCP config from a YAML file
+// supplied via the operator's --mcp-config flag. Operator-owned paths
+// skip the workspace-local symlink rejection but still get the size
+// cap and strict-unknown-fields checking.
 // Returns (nil, nil) if the file does not exist.
 func LoadMCPFileConfig(path string) (*domainconfig.MCPFileConfig, error) {
-	data, err := os.ReadFile(path)
+	data, err := configfile.ReadFile(path, configfile.ReadOptions{})
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
@@ -26,7 +28,10 @@ func LoadMCPFileConfig(path string) (*domainconfig.MCPFileConfig, error) {
 	}
 
 	var cfg domainconfig.MCPFileConfig
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := configfile.DecodeStrict(data, &cfg); err != nil {
+		if errors.Is(err, io.EOF) {
+			return &domainconfig.MCPFileConfig{}, nil
+		}
 		return nil, fmt.Errorf("parsing MCP config %s: %w", path, err)
 	}
 
