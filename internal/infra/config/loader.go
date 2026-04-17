@@ -7,12 +7,12 @@ package config
 import (
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 
-	"gopkg.in/yaml.v3"
-
+	"github.com/stacklok/brood-box/internal/infra/configfile"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
 )
 
@@ -34,7 +34,7 @@ func NewLoader(path string) *Loader {
 // Load reads and parses the config file. If the file does not exist,
 // it returns a zero-value Config (no error).
 func (l *Loader) Load() (*domainconfig.Config, error) {
-	data, err := os.ReadFile(l.path)
+	data, err := configfile.ReadFile(l.path, configfile.ReadOptions{})
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return &domainconfig.Config{}, nil
@@ -43,7 +43,10 @@ func (l *Loader) Load() (*domainconfig.Config, error) {
 	}
 
 	var cfg domainconfig.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := configfile.DecodeStrict(data, &cfg); err != nil {
+		if errors.Is(err, io.EOF) {
+			return &domainconfig.Config{}, nil
+		}
 		return nil, fmt.Errorf("parsing config file %s: %w", l.path, err)
 	}
 
@@ -59,11 +62,16 @@ func (l *Loader) Path() string {
 	return l.path
 }
 
-// LoadFromPath reads and parses a config file at the given path.
+// LoadFromPath reads and parses a workspace-local config file at the
+// given path. Workspace-local hardening applies: symlinks are rejected
+// because the path is attacker-controllable (a malicious repo's
+// `.broodbox.yaml` could otherwise be a symlink to another readable
+// file on the host).
+//
 // Returns (nil, nil) when the file does not exist.
 // Returns a parsed Config for any existing file (including empty files).
 func LoadFromPath(path string) (*domainconfig.Config, error) {
-	data, err := os.ReadFile(path)
+	data, err := configfile.ReadFile(path, configfile.ReadOptions{RejectSymlinks: true})
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
@@ -72,7 +80,10 @@ func LoadFromPath(path string) (*domainconfig.Config, error) {
 	}
 
 	var cfg domainconfig.Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	if err := configfile.DecodeStrict(data, &cfg); err != nil {
+		if errors.Is(err, io.EOF) {
+			return &domainconfig.Config{}, nil
+		}
 		return nil, fmt.Errorf("parsing config file %s: %w", path, err)
 	}
 

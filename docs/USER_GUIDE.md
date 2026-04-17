@@ -299,6 +299,22 @@ review:
 Note: `review.enabled` is **ignored** in per-workspace config for security
 (use `--no-review` explicitly).
 
+**File rules for `.broodbox.yaml`:**
+
+- Must be a regular file — symlinks, FIFOs, and device files are
+  rejected because the workspace path is repo-controllable. To share
+  a template across projects, copy the file into each workspace
+  instead of symlinking.
+- Must be under 1 MiB. Real configs are a few KiB; the cap only
+  bounds DoS from a malformed input.
+- Unknown top-level fields are a parse error. A typo like
+  `mcp.athz.profile: observe` (should be `authz`) fails loudly
+  rather than silently falling back to the permissive default.
+- If `.broodbox.yaml` fails to load, bbox prints a warning to stderr
+  and continues with just the global config, so a bad workspace file
+  cannot block a session. The warning names the file and the specific
+  problem.
+
 ## Egress Firewall
 
 Each agent comes with DNS-aware egress policies. Three profiles are available:

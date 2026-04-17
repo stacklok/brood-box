@@ -6,7 +6,9 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -199,4 +201,114 @@ agents:
 	_, err := LoadFromPath(path)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty pattern")
+}
+
+func TestLoadFromPath_RejectsUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	// `mcp.athz.profile` (typo for `mcp.authz.profile`) must not be
+	// silently dropped — that would let a repo author *think* they've
+	// tightened to `observe` while the operator falls back to
+	// `full-access`.
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".broodbox.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+mcp:
+  athz:
+    profile: observe
+`), 0o644))
+
+	_, err := LoadFromPath(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing config file")
+}
+
+func TestLoader_Load_RejectsUnknownFields(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+nonexistent_top_level: true
+`), 0o644))
+
+	loader := NewLoader(path)
+	_, err := loader.Load()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing config file")
+}
+
+func TestLoadFromPath_RejectsOversizedFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".broodbox.yaml")
+	// 2 MiB of padded YAML comments — exceeds the 1 MiB cap.
+	big := make([]byte, 2*1024*1024)
+	for i := range big {
+		big[i] = '#'
+	}
+	require.NoError(t, os.WriteFile(path, big, 0o644))
+
+	_, err := LoadFromPath(path)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
+}
+
+func TestLoadFromPath_RejectsSymlink(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.yaml")
+	require.NoError(t, os.WriteFile(target, []byte("defaults:\n  cpus: 2\n"), 0o644))
+
+	linkPath := filepath.Join(dir, ".broodbox.yaml")
+	require.NoError(t, os.Symlink(target, linkPath))
+
+	_, err := LoadFromPath(linkPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlinks are not allowed")
+}
+
+func TestLoadFromPath_RejectsNonRegularFile(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".broodbox.yaml")
+	// A FIFO (named pipe) is the realistic non-regular case: `os.Open`
+	// without a writer blocks forever. Must be rejected up-front.
+	require.NoError(t, syscall.Mkfifo(path, 0o600))
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := LoadFromPath(path)
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not a regular file")
+	case <-time.After(5 * time.Second):
+		t.Fatal("LoadFromPath blocked on FIFO — should have rejected it immediately")
+	}
+}
+
+func TestLoader_Load_FollowsSymlink(t *testing.T) {
+	t.Parallel()
+
+	// The global-config path is operator-supplied — symlinks are a
+	// legitimate operator choice (e.g. pointing at a team-shared file),
+	// so they must NOT be rejected on the Load path.
+	dir := t.TempDir()
+	target := filepath.Join(dir, "target.yaml")
+	require.NoError(t, os.WriteFile(target, []byte("defaults:\n  cpus: 3\n"), 0o644))
+
+	linkPath := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.Symlink(target, linkPath))
+
+	loader := NewLoader(linkPath)
+	cfg, err := loader.Load()
+	require.NoError(t, err)
+	assert.Equal(t, uint32(3), cfg.Defaults.CPUs)
 }
