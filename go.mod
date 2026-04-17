@@ -11,11 +11,12 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/cedar-policy/cedar-go v1.6.0
 	github.com/gofrs/flock v0.13.0
+	github.com/google/go-containerregistry v0.21.5
 	github.com/pelletier/go-toml/v2 v2.3.0
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
-	github.com/stacklok/go-microvm v0.0.31
+	github.com/stacklok/go-microvm v0.0.32
 	github.com/stacklok/toolhive v0.20.0
 	github.com/stacklok/toolhive-core v0.0.16
 	github.com/stretchr/testify v1.11.1
@@ -130,7 +131,6 @@ require (
 	github.com/google/cel-go v0.28.0 // indirect
 	github.com/google/gnostic-models v0.7.0 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
-	github.com/google/go-containerregistry v0.21.5 // indirect
 	github.com/google/gopacket v1.1.19 // indirect
 	github.com/google/jsonschema-go v0.4.2 // indirect
 	github.com/google/uuid v1.6.0 // indirect
