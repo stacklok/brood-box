@@ -81,6 +81,13 @@ type Agent struct {
 	// until the guest OOM killer fires.
 	NodeHeapPercent uint32
 
+	// GoMemLimitPercent sets GOMEMLIMIT to this percentage of the
+	// effective VM memory. Zero disables the cap. This prevents Go
+	// tools spawned by the agent (e.g. golangci-lint) from growing
+	// unbounded until the guest OOM killer fires — the Go GC does
+	// not auto-detect VM memory limits (no cgroup boundary).
+	GoMemLimitPercent uint32
+
 	// DefaultCPUs is the default number of vCPUs for this agent.
 	DefaultCPUs uint32
 
