@@ -235,3 +235,37 @@ func TestFSFlusher_DeletedFile_WithHashVerification(t *testing.T) {
 	_, err = os.Stat(origFile)
 	assert.True(t, os.IsNotExist(err), "file should be deleted")
 }
+
+func TestFSFlusher_RefusesToWriteThroughSymlink(t *testing.T) {
+	t.Parallel()
+
+	origDir := t.TempDir()
+	snapDir := t.TempDir()
+
+	// In-workspace symlink redirect: `link.txt -> real-target.txt`.
+	// ValidateInBounds accepts because the resolved target is inside
+	// the workspace, but the O_NOFOLLOW open in copyFilePreserveMode
+	// still refuses to write through the symlink — otherwise an
+	// agent editing what it thinks is "link.txt" would silently
+	// overwrite `real-target.txt`.
+	target := filepath.Join(origDir, "real-target.txt")
+	require.NoError(t, os.WriteFile(target, []byte("do-not-clobber"), 0o600))
+	require.NoError(t, os.Symlink("real-target.txt", filepath.Join(origDir, "link.txt")))
+
+	// Snapshot has the "modified" version.
+	require.NoError(t, os.WriteFile(filepath.Join(snapDir, "link.txt"), []byte("agent-modified"), 0o644))
+	hash, err := diff.HashFile(filepath.Join(snapDir, "link.txt"))
+	require.NoError(t, err)
+
+	flusher := NewFSFlusher()
+	err = flusher.Flush(origDir, snapDir, []snapshot.FileChange{
+		{RelPath: "link.txt", Kind: snapshot.Modified, Hash: hash},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlink")
+
+	// The symlink's target must NOT have been clobbered.
+	got, err := os.ReadFile(target)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("do-not-clobber"), got)
+}
