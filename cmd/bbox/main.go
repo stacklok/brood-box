@@ -52,6 +52,7 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/progress"
+	"github.com/stacklok/brood-box/pkg/domain/snapshot"
 	"github.com/stacklok/brood-box/pkg/domain/workspace"
 	"github.com/stacklok/brood-box/pkg/sandbox"
 )
@@ -901,6 +902,9 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 				reviewErr = fmt.Errorf("reviewing changes: %w", revErr)
 			} else if len(result.Accepted) > 0 {
 				reviewErr = runner.Flush(sb, result.Accepted)
+				if reviewErr == nil {
+					maybePrintSubmoduleHint(os.Stderr, result.Accepted)
+				}
 			} else {
 				observer.Warn("No changes accepted")
 			}
@@ -1259,4 +1263,23 @@ func imageCacheDir() (string, error) {
 		return "", errors.New("xdg cache home is empty")
 	}
 	return filepath.Join(cacheBase, "broodbox", "images"), nil
+}
+
+// maybePrintSubmoduleHint emits a recovery hint when `.gitmodules` was
+// flushed but the associated `.git/modules/<name>/` submodule gitdirs
+// were not (they are hard-blocked by DefaultDiffSecurityPatterns because
+// their configs have the same RCE surface as `.git/config`). Without
+// this notice, `git submodule add` would silently half-land: the entry
+// appears in `.gitmodules` on the host, but there is no populated
+// `.git/modules/<name>/` to back it.
+func maybePrintSubmoduleHint(w io.Writer, accepted []snapshot.FileChange) {
+	for _, ch := range accepted {
+		if filepath.Base(ch.RelPath) == ".gitmodules" {
+			_, _ = fmt.Fprintln(w,
+				"note: submodule gitdirs under .git/modules/ are not flushed by design.")
+			_, _ = fmt.Fprintln(w,
+				"      If you added submodules, run `git submodule update --init` on the host.")
+			return
+		}
+	}
 }

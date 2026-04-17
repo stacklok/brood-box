@@ -93,6 +93,18 @@ func DefaultSensitivePathRules() []SensitivePathRule {
 		exactRootRule(".pre-commit-config.yaml", "pre-commit config — auto-executes on git commit", TierAutoExec),
 
 		// Tier 2 — CI/build (requires explicit user action)
+		// .gitattributes is classified here (not TierAutoExec) because:
+		//   (a) routine developer edits like `*.go text eol=lf` are common
+		//       and legitimate — auto-rejecting them would break normal flow.
+		//   (b) the RCE vector (filter/diff/merge drivers) requires the
+		//       *filter definition* to already exist in the user's
+		//       ~/.gitconfig — if the user has never defined such drivers,
+		//       the file cannot execute code on its own.
+		//   (c) a visible warning on every .gitattributes flush lets the
+		//       user notice an unexpected addition before running `git
+		//       checkout` or `git archive`.
+		// git honors .gitattributes at any directory depth, so match by basename.
+		basenameRule(".gitattributes", "git attributes — can reference filter drivers (filter=/diff=/merge=) that execute on git operations", TierBuildCI),
 		prefixRule(".github/workflows/", "GitHub Actions workflow", TierBuildCI),
 		exactRootRule(".gitlab-ci.yml", "GitLab CI config", TierBuildCI),
 		prefixRule(".gitlab/", "GitLab CI config", TierBuildCI),
@@ -104,6 +116,19 @@ func DefaultSensitivePathRules() []SensitivePathRule {
 		basenameRule("Taskfile.yaml", "build system file", TierBuildCI),
 		basenameRule("Taskfile.yml", "build system file", TierBuildCI),
 		basenameRule("Justfile", "build system file", TierBuildCI),
+		// .gitmodules lists submodule URLs fetched on `git submodule update`.
+		// Attacker can redirect to a malicious remote. Requires explicit user
+		// action so Tier 2, but still worth surfacing.
+		basenameRule(".gitmodules", "git submodule config — URLs fetched on submodule update", TierBuildCI),
+		// .git/info/attributes has the same filter-driver RCE surface as
+		// .gitattributes but is path-specific (only honored by this repo's
+		// worktree). Warn so the user notices.
+		exactRootRule(".git/info/attributes", "local git attributes — can reference filter drivers that execute on git operations", TierBuildCI),
+		// git-rebase-todo contains `exec <cmd>` directives that run shell
+		// commands when the user runs `git rebase --continue` on the host.
+		// Flushing in-progress rebase state is a legitimate workflow
+		// (resume a rebase started in the VM), so warn rather than block.
+		exactRootRule(".git/rebase-merge/git-rebase-todo", "rebase todo — `exec` directives run on `git rebase --continue`", TierBuildCI),
 	}
 }
 
