@@ -94,6 +94,16 @@ func DefaultSecurityPatterns() []string {
 // DefaultDiffSecurityPatterns returns non-overridable patterns applied only
 // during diff/flush. These protect files that should never be flushed back
 // to the original workspace even though they exist in the snapshot.
+//
+// The scope is intentionally narrow: only paths whose modification would
+// cause code execution on routine host-side git operations (hooks that
+// fire automatically, configs with exec-class keys) are hard-blocked.
+// Paths that only execute on an explicit user action (`git rebase
+// --continue`, `git checkout` with a pre-defined filter driver, `git
+// submodule update`) are handled one tier up, via SensitivePathRules —
+// they emit a visible warning but do not block the flush, so legitimate
+// agent workflows (resuming rebases, editing .gitattributes, adding
+// submodules) continue to work.
 func DefaultDiffSecurityPatterns() []string {
 	return []string{
 		// Protect the original .git/config from being overwritten with the
@@ -108,6 +118,13 @@ func DefaultDiffSecurityPatterns() []string {
 		// but blocking here is layer-independent and protects SDK consumers
 		// who call Flush() directly without Review().
 		".git/hooks/",
+		// Block submodule git dirs. `.git/modules/<name>/config` has the
+		// same RCE surface as `.git/config` (exec-class keys), and
+		// `.git/modules/<name>/hooks/` has the same surface as `.git/hooks/`.
+		// Neither fires on a conscious user opt-in action — any touch of
+		// the submodule via `git submodule update` / `git status` can
+		// trigger them.
+		".git/modules/",
 	}
 }
 

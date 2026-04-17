@@ -84,9 +84,27 @@ func TestDefaultDiffSecurityPatterns(t *testing.T) {
 	// .git/hooks/ is excluded — defense-in-depth against hook injection.
 	assert.Contains(t, patterns, ".git/hooks/",
 		"diff security patterns must exclude .git/hooks/")
+	// .git/modules/ is excluded — submodule configs and hooks have the same
+	// attack surface as .git/config and .git/hooks/.
+	assert.Contains(t, patterns, ".git/modules/",
+		"diff security patterns must exclude .git/modules/")
 	// .git itself should NOT be broadly excluded — objects, refs, HEAD sync back.
 	assert.NotContains(t, patterns, ".git",
 		".git should not be broadly excluded from diff")
+	// These paths have legitimate agent-authored use cases and must NOT be
+	// hard-blocked. RCE surface on them requires explicit user action
+	// (rebase --continue, filter-driver setup) and is handled by warning
+	// via SensitivePathRules, not by dropping the flush.
+	assert.NotContains(t, patterns, ".git/info/",
+		".git/info/ must not be hard-blocked (breaks .git/info/exclude edits)")
+	assert.NotContains(t, patterns, ".git/packed-refs",
+		".git/packed-refs must not be hard-blocked (breaks `git gc`)")
+	assert.NotContains(t, patterns, ".git/rebase-apply/",
+		".git/rebase-apply/ must not be hard-blocked (breaks rebase resumption)")
+	assert.NotContains(t, patterns, ".git/rebase-merge/",
+		".git/rebase-merge/ must not be hard-blocked (breaks rebase resumption)")
+	assert.NotContains(t, patterns, ".git/sequencer/",
+		".git/sequencer/ must not be hard-blocked (breaks cherry-pick resumption)")
 }
 
 func TestDefaultPerformancePatterns(t *testing.T) {

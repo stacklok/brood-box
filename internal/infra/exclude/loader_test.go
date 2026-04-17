@@ -94,9 +94,22 @@ func TestNewDiffMatcher_MergesDiffSecurityPatterns(t *testing.T) {
 	// Diff-only security pattern should match .git/hooks/ (block hook injection).
 	assert.True(t, m.Match(".git/hooks/pre-commit"), ".git/hooks should be excluded from diff")
 	assert.True(t, m.Match(".git/hooks/post-checkout"), ".git/hooks should be excluded from diff")
-	// Other .git/ contents should NOT match — they sync back.
+	// Diff-only security pattern should match .git/modules/ — submodule configs
+	// and hooks have the same attack surface as the top-level .git/config and .git/hooks/.
+	assert.True(t, m.Match(".git/modules/sub/config"), ".git/modules/<name>/config should be excluded from diff")
+	assert.True(t, m.Match(".git/modules/sub/hooks/post-checkout"), ".git/modules/<name>/hooks should be excluded from diff")
+	// Other .git/ contents should NOT match — they sync back so the agent's
+	// git operations (including .git/info/exclude edits, `git gc` packing,
+	// in-progress rebases) persist to the host.
 	assert.False(t, m.Match(".git/refs/heads/main"), ".git/refs should sync back")
 	assert.False(t, m.Match(".git/HEAD"), ".git/HEAD should sync back")
+	assert.False(t, m.Match(".git/objects/pack/pack-123.idx"), ".git/objects should sync back")
+	assert.False(t, m.Match(".git/info/exclude"), ".git/info/exclude should sync back (benign local ignore)")
+	assert.False(t, m.Match(".git/info/attributes"), ".git/info/attributes must not be hard-blocked — warned via SensitivePathRules")
+	assert.False(t, m.Match(".git/packed-refs"), ".git/packed-refs should sync back (agent gc)")
+	assert.False(t, m.Match(".git/rebase-merge/git-rebase-todo"), ".git/rebase-merge/ should sync back — warned via SensitivePathRules")
+	assert.False(t, m.Match(".git/rebase-apply/0001.patch"), ".git/rebase-apply/ should sync back")
+	assert.False(t, m.Match(".git/sequencer/todo"), ".git/sequencer/ should sync back")
 	// Regular file should not match.
 	assert.False(t, m.Match("main.go"), "regular file should not match")
 }
