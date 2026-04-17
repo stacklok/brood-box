@@ -25,12 +25,57 @@ var _ workspace.SnapshotPostProcessor = (*ConfigSanitizer)(nil)
 
 // allowedSections is the set of git config section names that are safe to
 // pass through to the sandbox. Any section not in this list is stripped.
+//
+// `lfs` is deliberately NOT in this list: the
+// `[lfs "customtransfer.<name>"]` form carries a `path` key that
+// git-lfs executes, and parseSectionName collapses subsections so the
+// per-key denylist cannot distinguish `lfs.customtransfer.*.path` from
+// a hypothetical benign `lfs.path`. LFS configuration typically lives
+// in `~/.gitconfig` (not the repo-local `.git/config` this sanitizer
+// processes), so stripping the section from the snapshot does not
+// affect real LFS workflows.
 var allowedSections = map[string]bool{
 	"core": true, "remote": true, "branch": true, "user": true,
 	"merge": true, "diff": true, "fetch": true, "push": true,
 	"submodule": true, "color": true, "log": true, "rerere": true,
 	"rebase": true, "tag": true, "pack": true, "gc": true,
-	"lfs": true, "status": true, "advice": true, "init": true,
+	"status": true, "advice": true, "init": true,
+}
+
+// dangerousKeys lists keys that, even within an otherwise-allowed
+// section, must be stripped because they can execute arbitrary commands
+// or redirect hook/program lookup. Keys are section-scoped and stored
+// lowercased (git config keys are case-insensitive).
+//
+// Background: a malicious `.git/config` in the host workspace would
+// otherwise be copied verbatim into the snapshot and honored the next
+// time `git` runs inside the VM. `core.sshCommand`, `core.pager`,
+// `core.editor`, `core.fsmonitor`, `core.alternateRefsCommand` and the
+// per-driver `merge`/`diff` command keys all accept shell command
+// strings. `core.hooksPath` redirects git to an attacker-chosen
+// hooks directory. `submodule.<name>.update = !cmd` is the
+// CVE-2017-1000117 RCE vector.
+var dangerousKeys = map[string]map[string]bool{
+	"core": {
+		"sshcommand":           true,
+		"pager":                true,
+		"editor":               true,
+		"fsmonitor":            true,
+		"alternaterefscommand": true,
+		"hookspath":            true,
+	},
+	"merge": {
+		"driver": true,
+	},
+	"diff": {
+		"external": true,
+		"driver":   true,
+		"textconv": true,
+		"command":  true,
+	},
+	"submodule": {
+		"update": true,
+	},
 }
 
 // ConfigSanitizer reads .git/config from the original workspace,
@@ -293,18 +338,28 @@ func SanitizeConfig(input string) string {
 	var currentSection string
 	inAllowedSection := false
 	inContinuation := false
+	// swallowContinuation drops continuation lines whose starting key
+	// was rejected by filterLine. Without this, a denied key with a
+	// trailing backslash (e.g. `sshCommand = ssh \`) would suppress the
+	// key line but still emit the attacker-controlled continuation
+	// lines as orphan fragments under the allowed section.
+	swallowContinuation := false
 
 	for _, line := range lines {
 		trimmedRight := strings.TrimRight(line, " \t")
 		continuation := strings.HasSuffix(trimmedRight, `\`)
 
 		// Handle continuation lines: they inherit the allow/block state
-		// of the line that started the value.
+		// of the line that started the value, plus the per-key swallow
+		// flag when the start line was dropped.
 		if inContinuation {
-			if inAllowedSection {
+			if inAllowedSection && !swallowContinuation {
 				out = append(out, line)
 			}
 			inContinuation = continuation
+			if !continuation {
+				swallowContinuation = false
+			}
 			continue
 		}
 
@@ -315,6 +370,7 @@ func SanitizeConfig(input string) string {
 			section := parseSectionName(line)
 			currentSection = section
 			inAllowedSection = allowedSections[section]
+			swallowContinuation = false
 
 			if !inAllowedSection {
 				// Known dangerous or unknown section — skip.
@@ -330,12 +386,18 @@ func SanitizeConfig(input string) string {
 		// Non-section-header line (key=value, comment, or blank).
 		if !inAllowedSection {
 			inContinuation = continuation
+			swallowContinuation = false
 			continue
 		}
 
 		// Apply key-level filtering within allowed sections.
 		if kept, rewritten := filterLine(currentSection, line); kept {
 			out = append(out, rewritten)
+			swallowContinuation = false
+		} else {
+			// Line dropped — if it had a trailing backslash, drop its
+			// continuation lines too.
+			swallowContinuation = continuation
 		}
 
 		inContinuation = continuation
@@ -355,6 +417,12 @@ func filterLine(section, line string) (bool, string) {
 	}
 
 	lowerKey := strings.ToLower(key)
+
+	// Strip exec-class keys before section-specific handling. These are
+	// unsafe in any otherwise-allowed section they appear in.
+	if denied, ok := dangerousKeys[section]; ok && denied[lowerKey] {
+		return false, ""
+	}
 
 	switch section {
 	case "user":
