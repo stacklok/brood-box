@@ -573,11 +573,12 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// means snapshot. Workspace-local .broodbox.yaml was already merged with
 	// tighten-only semantics so it can only force snapshot, never direct.
 	effectiveMode := flags.workspaceMode
-	if effectiveMode == "" && cfg != nil {
-		effectiveMode = cfg.Workspace.Mode
-	}
 	if effectiveMode == "" {
-		effectiveMode = domainconfig.WorkspaceModeSnapshot
+		if cfg != nil {
+			effectiveMode = cfg.Workspace.ResolvedWorkspaceMode()
+		} else {
+			effectiveMode = domainconfig.WorkspaceModeSnapshot
+		}
 	}
 	directMode := effectiveMode == domainconfig.WorkspaceModeDirect
 
