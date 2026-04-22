@@ -60,11 +60,12 @@ func builtinAgents() map[string]domainagent.Agent {
 	}
 
 	// Hermes is provider-agnostic and ships a default of Anthropic's Claude
-	// Opus, but routinely routes through OpenRouter + direct OpenAI/Gemini.
-	// Locked profile covers the providers Hermes dispatches to out of the
-	// box. Messaging-gateway hosts (Telegram / Discord / Slack / WhatsApp /
-	// Matrix) are intentionally NOT added here — enabling those extras is
-	// an explicit, per-workspace opt-in.
+	// Opus, but routinely dispatches to Nous Portal (flagship), OpenRouter,
+	// and direct OpenAI / Gemini / HuggingFace router endpoints. Locked
+	// profile covers the providers reachable out of the box (matched against
+	// the EnvForward provider-key set below). Messaging-gateway hosts
+	// (Telegram / Discord / Slack / WhatsApp / Matrix) are intentionally NOT
+	// added here — enabling those extras is an explicit, per-workspace opt-in.
 	hermesLockedHosts := []egress.Host{
 		{Name: "api.anthropic.com", Ports: []uint16{443}},
 		{Name: "*.anthropic.com", Ports: []uint16{443}},
@@ -73,6 +74,8 @@ func builtinAgents() map[string]domainagent.Agent {
 		{Name: "openrouter.ai", Ports: []uint16{443}},
 		{Name: "*.openrouter.ai", Ports: []uint16{443}},
 		{Name: "generativelanguage.googleapis.com", Ports: []uint16{443}},
+		{Name: "router.huggingface.co", Ports: []uint16{443}},
+		{Name: "*.nousresearch.com", Ports: []uint16{443}},
 	}
 
 	return map[string]domainagent.Agent{
@@ -209,9 +212,12 @@ func builtinAgents() map[string]domainagent.Agent {
 			// inject the host config.yaml via the settings injector: the
 			// injector has no YAML format yet, and the file can contain
 			// host-side mcp_servers / gateway endpoints that must not leak
-			// into the guest. Instruction + skill directories are safe.
+			// into the guest. SOUL.md (the HERMES_HOME identity file) and
+			// skill directories are safe. Project-level AGENTS.md is picked
+			// up from the workspace CWD by Hermes itself, so no injection
+			// needed here.
 			SettingsManifest: &settings.Manifest{Entries: []settings.Entry{
-				{Category: "instructions", HostPath: ".hermes/AGENTS.md", GuestPath: ".hermes/AGENTS.md", Kind: settings.KindFile, Optional: true},
+				{Category: "instructions", HostPath: ".hermes/SOUL.md", GuestPath: ".hermes/SOUL.md", Kind: settings.KindFile, Optional: true},
 				{Category: "skills", HostPath: ".hermes/skills", GuestPath: ".hermes/skills", Kind: settings.KindDirectory, Optional: true},
 				{Category: "skills", HostPath: ".agents/skills", GuestPath: ".agents/skills", Kind: settings.KindDirectory, Optional: true},
 			}},

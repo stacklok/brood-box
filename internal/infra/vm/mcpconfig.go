@@ -171,10 +171,12 @@ func injectHermesMCP(rootfsPath, gatewayIP string, port uint16, chown ChownFunc)
 		return fmt.Errorf("creating ~/.hermes dir: %w", err)
 	}
 
+	// Hermes's MCP loader (upstream tools/mcp_tool.py) selects transport by
+	// the presence of `url` vs `command`; no `transport:` field is read, so
+	// we only emit `url` to avoid colliding with any future upstream schema.
 	return mergeYAMLMapEntries(hermesDir, "config.yaml", "mcp_servers", map[string]any{
 		"sandbox-tools": map[string]any{
-			"transport": "http",
-			"url":       mcpURL,
+			"url": mcpURL,
 		},
 	}, chown)
 }

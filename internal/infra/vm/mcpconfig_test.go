@@ -663,8 +663,9 @@ func TestInjectHermesMCP(t *testing.T) {
 
 	sandboxTools, ok := servers["sandbox-tools"].(map[string]any)
 	require.True(t, ok, "sandbox-tools must be present")
-	assert.Equal(t, "http", sandboxTools["transport"])
 	assert.Equal(t, "http://192.168.127.1:4483/mcp", sandboxTools["url"])
+	_, hasTransport := sandboxTools["transport"]
+	assert.False(t, hasTransport, "transport key must not be written; Hermes selects transport by url vs command")
 
 	calls := getCalls()
 	require.NotEmpty(t, calls, "chown must be called")
