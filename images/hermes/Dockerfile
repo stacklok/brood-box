@@ -12,29 +12,27 @@ FROM ${BASE_IMAGE}
 # are roughly weekly. Override with --build-arg HERMES_VERSION=... for dev.
 ARG HERMES_VERSION=v2026.4.16
 
-# Extra runtime deps the curl|bash installer would otherwise pull in.
-# The base already ships python3, py3-pip, py3-virtualenv, nodejs, npm,
-# ripgrep, git, and curl — so we only need ffmpeg here (voice/TTS audio
-# conversion; harmless when those features are disabled).
-RUN apk add --no-cache ffmpeg
+LABEL org.opencontainers.image.source="https://github.com/NousResearch/hermes-agent" \
+      org.opencontainers.image.description="Hermes Agent guest image for Brood Box" \
+      org.opencontainers.image.licenses="Apache-2.0"
 
-# Clone a pinned tag instead of running `curl|bash`: deterministic builds,
-# no surprise re-execution, no PATH mutation at image-build time.
+# Clone a pinned tag (deterministic, no curl|bash), build an isolated venv
+# with the minimal feature set — core CLI + MCP client (for the brood-box
+# vmcp sandbox-tools endpoint) + ACP (Agent Client Protocol for editors).
+# Heavy optional extras (messaging, slack, matrix, voice, rl, bedrock,
+# mistral, ...) are intentionally excluded here; a future hermes-voice /
+# hermes-messaging variant can layer them on.
+#
+# The source tree is deleted after `pip install` — installed package code
+# lives in the venv's site-packages, so the clone is dead weight.
+#
+# Known drift: Hermes's ~100 transitive PyPI wheels are not hash-locked.
+# Two rebuilds of the same HERMES_VERSION can produce byte-different
+# images. Acceptable for a weekly-refresh agent guest; tighten with a
+# constraints.txt if this becomes a problem.
 RUN git clone --depth 1 --branch "${HERMES_VERSION}" \
-    https://github.com/NousResearch/hermes-agent.git /opt/hermes/src && \
-    rm -rf /opt/hermes/src/.git
-
-# Create an isolated venv and install the minimal feature set: core CLI,
-# MCP client (for the brood-box vmcp sandbox-tools endpoint), and ACP
-# (Agent Client Protocol — editor integrations). Heavy optional extras
-# (messaging, slack, matrix, voice, rl, bedrock, mistral, ...) can be
-# layered on top of this image if a user needs them.
-RUN python3 -m venv /opt/hermes/venv && \
-    /opt/hermes/venv/bin/pip install --no-cache-dir --upgrade pip && \
-    /opt/hermes/venv/bin/pip install --no-cache-dir "/opt/hermes/src[mcp,acp]"
-
-# Expose the entry points on PATH for the sandbox user. Both `hermes` and
-# `hermes-agent` scripts land in the venv bin dir via pyproject's
-# [project.scripts]; link the primary CLI for user invocation.
-RUN ln -s /opt/hermes/venv/bin/hermes /usr/local/bin/hermes && \
-    ln -s /opt/hermes/venv/bin/hermes-agent /usr/local/bin/hermes-agent
+        https://github.com/NousResearch/hermes-agent.git /opt/hermes/src && \
+    python3 -m venv /opt/hermes/venv && \
+    /opt/hermes/venv/bin/pip install --no-cache-dir "/opt/hermes/src[mcp,acp]" && \
+    ln -s /opt/hermes/venv/bin/hermes /usr/local/bin/hermes && \
+    rm -rf /opt/hermes/src
