@@ -113,7 +113,7 @@ before the VM starts, and changes are flushed back after the agent finishes.
 Use --review to interactively approve or reject each changed file; without it,
 all changes are auto-accepted.
 
-Supported agents: claude-code, codex, opencode
+Supported agents: claude-code, codex, hermes, opencode
 
 Example:
   bbox claude-code
