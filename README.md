@@ -123,11 +123,15 @@ bbox claude-code --cpus 4 --memory 4096
 # Use a different workspace
 bbox claude-code --workspace /path/to/project
 
-# Enable interactive per-file review (snapshot isolation is always active)
+# Enable interactive per-file review (snapshot mode only)
 bbox claude-code --review
 
 # Exclude files from snapshot
 bbox claude-code --exclude "*.log" --exclude "tmp/"
+
+# Skip snapshot isolation entirely: the agent writes directly to your workspace
+# (no review, no undo). --yes is required on the first run.
+bbox claude-code --workspace-mode=direct --yes
 
 # Lock down egress to LLM provider only
 bbox claude-code --egress-profile locked
@@ -151,6 +155,22 @@ bbox claude-code -- --help
 bbox list
 ```
 
+### Workspace modes
+
+By default, bbox runs the agent against a copy-on-write snapshot of your workspace
+and flushes changes back when the agent exits. No write lands on your real files
+without going through the diff engine. Add `--review` to approve each file
+interactively.
+
+For quick, trusted edits where you're driving the agent turn-by-turn and snapshot
+overhead isn't worth it, pass `--workspace-mode=direct`. The VM mounts your
+workspace read-write and writes land immediately. In direct mode, `--review` and
+`--exclude` are rejected (they only apply to snapshots), and git credential
+sanitization is skipped. Per-workspace `.broodbox.yaml` cannot enable direct mode;
+only the operator can, globally or on the CLI, and `--yes` is required on first
+use. Use direct mode when you'd trust the agent with an unsandboxed shell anyway.
+Otherwise stay on snapshot mode (the default).
+
 ## Configuration
 
 Brood Box uses a three-level config system: CLI flags > per-workspace > global. CLI flags always win.
@@ -164,6 +184,9 @@ defaults:
   cpus: 4
   memory: 4096
   egress_profile: "permissive"
+
+workspace:
+  mode: "snapshot"   # snapshot (default) or direct
 
 review:
   enabled: true
@@ -207,6 +230,11 @@ review:
 
 Note that `review.enabled` is **ignored** in per-workspace config for security.
 An untrusted repo cannot disable review on your behalf.
+
+`workspace.mode: direct` from per-workspace config is also ignored. An untrusted
+repo cannot turn off snapshot isolation. Setting `workspace.mode: snapshot`
+in `.broodbox.yaml` is allowed (tighten-only: a repo can force snapshot even if
+the global config enables direct).
 
 Similarly, `egress_profile` in per-workspace config cannot widen the global profile.
 

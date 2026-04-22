@@ -223,6 +223,58 @@ func TestMergeConfigs(t *testing.T) {
 			},
 		},
 		{
+			name: "workspace mode: local direct cannot widen global snapshot",
+			global: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeSnapshot},
+			},
+			local: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeDirect},
+			},
+			want: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeSnapshot},
+			},
+		},
+		{
+			name:   "workspace mode: local direct cannot widen empty global (default snapshot)",
+			global: &Config{},
+			local: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeDirect},
+			},
+			want: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeSnapshot},
+			},
+		},
+		{
+			name: "workspace mode: local snapshot tightens global direct",
+			global: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeDirect},
+			},
+			local: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeSnapshot},
+			},
+			want: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeSnapshot},
+			},
+		},
+		{
+			name:   "workspace mode: both empty stays empty",
+			global: &Config{},
+			local:  &Config{},
+			want:   &Config{},
+		},
+		{
+			name: "workspace mode: unrecognized local falls back to snapshot default",
+			global: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeDirect},
+			},
+			local: &Config{
+				Workspace: WorkspaceConfig{Mode: "bogus"},
+			},
+			want: &Config{
+				Workspace: WorkspaceConfig{Mode: WorkspaceModeSnapshot},
+			},
+		},
+		{
 			name: "network allow_hosts are additive",
 			global: &Config{
 				Network: NetworkConfig{
@@ -249,6 +301,60 @@ func TestMergeConfigs(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestStricterWorkspaceMode(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		a, b string
+		want string
+	}{
+		{"both empty defaults to snapshot", "", "", WorkspaceModeSnapshot},
+		{"snapshot vs direct → snapshot", WorkspaceModeSnapshot, WorkspaceModeDirect, WorkspaceModeSnapshot},
+		{"direct vs snapshot → snapshot", WorkspaceModeDirect, WorkspaceModeSnapshot, WorkspaceModeSnapshot},
+		{"direct vs direct → direct", WorkspaceModeDirect, WorkspaceModeDirect, WorkspaceModeDirect},
+		{"empty vs direct → snapshot", "", WorkspaceModeDirect, WorkspaceModeSnapshot},
+		{"unknown falls back to snapshot", "bogus", "also-bogus", WorkspaceModeSnapshot},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, StricterWorkspaceMode(tt.a, tt.b))
+		})
+	}
+}
+
+func TestIsValidWorkspaceMode(t *testing.T) {
+	t.Parallel()
+
+	assert.True(t, IsValidWorkspaceMode(""))
+	assert.True(t, IsValidWorkspaceMode(WorkspaceModeSnapshot))
+	assert.True(t, IsValidWorkspaceMode(WorkspaceModeDirect))
+	assert.False(t, IsValidWorkspaceMode("bogus"))
+	assert.False(t, IsValidWorkspaceMode("SNAPSHOT"))
+}
+
+func TestConfigValidate_WorkspaceMode(t *testing.T) {
+	t.Parallel()
+
+	require.NoError(t, (&Config{}).Validate())
+	require.NoError(t, (&Config{Workspace: WorkspaceConfig{Mode: WorkspaceModeSnapshot}}).Validate())
+	require.NoError(t, (&Config{Workspace: WorkspaceConfig{Mode: WorkspaceModeDirect}}).Validate())
+
+	err := (&Config{Workspace: WorkspaceConfig{Mode: "bogus"}}).Validate()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "workspace.mode")
+}
+
+func TestWorkspaceConfig_ResolvedWorkspaceMode(t *testing.T) {
+	t.Parallel()
+
+	assert.Equal(t, WorkspaceModeSnapshot, WorkspaceConfig{}.ResolvedWorkspaceMode())
+	assert.Equal(t, WorkspaceModeSnapshot, WorkspaceConfig{Mode: WorkspaceModeSnapshot}.ResolvedWorkspaceMode())
+	assert.Equal(t, WorkspaceModeDirect, WorkspaceConfig{Mode: WorkspaceModeDirect}.ResolvedWorkspaceMode())
 }
 
 func TestMergeConfigs_DoesNotMutateGlobal(t *testing.T) {

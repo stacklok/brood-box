@@ -22,6 +22,10 @@ type Config struct {
 	// Defaults specifies default resource limits.
 	Defaults DefaultsConfig `yaml:"defaults"`
 
+	// Workspace configures how the workspace is exposed to the VM
+	// (snapshot isolation vs direct pass-through).
+	Workspace WorkspaceConfig `yaml:"workspace"`
+
 	// Review configures workspace snapshot isolation.
 	Review ReviewConfig `yaml:"review"`
 
@@ -62,6 +66,10 @@ type Config struct {
 // has its own Validate). Add more here as new classes of footgun
 // emerge.
 func (c *Config) Validate() error {
+	if !IsValidWorkspaceMode(c.Workspace.Mode) {
+		return fmt.Errorf("workspace.mode %q: valid values are %v",
+			c.Workspace.Mode, ValidWorkspaceModes())
+	}
 	for name, override := range c.Agents {
 		if err := agent.ValidateEnvForwardPatterns(override.EnvForward); err != nil {
 			return fmt.Errorf("agents.%s.%w", name, err)
@@ -466,6 +474,83 @@ type ReviewConfig struct {
 	ExcludePatterns []string `yaml:"exclude_patterns,omitempty"`
 }
 
+// WorkspaceConfig configures how the host workspace is exposed to the VM.
+type WorkspaceConfig struct {
+	// Mode selects the workspace isolation strategy.
+	// "" / "snapshot" (default): COW snapshot, diff + flush on exit.
+	// "direct": mount the workspace directly with no snapshot, no review,
+	// and no undo. Must be set globally or on the CLI; workspace-local
+	// .broodbox.yaml cannot widen to "direct".
+	Mode string `yaml:"mode,omitempty"`
+}
+
+const (
+	// WorkspaceModeSnapshot (default) exposes the workspace via a COW
+	// snapshot. Changes are diffed and flushed back after the agent exits.
+	WorkspaceModeSnapshot = "snapshot"
+
+	// WorkspaceModeDirect mounts the workspace directly into the VM with
+	// no isolation. Writes land on the host filesystem immediately.
+	WorkspaceModeDirect = "direct"
+)
+
+// workspaceModeStrictness orders modes from strictest to most permissive.
+// "snapshot" is strictest because it preserves the ability to review/reject.
+var workspaceModeStrictness = []string{
+	WorkspaceModeSnapshot,
+	WorkspaceModeDirect,
+}
+
+// ValidWorkspaceModes returns the list of valid workspace mode names.
+func ValidWorkspaceModes() []string {
+	return []string{WorkspaceModeSnapshot, WorkspaceModeDirect}
+}
+
+// IsValidWorkspaceMode reports whether the given mode name is recognized.
+// The empty string is treated as valid (implicit default).
+func IsValidWorkspaceMode(mode string) bool {
+	switch mode {
+	case "", WorkspaceModeSnapshot, WorkspaceModeDirect:
+		return true
+	default:
+		return false
+	}
+}
+
+// ResolvedWorkspaceMode returns the effective mode, mapping "" to the default.
+func (w WorkspaceConfig) ResolvedWorkspaceMode() string {
+	if w.Mode == "" {
+		return WorkspaceModeSnapshot
+	}
+	return w.Mode
+}
+
+// StricterWorkspaceMode returns the stricter of two mode names. Empty strings
+// and unrecognized values are normalized to "snapshot" (the safe side) before
+// comparison. A typo in either input can therefore only tighten, never widen,
+// the effective mode.
+func StricterWorkspaceMode(a, b string) string {
+	a = normalizeWorkspaceMode(a)
+	b = normalizeWorkspaceMode(b)
+	for _, m := range workspaceModeStrictness {
+		if m == a || m == b {
+			return m
+		}
+	}
+	return WorkspaceModeSnapshot
+}
+
+// normalizeWorkspaceMode maps empty and unrecognized values to the safe default
+// so unknown inputs behave as "snapshot" during merge.
+func normalizeWorkspaceMode(m string) string {
+	switch m {
+	case WorkspaceModeSnapshot, WorkspaceModeDirect:
+		return m
+	default:
+		return WorkspaceModeSnapshot
+	}
+}
+
 const (
 	// MaxCPUs is the upper bound for vCPU allocation.
 	MaxCPUs uint32 = 128
@@ -613,6 +698,17 @@ func MergeConfigs(global, local *Config) *Config {
 			effectiveGlobal,
 			egress.ProfileName(local.Defaults.EgressProfile),
 		))
+	}
+
+	// Workspace.Mode: tighten-only. Local can only request a stricter
+	// mode (snapshot), never widen to direct. Unknown modes fall back
+	// to the snapshot default rather than silently disabling isolation.
+	// When both sides leave the mode unset, preserve the empty default so
+	// round-tripping a no-op local config does not inject an explicit value.
+	if global.Workspace.Mode == "" && local.Workspace.Mode == "" {
+		result.Workspace.Mode = ""
+	} else {
+		result.Workspace.Mode = StricterWorkspaceMode(global.Workspace.Mode, local.Workspace.Mode)
 	}
 
 	// Review.Enabled: local value is IGNORED (global preserved).
