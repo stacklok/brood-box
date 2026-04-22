@@ -59,6 +59,22 @@ func builtinAgents() map[string]domainagent.Agent {
 		{Name: "*.openrouter.ai", Ports: []uint16{443}},
 	}
 
+	// Hermes is provider-agnostic and ships a default of Anthropic's Claude
+	// Opus, but routinely routes through OpenRouter + direct OpenAI/Gemini.
+	// Locked profile covers the providers Hermes dispatches to out of the
+	// box. Messaging-gateway hosts (Telegram / Discord / Slack / WhatsApp /
+	// Matrix) are intentionally NOT added here — enabling those extras is
+	// an explicit, per-workspace opt-in.
+	hermesLockedHosts := []egress.Host{
+		{Name: "api.anthropic.com", Ports: []uint16{443}},
+		{Name: "*.anthropic.com", Ports: []uint16{443}},
+		{Name: "api.openai.com", Ports: []uint16{443}},
+		{Name: "*.openai.com", Ports: []uint16{443}},
+		{Name: "openrouter.ai", Ports: []uint16{443}},
+		{Name: "*.openrouter.ai", Ports: []uint16{443}},
+		{Name: "generativelanguage.googleapis.com", Ports: []uint16{443}},
+	}
+
 	return map[string]domainagent.Agent{
 		"claude-code": {
 			Name:                 "claude-code",
@@ -160,6 +176,44 @@ func builtinAgents() map[string]domainagent.Agent {
 				{Category: "tools", HostPath: ".config/opencode/tools", GuestPath: ".config/opencode/tools", Kind: settings.KindDirectory, Optional: true},
 				{Category: "plugins", HostPath: ".config/opencode/plugins", GuestPath: ".config/opencode/plugins", Kind: settings.KindDirectory, Optional: true},
 				{Category: "themes", HostPath: ".config/opencode/themes", GuestPath: ".config/opencode/themes", Kind: settings.KindDirectory, Optional: true},
+			}},
+		},
+		"hermes": {
+			Name:    "hermes",
+			Image:   "ghcr.io/stacklok/brood-box/hermes:latest",
+			Command: []string{"hermes"},
+			// Hermes reads provider keys from ~/.hermes/.env or env vars.
+			// Forward the common ones; HERMES_* covers Hermes-specific knobs
+			// like HERMES_TUI and MESSAGING_CWD.
+			EnvForward: []string{
+				"ANTHROPIC_API_KEY",
+				"OPENAI_API_KEY",
+				"OPENROUTER_API_KEY",
+				"GEMINI_API_KEY",
+				"GOOGLE_API_KEY",
+				"HF_TOKEN",
+				"HERMES_*",
+			},
+			DefaultCPUs:          2,
+			DefaultMemory:        bytesize.ByteSize(4096),
+			DefaultTmpSize:       bytesize.ByteSize(2048),
+			DefaultEgressProfile: egress.ProfilePermissive,
+			MCPConfigFormat:      domainagent.MCPConfigFormatHermes,
+			CredentialPaths:      []string{".hermes/"},
+			EgressHosts: map[egress.ProfileName][]egress.Host{
+				egress.ProfileLocked:   hermesLockedHosts,
+				egress.ProfileStandard: append(hermesLockedHosts, devInfraHosts...),
+			},
+			// Hermes persists its whole ~/.hermes/ tree (config.yaml, .env,
+			// sessions, skills) via CredentialPaths. We intentionally do NOT
+			// inject the host config.yaml via the settings injector: the
+			// injector has no YAML format yet, and the file can contain
+			// host-side mcp_servers / gateway endpoints that must not leak
+			// into the guest. Instruction + skill directories are safe.
+			SettingsManifest: &settings.Manifest{Entries: []settings.Entry{
+				{Category: "instructions", HostPath: ".hermes/AGENTS.md", GuestPath: ".hermes/AGENTS.md", Kind: settings.KindFile, Optional: true},
+				{Category: "skills", HostPath: ".hermes/skills", GuestPath: ".hermes/skills", Kind: settings.KindDirectory, Optional: true},
+				{Category: "skills", HostPath: ".agents/skills", GuestPath: ".agents/skills", Kind: settings.KindDirectory, Optional: true},
 			}},
 		},
 	}

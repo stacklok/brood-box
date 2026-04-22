@@ -262,9 +262,15 @@ tasks:
     cmds:
       - "{{.CONTAINER_ENGINE}} build -t {{.IMAGE_REGISTRY}}/opencode:latest images/opencode/"
 
+  image-hermes:
+    desc: Build hermes guest image
+    deps: [image-base]
+    cmds:
+      - "{{.CONTAINER_ENGINE}} build -t {{.IMAGE_REGISTRY}}/hermes:latest images/hermes/"
+
   image-all:
     desc: Build all guest images
-    deps: [image-claude-code, image-codex, image-opencode]
+    deps: [image-claude-code, image-codex, image-opencode, image-hermes]
 
   image-push:
     desc: Push all images to GHCR
@@ -274,3 +280,4 @@ tasks:
       - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/claude-code:latest"
       - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/codex:latest"
       - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/opencode:latest"
+      - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/hermes:latest"

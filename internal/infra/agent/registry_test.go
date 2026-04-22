@@ -20,7 +20,7 @@ func TestNewRegistry_ContainsBuiltInAgents(t *testing.T) {
 	reg := NewRegistry()
 	agents := reg.List()
 
-	require.Len(t, agents, 3, "registry should contain exactly 3 built-in agents")
+	require.Len(t, agents, 4, "registry should contain exactly 4 built-in agents")
 
 	names := make(map[string]bool, len(agents))
 	for _, a := range agents {
@@ -33,6 +33,7 @@ func TestNewRegistry_ContainsBuiltInAgents(t *testing.T) {
 	assert.True(t, names["claude-code"], "registry should contain claude-code")
 	assert.True(t, names["codex"], "registry should contain codex")
 	assert.True(t, names["opencode"], "registry should contain opencode")
+	assert.True(t, names["hermes"], "registry should contain hermes")
 }
 
 func TestRegistry_Get_BuiltInAgent(t *testing.T) {
@@ -46,6 +47,7 @@ func TestRegistry_Get_BuiltInAgent(t *testing.T) {
 		{name: "claude-code"},
 		{name: "codex"},
 		{name: "opencode"},
+		{name: "hermes"},
 	}
 
 	for _, tt := range tests {
@@ -161,7 +163,7 @@ func TestRegistry_List_SortedByName(t *testing.T) {
 	require.NoError(t, err)
 
 	agents := reg.List()
-	require.Len(t, agents, 5)
+	require.Len(t, agents, 6)
 
 	for i := 1; i < len(agents); i++ {
 		assert.True(t, agents[i-1].Name < agents[i].Name,

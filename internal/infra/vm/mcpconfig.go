@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	toml "github.com/pelletier/go-toml/v2"
+	"gopkg.in/yaml.v3"
 )
 
 // ChownFunc abstracts file ownership changes for testability.
@@ -154,6 +155,30 @@ func injectOpenCodeMCP(rootfsPath, gatewayIP string, port uint16, chown ChownFun
 	return mergeJSONMapEntries(opencodeDir, "opencode.json", "mcp", serversMap, chown)
 }
 
+// --- Hermes ---
+// Ref: https://github.com/NousResearch/hermes-agent
+// Global config lives at ~/.hermes/config.yaml and exposes an `mcp_servers`
+// mapping. Hermes is a provider-agnostic client CLI; the MCP entry points the
+// agent at the brood-box vmcp proxy so it can call sandbox tools.
+
+// injectHermesMCP merges an MCP server entry into ~/.hermes/config.yaml,
+// preserving any pre-existing YAML keys (provider config, skills, cron, etc.).
+func injectHermesMCP(rootfsPath, gatewayIP string, port uint16, chown ChownFunc) error {
+	mcpURL := fmt.Sprintf("http://%s:%d/mcp", gatewayIP, port)
+
+	hermesDir := filepath.Join(rootfsPath, sandboxHome, ".hermes")
+	if err := mkdirAndChown(hermesDir, chown); err != nil {
+		return fmt.Errorf("creating ~/.hermes dir: %w", err)
+	}
+
+	return mergeYAMLMapEntries(hermesDir, "config.yaml", "mcp_servers", map[string]any{
+		"sandbox-tools": map[string]any{
+			"transport": "http",
+			"url":       mcpURL,
+		},
+	}, chown)
+}
+
 // --- helpers ---
 
 const (
@@ -275,6 +300,54 @@ func mergeTOMLMapEntries(dir, filename, key string, value map[string]any, chown 
 	existing[key] = existingMap
 
 	merged, err := toml.Marshal(existing)
+	if err != nil {
+		return fmt.Errorf("marshaling merged %s: %w", filename, err)
+	}
+
+	if err := os.WriteFile(path, merged, 0o600); err != nil {
+		return fmt.Errorf("writing %s: %w", filename, err)
+	}
+
+	return chown(path, sandboxUID, sandboxGID)
+}
+
+// mergeYAMLMapEntries reads an existing YAML file, merges entries from value
+// into the map at key, and writes back. Individual entries from value override
+// existing entries with the same name, but other entries are preserved.
+// This is a single-level merge (see mergeJSONMapEntries for rationale).
+func mergeYAMLMapEntries(dir, filename, key string, value map[string]any, chown ChownFunc) error {
+	path := filepath.Join(dir, filename)
+
+	existing := make(map[string]any)
+	if data, err := os.ReadFile(path); err == nil {
+		if len(data) > 0 {
+			if err := yaml.Unmarshal(data, &existing); err != nil {
+				return fmt.Errorf("parsing existing %s: %w", filename, err)
+			}
+			// An empty YAML document unmarshals to nil, not an empty map.
+			if existing == nil {
+				existing = make(map[string]any)
+			}
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("reading existing %s: %w", filename, err)
+	}
+
+	// Parse existing map at key (if any).
+	existingMap := make(map[string]any)
+	if raw, ok := existing[key]; ok {
+		if m, ok := raw.(map[string]any); ok {
+			existingMap = m
+		}
+	}
+
+	// Merge new entries into existing map.
+	for k, v := range value {
+		existingMap[k] = v
+	}
+	existing[key] = existingMap
+
+	merged, err := yaml.Marshal(existing)
 	if err != nil {
 		return fmt.Errorf("marshaling merged %s: %w", filename, err)
 	}

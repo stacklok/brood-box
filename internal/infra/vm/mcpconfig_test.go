@@ -13,6 +13,7 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 )
@@ -65,6 +66,11 @@ func TestInjectMCPConfig_Dispatch(t *testing.T) {
 			name:     "opencode writes ~/.config/opencode/opencode.json",
 			format:   agent.MCPConfigFormatOpenCode,
 			wantFile: "home/sandbox/.config/opencode/opencode.json",
+		},
+		{
+			name:     "hermes writes ~/.hermes/config.yaml",
+			format:   agent.MCPConfigFormatHermes,
+			wantFile: "home/sandbox/.hermes/config.yaml",
 		},
 	}
 
@@ -379,6 +385,11 @@ func TestMCPConfigFilePermissions(t *testing.T) {
 			inject: func(root string) error { return injectOpenCodeMCP(root, "127.0.0.1", 4483, chown) },
 			path:   "home/sandbox/.config/opencode/opencode.json",
 		},
+		{
+			name:   "hermes",
+			inject: func(root string) error { return injectHermesMCP(root, "127.0.0.1", 4483, chown) },
+			path:   "home/sandbox/.hermes/config.yaml",
+		},
 	}
 
 	for _, tt := range tests {
@@ -631,6 +642,96 @@ func TestMergeJSONMapEntries_NonMapValue(t *testing.T) {
 	var innerMap map[string]any
 	require.NoError(t, json.Unmarshal(raw["key"], &innerMap))
 	assert.Contains(t, innerMap, "new-entry", "new-entry must be present after replacing non-map value")
+}
+
+func TestInjectHermesMCP(t *testing.T) {
+	t.Parallel()
+
+	rootfs := setupRootfs(t)
+	chown, getCalls := recordingChown()
+	err := injectHermesMCP(rootfs, "192.168.127.1", 4483, chown)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(rootfs, sandboxHome, ".hermes", "config.yaml"))
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &raw))
+
+	servers, ok := raw["mcp_servers"].(map[string]any)
+	require.True(t, ok, "mcp_servers must be a map")
+
+	sandboxTools, ok := servers["sandbox-tools"].(map[string]any)
+	require.True(t, ok, "sandbox-tools must be present")
+	assert.Equal(t, "http", sandboxTools["transport"])
+	assert.Equal(t, "http://192.168.127.1:4483/mcp", sandboxTools["url"])
+
+	calls := getCalls()
+	require.NotEmpty(t, calls, "chown must be called")
+	for _, c := range calls {
+		assert.Equal(t, sandboxUID, c.UID)
+		assert.Equal(t, sandboxGID, c.GID)
+	}
+}
+
+func TestInjectHermesMCP_CustomPort(t *testing.T) {
+	t.Parallel()
+
+	rootfs := setupRootfs(t)
+	chown, _ := recordingChown()
+	err := injectHermesMCP(rootfs, "10.0.0.1", 7777, chown)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(filepath.Join(rootfs, sandboxHome, ".hermes", "config.yaml"))
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &raw))
+
+	servers := raw["mcp_servers"].(map[string]any)
+	sandboxTools := servers["sandbox-tools"].(map[string]any)
+	assert.Equal(t, "http://10.0.0.1:7777/mcp", sandboxTools["url"])
+}
+
+func TestInjectHermesMCP_PreservesExistingKeys(t *testing.T) {
+	t.Parallel()
+
+	rootfs := setupRootfs(t)
+	chown, _ := recordingChown()
+	hermesDir := filepath.Join(rootfs, sandboxHome, ".hermes")
+	require.NoError(t, os.MkdirAll(hermesDir, 0o755))
+	configPath := filepath.Join(hermesDir, "config.yaml")
+
+	// Pre-populate with an existing user model/provider selection + a
+	// pre-existing MCP server that must survive the merge.
+	existing := "provider: openrouter\n" +
+		"model: anthropic/claude-opus-4.6\n" +
+		"mcp_servers:\n" +
+		"  user-tool:\n" +
+		"    transport: http\n" +
+		"    url: http://user:1234/mcp\n"
+	require.NoError(t, os.WriteFile(configPath, []byte(existing), 0o644))
+
+	err := injectHermesMCP(rootfs, "192.168.127.1", 4483, chown)
+	require.NoError(t, err)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, yaml.Unmarshal(data, &raw))
+
+	assert.Equal(t, "openrouter", raw["provider"], "top-level provider must be preserved")
+	assert.Equal(t, "anthropic/claude-opus-4.6", raw["model"], "top-level model must be preserved")
+
+	servers, ok := raw["mcp_servers"].(map[string]any)
+	require.True(t, ok)
+
+	assert.Contains(t, servers, "sandbox-tools", "sandbox-tools must be present")
+	assert.Contains(t, servers, "user-tool", "existing user entry must be preserved")
+
+	userTool := servers["user-tool"].(map[string]any)
+	assert.Equal(t, "http://user:1234/mcp", userTool["url"])
 }
 
 // setupRootfs creates a minimal rootfs with /home/sandbox/ pre-created,

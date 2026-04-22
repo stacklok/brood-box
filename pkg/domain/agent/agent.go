@@ -50,6 +50,9 @@ const (
 	// MCPConfigFormatOpenCode injects an OpenCode MCP config file.
 	MCPConfigFormatOpenCode MCPConfigFormat = "opencode"
 
+	// MCPConfigFormatHermes injects a Hermes Agent MCP config file.
+	MCPConfigFormatHermes MCPConfigFormat = "hermes"
+
 	// MCPConfigFormatNone means no MCP config injection.
 	MCPConfigFormatNone MCPConfigFormat = "none"
 )
