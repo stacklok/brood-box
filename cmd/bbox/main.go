@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -78,6 +79,8 @@ func rootCmd() *cobra.Command {
 		image             string
 		debug             bool
 		review            bool
+		workspaceMode     string
+		yesAckDirect      bool
 		excludes          []string
 		logFile           string
 		egressProfile     string
@@ -108,10 +111,15 @@ func rootCmd() *cobra.Command {
 		Long: `bbox boots a microVM, mounts your workspace, forwards secrets,
 and drops into an interactive terminal session with a coding agent.
 
-Workspace snapshot isolation is always active: a COW snapshot is created
-before the VM starts, and changes are flushed back after the agent finishes.
-Use --review to interactively approve or reject each changed file; without it,
-all changes are auto-accepted.
+Workspace isolation modes:
+  snapshot (default): A COW snapshot of the workspace is created before
+    the VM starts, and changes are flushed back after the agent finishes.
+    Use --review to interactively approve or reject each changed file;
+    without it, all changes are auto-accepted.
+  direct: The workspace is mounted directly into the VM with no snapshot.
+    The agent writes through to your filesystem immediately: no review,
+    no undo, and git credential sanitization is skipped.
+    Enable with --workspace-mode=direct (requires --yes on first use).
 
 Supported agents: claude-code, codex, opencode
 
@@ -121,6 +129,7 @@ Example:
   bbox opencode --workspace /path/to/project
   bbox claude-code --review
   bbox claude-code --review --exclude "*.log" --exclude "tmp/"
+  bbox claude-code --workspace-mode=direct --yes
   bbox claude-code --egress-profile locked
   bbox claude-code --allow-host "custom-api.example.com:443"
   bbox claude-code --no-mcp
@@ -145,6 +154,8 @@ Example:
 				image:             image,
 				debug:             debug,
 				review:            review,
+				workspaceMode:     workspaceMode,
+				yesAckDirect:      yesAckDirect,
 				excludes:          excludes,
 				logFile:           logFile,
 				egressProfile:     egressProfile,
@@ -181,8 +192,10 @@ Example:
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/broodbox/config.yaml)")
 	cmd.Flags().StringVar(&image, "image", "", "Override OCI image reference")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug-level logging to file (default: info level)")
-	cmd.Flags().BoolVar(&review, "review", false, "Enable interactive per-file review of workspace changes (snapshot isolation is always active)")
-	cmd.Flags().StringSliceVar(&excludes, "exclude", nil, "Additional exclude patterns for workspace snapshot (repeatable)")
+	cmd.Flags().BoolVar(&review, "review", false, "Enable interactive per-file review of workspace changes (snapshot mode only)")
+	cmd.Flags().StringVar(&workspaceMode, "workspace-mode", "", "Workspace isolation mode: snapshot (default), direct. direct mounts the workspace read-write with no snapshot, no review, no undo")
+	cmd.Flags().BoolVar(&yesAckDirect, "yes", false, "Acknowledge dangerous options without prompting (required on first --workspace-mode=direct run)")
+	cmd.Flags().StringSliceVar(&excludes, "exclude", nil, "Additional exclude patterns for workspace snapshot (repeatable, snapshot mode only)")
 	cmd.Flags().StringVar(&logFile, "log-file", "", "Override log file path (default: ~/.config/broodbox/vms/<vm-name>/broodbox.log)")
 	cmd.Flags().StringVar(&egressProfile, "egress-profile", "", "Egress restriction level: permissive, standard, locked (default: agent's built-in default)")
 	cmd.Flags().StringSliceVar(&allowHosts, "allow-host", nil, "Additional allowed egress DNS hostname[:port] — no IP addresses (repeatable)")
@@ -339,6 +352,8 @@ type runFlags struct {
 	image             string
 	debug             bool
 	review            bool
+	workspaceMode     string
+	yesAckDirect      bool
 	excludes          []string
 	logFile           string
 	egressProfile     string
@@ -391,6 +406,22 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	if flags.noImageCache && flags.pull == domainconfig.PullNever {
 		return fmt.Errorf("--no-image-cache and --pull=never are incompatible: "+
 			"pull policy %q requires a cache to serve hits", domainconfig.PullNever)
+	}
+
+	// Validate --workspace-mode and its interaction with other flags.
+	if flags.workspaceMode != "" && !domainconfig.IsValidWorkspaceMode(flags.workspaceMode) {
+		return fmt.Errorf("invalid --workspace-mode %q: valid values are %v",
+			flags.workspaceMode, domainconfig.ValidWorkspaceModes())
+	}
+	if flags.workspaceMode == domainconfig.WorkspaceModeDirect {
+		if flags.review {
+			return errors.New("--review has no effect in direct mode: there is no snapshot to review against. " +
+				"Remove --review or drop --workspace-mode=direct")
+		}
+		if len(flags.excludes) > 0 {
+			return errors.New("--exclude applies to snapshot matching and is ignored in direct mode. " +
+				"Remove --exclude or drop --workspace-mode=direct")
+		}
 	}
 
 	// Resolve workspace early so we can derive a deterministic VM name.
@@ -538,32 +569,70 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		}
 	}
 
+	// Resolve effective workspace mode. CLI wins over global config; unset
+	// means snapshot. Workspace-local .broodbox.yaml was already merged with
+	// tighten-only semantics so it can only force snapshot, never direct.
+	effectiveMode := flags.workspaceMode
+	if effectiveMode == "" {
+		if cfg != nil {
+			effectiveMode = cfg.Workspace.ResolvedWorkspaceMode()
+		} else {
+			effectiveMode = domainconfig.WorkspaceModeSnapshot
+		}
+	}
+	directMode := effectiveMode == domainconfig.WorkspaceModeDirect
+
 	// Determine interactive review mode. Default is disabled unless --review
-	// is set or config explicitly enables it. Snapshot isolation is always on.
+	// is set or config explicitly enables it. Only meaningful in snapshot mode.
 	interactiveReview := flags.review
 	if !interactiveReview && cfg != nil && cfg.Review.Enabled != nil && *cfg.Review.Enabled {
 		interactiveReview = true
 	}
+	if directMode {
+		// --review/review.enabled have no effect without a snapshot; the CLI
+		// combination was already rejected above, so here we're quietly
+		// ignoring a global config default. Warn once so the user notices.
+		if interactiveReview {
+			_, _ = fmt.Fprintln(os.Stderr,
+				"Warning: review.enabled is ignored in direct mode (no snapshot to review against).")
+		}
+		interactiveReview = false
 
-	// Merge exclude patterns from config and CLI.
+		// First-run acknowledgement: require an explicit --yes once, then
+		// persist a sentinel so daily use doesn't nag.
+		if err := ensureDirectModeAck(flags.yesAckDirect, logger); err != nil {
+			return err
+		}
+
+		// Startup banner: remind the user every run that isolation is off.
+		_, _ = fmt.Fprintf(os.Stderr,
+			"! Direct mode: agent writes directly to %s. No snapshot, no review, no undo.\n",
+			ws,
+		)
+	}
+
+	// Merge exclude patterns from config and CLI. Only used in snapshot mode.
 	var excludePatterns []string
 	if cfg != nil {
 		excludePatterns = append(excludePatterns, cfg.Review.ExcludePatterns...)
 	}
 	excludePatterns = append(excludePatterns, flags.excludes...)
 
-	// Build exclude matchers — always needed since snapshot isolation is always active.
-	excludeCfg, err := exclude.LoadExcludeConfig(ws, excludePatterns, logger)
-	if err != nil {
-		return fmt.Errorf("loading exclude config: %w", err)
-	}
-	snapshotMatcher := exclude.NewMatcherFromConfig(excludeCfg)
+	// Build exclude matchers (snapshot mode only; direct mode has no diff).
+	var snapshotMatcher, diffMatcher snapshot.Matcher
+	if !directMode {
+		excludeCfg, excludeErr := exclude.LoadExcludeConfig(ws, excludePatterns, logger)
+		if excludeErr != nil {
+			return fmt.Errorf("loading exclude config: %w", excludeErr)
+		}
+		snapshotMatcher = exclude.NewMatcherFromConfig(excludeCfg)
 
-	gitignorePatterns, err := exclude.LoadGitignorePatterns(ws, logger)
-	if err != nil {
-		logger.Warn("failed to load .gitignore patterns", "error", err)
+		gitignorePatterns, gitignoreErr := exclude.LoadGitignorePatterns(ws, logger)
+		if gitignoreErr != nil {
+			logger.Warn("failed to load .gitignore patterns", "error", gitignoreErr)
+		}
+		diffMatcher = exclude.NewDiffMatcher(excludeCfg, gitignorePatterns)
 	}
-	diffMatcher := exclude.NewDiffMatcher(excludeCfg, gitignorePatterns)
 
 	// Validate and convert config-file egress hosts.
 	configEgressHosts, egressErr := domainconfig.ToEgressHosts(cfg.Network.AllowHosts)
@@ -785,22 +854,29 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Wire git identity provider (unconditional — used for both review and no-review modes).
 	deps.GitIdentityProvider = infragit.NewHostIdentityProvider("")
 
-	// Wire snapshot isolation dependencies (always active).
-	deps.WorkspaceCloner = infraws.NewFSWorkspaceCloner(
-		infraws.NewPlatformCloner(), snapDir, logger,
-	)
-	if interactiveReview {
-		deps.Reviewer = review.NewInteractiveReviewer(os.Stdin, os.Stdout)
-	} else {
-		deps.Reviewer = review.NewAutoAcceptReviewer(logger, os.Stderr)
-	}
-	deps.Flusher = review.NewFSFlusher()
-	deps.Differ = diff.NewFSDiffer()
+	// Wire snapshot isolation dependencies only when snapshot mode is active.
+	// In direct mode we leave WorkspaceCloner / Reviewer / Flusher / Differ
+	// nil; SandboxRunner already guards every call site against nil deps,
+	// and the snapshot post-processors (git config sanitizer, worktree
+	// reconstruction) are deliberately skipped; they operate on the
+	// snapshot directory that does not exist in direct mode.
+	if !directMode {
+		deps.WorkspaceCloner = infraws.NewFSWorkspaceCloner(
+			infraws.NewPlatformCloner(), snapDir, logger,
+		)
+		if interactiveReview {
+			deps.Reviewer = review.NewInteractiveReviewer(os.Stdin, os.Stdout)
+		} else {
+			deps.Reviewer = review.NewAutoAcceptReviewer(logger, os.Stderr)
+		}
+		deps.Flusher = review.NewFSFlusher()
+		deps.Differ = diff.NewFSDiffer()
 
-	// Wire snapshot post-processors (worktree reconstruction, then git config sanitizer).
-	deps.SnapshotPostProcessors = []workspace.SnapshotPostProcessor{
-		infragit.NewWorktreeProcessor(logger),
-		infragit.NewConfigSanitizer(logger),
+		// Wire snapshot post-processors (worktree reconstruction, then git config sanitizer).
+		deps.SnapshotPostProcessors = []workspace.SnapshotPostProcessor{
+			infragit.NewWorktreeProcessor(logger),
+			infragit.NewConfigSanitizer(logger),
+		}
 	}
 
 	// Validate and parse egress flags.
@@ -875,7 +951,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		EnvForwardExtra: flags.envForward,
 		PullPolicy:      flags.pull,
 		Snapshot: sandbox.SnapshotOpts{
-			Enabled:         true,
+			Enabled:         !directMode,
 			SnapshotMatcher: snapshotMatcher,
 			DiffMatcher:     diffMatcher,
 		},
@@ -1039,6 +1115,23 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 	// Review.Enabled — always ignored for security, warn if set.
 	if localCfg.Review.Enabled != nil {
 		warnings = append(warnings, "review.enabled (interactive review) is ignored for security — use --review or global config")
+	}
+
+	// Workspace.Mode: tighten-only. Local can only force snapshot,
+	// never widen to direct. Surface both intents for visibility.
+	if localCfg.Workspace.Mode != "" {
+		mode := sanitizeValue(localCfg.Workspace.Mode)
+		switch localCfg.Workspace.Mode {
+		case domainconfig.WorkspaceModeDirect:
+			warnings = append(warnings,
+				fmt.Sprintf("workspace.mode %q is ignored: direct mode cannot be enabled from workspace config, only globally or via --workspace-mode", mode))
+		case domainconfig.WorkspaceModeSnapshot:
+			warnings = append(warnings,
+				fmt.Sprintf("forces workspace.mode: %s (overrides global if direct)", mode))
+		default:
+			warnings = append(warnings,
+				fmt.Sprintf("workspace.mode %q is not recognized (treated as snapshot)", mode))
+		}
 	}
 
 	// Auth.SaveCredentials — always ignored for security, warn if set.
@@ -1226,6 +1319,55 @@ func sanitizeAll(ss []string) []string {
 		out[i] = sanitizeValue(s)
 	}
 	return out
+}
+
+// ensureDirectModeAck enforces the first-run acknowledgement for
+// --workspace-mode=direct. The first invocation must pass --yes; once the
+// acknowledgement is persisted under $XDG_STATE_HOME/broodbox, subsequent
+// direct-mode runs proceed without the flag.
+//
+// Prompting interactively is deliberately avoided: the banner prints right
+// before the VM boots and stealing stdin for a y/n prompt at that moment
+// would be worse UX than requiring the explicit flag once.
+func ensureDirectModeAck(yes bool, logger *slog.Logger) error {
+	stateBase := xdg.StateHome
+	if stateBase == "" {
+		// No state home (rare: misconfigured XDG). Require --yes every run
+		// rather than failing closed (we can't persist ack anywhere).
+		if !yes {
+			return errors.New(
+				"--workspace-mode=direct requires --yes to confirm (XDG_STATE_HOME is unset so acknowledgement cannot be persisted)")
+		}
+		return nil
+	}
+
+	ackDir := filepath.Join(stateBase, "broodbox")
+	ackPath := filepath.Join(ackDir, "direct-mode-ack")
+
+	if _, err := os.Stat(ackPath); err == nil {
+		// Already acknowledged on a previous run.
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		logger.Warn("failed to check direct-mode ack sentinel, requiring --yes", "error", err)
+		if !yes {
+			return errors.New("--workspace-mode=direct requires --yes to confirm")
+		}
+	}
+
+	if !yes {
+		return errors.New(
+			"--workspace-mode=direct disables snapshot isolation, review, and git config sanitization. " +
+				"Pass --yes to confirm on this first run; subsequent runs will not require it")
+	}
+
+	if err := os.MkdirAll(ackDir, 0o700); err != nil {
+		logger.Warn("failed to create ack directory, continuing without persisting", "error", err)
+		return nil
+	}
+	if err := os.WriteFile(ackPath, []byte("direct-mode acknowledged\n"), 0o600); err != nil {
+		logger.Warn("failed to write direct-mode ack sentinel, continuing without persisting", "error", err)
+	}
+	return nil
 }
 
 // credentialSeederForAgent returns a Seeder for the given agent,

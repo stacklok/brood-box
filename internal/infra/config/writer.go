@@ -36,9 +36,19 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   # "locked" allows only the agent's LLM provider.
 #   egress_profile: ""
 
-# Workspace snapshot isolation and review behavior.
-# Snapshot isolation is always active. Use review.enabled or --review
-# to interactively approve or reject each changed file.
+# Workspace isolation mode.
+# "snapshot" (default) exposes the workspace via a copy-on-write snapshot;
+#   the agent never touches your real files until the flush step.
+# "direct" mounts the workspace read-write inside the VM with no snapshot,
+#   no review, no undo, and git credential sanitization is skipped.
+#   Equivalent to --workspace-mode=direct on the CLI. Per-workspace
+#   .broodbox.yaml CANNOT set "direct" (only the operator can).
+# workspace:
+#   mode: "snapshot"
+
+# Workspace snapshot review behavior. Only applies in snapshot mode.
+# Use review.enabled or --review to interactively approve or reject
+# each changed file.
 # review:
 #   # Enable interactive per-file review of workspace changes.
 #   # NOTE: This setting is ignored in per-workspace .broodbox.yaml
