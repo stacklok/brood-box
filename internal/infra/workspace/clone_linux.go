@@ -43,11 +43,16 @@ func (c *linuxCloner) tryFiclone(src, dst string) error {
 		return err
 	}
 
-	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, srcInfo.Mode())
+	// Open writable and change permissions after clone to handle read-only src.
+	dstFile, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
 	defer func() { _ = dstFile.Close() }()
 
-	return unix.IoctlFileClone(int(dstFile.Fd()), int(srcFile.Fd()))
+	if err := unix.IoctlFileClone(int(dstFile.Fd()), int(srcFile.Fd())); err != nil {
+		return err
+	}
+
+	return os.Chmod(dst, srcInfo.Mode().Perm())
 }
