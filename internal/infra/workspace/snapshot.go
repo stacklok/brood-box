@@ -148,11 +148,11 @@ func (c *FSWorkspaceCloner) CreateSnapshot(ctx context.Context, workspacePath st
 	// Always wait for workers to finish before cleanup runs, even if walk failed.
 	waitErr := g.Wait()
 
-	if err != nil {
-		return nil, fmt.Errorf("walking workspace: %w", err)
-	}
 	if waitErr != nil {
 		return nil, fmt.Errorf("cloning files: %w", waitErr)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("walking workspace: %w", err)
 	}
 
 	// Write sentinel file with our PID to identify this as an active snapshot.
