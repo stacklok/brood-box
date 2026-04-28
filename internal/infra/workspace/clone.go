@@ -37,7 +37,8 @@ func copyFile(src, dst string) error {
 	// Strip setuid/setgid/sticky — only preserve rwx permissions.
 	mode := info.Mode().Perm()
 
-	df, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	// Open writable and change permissions after copy to handle read-only src.
+	df, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return fmt.Errorf("creating destination: %w", err)
 	}
@@ -48,7 +49,11 @@ func copyFile(src, dst string) error {
 	}
 
 	// Explicitly close and return any error (e.g., NFS write-back failure).
-	return df.Close()
+	if err := df.Close(); err != nil {
+		return err
+	}
+
+	return os.Chmod(dst, mode)
 }
 
 // ValidateInBounds verifies that targetPath (after resolution) is within
