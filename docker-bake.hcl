@@ -6,7 +6,7 @@ variable "REGISTRY" {
 }
 
 group "default" {
-  targets = ["base", "claude-code", "codex", "opencode", "hermes"]
+  targets = ["base", "claude-code", "codex", "opencode", "hermes", "gemini"]
 }
 
 target "base" {
@@ -65,6 +65,20 @@ target "hermes" {
   tags       = ["${REGISTRY}/hermes:latest"]
   cache-from = ["type=gha,scope=hermes"]
   cache-to   = ["type=gha,mode=max,scope=hermes"]
+  args = {
+    BASE_IMAGE = "brood-box-base"
+  }
+  contexts = {
+    "brood-box-base" = "target:base"
+  }
+}
+
+target "gemini" {
+  context    = "images/gemini/"
+  platforms  = ["linux/amd64", "linux/arm64"]
+  tags       = ["${REGISTRY}/gemini:latest"]
+  cache-from = ["type=gha,scope=gemini"]
+  cache-to   = ["type=gha,mode=max,scope=gemini"]
   args = {
     BASE_IMAGE = "brood-box-base"
   }

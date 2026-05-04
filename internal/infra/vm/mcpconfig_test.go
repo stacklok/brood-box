@@ -72,6 +72,11 @@ func TestInjectMCPConfig_Dispatch(t *testing.T) {
 			format:   agent.MCPConfigFormatHermes,
 			wantFile: "home/sandbox/.hermes/config.yaml",
 		},
+		{
+			name:     "gemini writes ~/.gemini/settings.json",
+			format:   agent.MCPConfigFormatGemini,
+			wantFile: "home/sandbox/.gemini/settings.json",
+		},
 	}
 
 	for _, tt := range tests {
@@ -389,6 +394,11 @@ func TestMCPConfigFilePermissions(t *testing.T) {
 			name:   "hermes",
 			inject: func(root string) error { return injectHermesMCP(root, "127.0.0.1", 4483, chown) },
 			path:   "home/sandbox/.hermes/config.yaml",
+		},
+		{
+			name:   "gemini",
+			inject: func(root string) error { return injectGeminiMCP(root, "127.0.0.1", 4483, chown) },
+			path:   "home/sandbox/.gemini/settings.json",
 		},
 	}
 

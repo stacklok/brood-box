@@ -116,6 +116,7 @@ The workflow:
 bbox claude-code
 bbox codex
 bbox opencode
+bbox gemini
 
 # Override resources
 bbox claude-code --cpus 4 --memory 4096
@@ -281,6 +282,8 @@ bbox claude-code --allow-host "my-registry.example.com:443"
 | Claude Code | `bbox claude-code` | `ghcr.io/stacklok/brood-box/claude-code` | 2 vCPUs, 4 GiB RAM |
 | Codex | `bbox codex` | `ghcr.io/stacklok/brood-box/codex` | 2 vCPUs, 4 GiB RAM |
 | OpenCode | `bbox opencode` | `ghcr.io/stacklok/brood-box/opencode` | 2 vCPUs, 4 GiB RAM |
+| Hermes | `bbox hermes` | `ghcr.io/stacklok/brood-box/hermes` | 2 vCPUs, 4 GiB RAM |
+| Gemini CLI | `bbox gemini` | `ghcr.io/stacklok/brood-box/gemini` | 2 vCPUs, 4 GiB RAM |
 
 You can also define custom agents in your config:
 

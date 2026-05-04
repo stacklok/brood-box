@@ -39,6 +39,7 @@ ls -la /dev/kvm
 | `claude-code` | `ghcr.io/stacklok/brood-box/claude-code:latest` | `claude` | `ANTHROPIC_API_KEY`, `CLAUDE_*` |
 | `codex` | `ghcr.io/stacklok/brood-box/codex:latest` | `codex` | `OPENAI_API_KEY`, `CODEX_*` |
 | `opencode` | `ghcr.io/stacklok/brood-box/opencode:latest` | `opencode` | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `OPENROUTER_API_KEY`, `OPENCODE_*` |
+| `gemini` | `ghcr.io/stacklok/brood-box/gemini:latest` | `gemini` | `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CLOUD_PROJECT`, `GOOGLE_CLOUD_LOCATION`, `GOOGLE_GENAI_USE_VERTEXAI`, `GOOGLE_APPLICATION_CREDENTIALS`, `GEMINI_*` |
 
 All agents default to the `permissive` egress profile.
 
@@ -553,6 +554,13 @@ of what gets injected.
 - `AGENTS.md` — Instructions (+ Claude Code `CLAUDE.md` as fallback)
 - `agents/`, `skills/`, `commands/`, `tools/`, `plugins/`, `themes/` — Directories
 
+**Gemini CLI** (`~/.gemini/`):
+- `settings.json` — Settings (JSON; filtered to host-portable categories
+  only — `mcpServers`, `tools`, `hooks`, `security`, `advanced`, `telemetry`,
+  and `policyPaths` are intentionally **not** copied)
+- `GEMINI.md` — Instructions (+ Claude Code `CLAUDE.md` as `~/.gemini/CLAUDE.md` fallback)
+- `agents/`, `skills/`, `commands/` — Directories (+ `~/.agents/skills/` fallback)
+
 ### Security
 
 - **Allowlist filtering**: Only explicitly listed config keys are copied.
@@ -622,6 +630,7 @@ This builds the base image first, then all three agent images in parallel:
 | `ghcr.io/stacklok/brood-box/claude-code:latest` | Base + Claude Code binary |
 | `ghcr.io/stacklok/brood-box/codex:latest` | Base + Codex binary |
 | `ghcr.io/stacklok/brood-box/opencode:latest` | Base + OpenCode binary |
+| `ghcr.io/stacklok/brood-box/gemini:latest` | Base + Gemini CLI (`@google/gemini-cli`) |
 
 ### Build Individual Images
 
@@ -630,6 +639,7 @@ task image-base          # Base image only
 task image-claude-code   # Claude Code (builds base if needed)
 task image-codex         # Codex (builds base if needed)
 task image-opencode      # OpenCode (builds base if needed)
+task image-gemini        # Gemini CLI (builds base if needed)
 ```
 
 ### Push to GHCR

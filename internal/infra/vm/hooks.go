@@ -40,6 +40,8 @@ func InjectMCPConfig(format domainagent.MCPConfigFormat, gatewayIP string, port 
 			return injectOpenCodeMCP(rootfsPath, gatewayIP, port, chown)
 		case domainagent.MCPConfigFormatHermes:
 			return injectHermesMCP(rootfsPath, gatewayIP, port, chown)
+		case domainagent.MCPConfigFormatGemini:
+			return injectGeminiMCP(rootfsPath, gatewayIP, port, chown)
 		default:
 			return nil
 		}

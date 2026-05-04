@@ -268,9 +268,15 @@ tasks:
     cmds:
       - "{{.CONTAINER_ENGINE}} build -t {{.IMAGE_REGISTRY}}/hermes:latest images/hermes/"
 
+  image-gemini:
+    desc: Build gemini guest image
+    deps: [image-base]
+    cmds:
+      - "{{.CONTAINER_ENGINE}} build -t {{.IMAGE_REGISTRY}}/gemini:latest images/gemini/"
+
   image-all:
     desc: Build all guest images
-    deps: [image-claude-code, image-codex, image-opencode, image-hermes]
+    deps: [image-claude-code, image-codex, image-opencode, image-hermes, image-gemini]
 
   image-push:
     desc: Push all images to GHCR
@@ -281,3 +287,4 @@ tasks:
       - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/codex:latest"
       - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/opencode:latest"
       - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/hermes:latest"
+      - "{{.CONTAINER_ENGINE}} push {{.IMAGE_REGISTRY}}/gemini:latest"

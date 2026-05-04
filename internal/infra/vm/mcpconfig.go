@@ -181,6 +181,28 @@ func injectHermesMCP(rootfsPath, gatewayIP string, port uint16, chown ChownFunc)
 	}, chown)
 }
 
+// --- Gemini CLI ---
+// Ref: https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md
+// User config lives at ~/.gemini/settings.json (JSON, nested-categories
+// format from v0.3.0+). MCP servers go under the top-level "mcpServers"
+// key. We use httpUrl (HTTP streaming) since the vmcp proxy speaks
+// streamable HTTP at /mcp; "url" would be SSE.
+
+// injectGeminiMCP merges an MCP server entry into ~/.gemini/settings.json,
+// preserving any pre-existing keys.
+func injectGeminiMCP(rootfsPath, gatewayIP string, port uint16, chown ChownFunc) error {
+	geminiDir := filepath.Join(rootfsPath, sandboxHome, ".gemini")
+	if err := mkdirAndChown(geminiDir, chown); err != nil {
+		return fmt.Errorf("creating ~/.gemini dir: %w", err)
+	}
+
+	return mergeJSONMapEntries(geminiDir, "settings.json", "mcpServers", map[string]any{
+		"sandbox-tools": map[string]any{
+			"httpUrl": fmt.Sprintf("http://%s:%d/mcp", gatewayIP, port),
+		},
+	}, chown)
+}
+
 // --- helpers ---
 
 const (

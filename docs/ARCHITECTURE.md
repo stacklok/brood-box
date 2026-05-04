@@ -123,8 +123,8 @@ Concrete implementations of domain interfaces and system integration.
   `$XDG_CONFIG_HOME/broodbox/config.yaml` with graceful fallback
   when the file doesn't exist.
 - **`agent/registry.go`** -- In-memory `Registry` pre-loaded with
-  built-in agents (claude-code, codex, opencode). Supports adding
-  custom agents from config.
+  built-in agents (claude-code, codex, opencode, hermes, gemini).
+  Supports adding custom agents from config.
 - **`exclude/`** -- Two-tier gitignore-compatible pattern matching.
   Security patterns are non-overridable; performance patterns can be
   negated in `.broodboxignore`.
@@ -270,7 +270,7 @@ bbox claude-code
    SSH session:
      source /etc/sandbox-env
      cd /workspace
-     exec claude   (or codex, opencode, etc.)
+     exec claude   (or codex, opencode, hermes, gemini, etc.)
         │
         ▼
    Agent exits → SSH session ends → VM stopped

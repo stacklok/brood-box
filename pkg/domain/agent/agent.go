@@ -53,6 +53,9 @@ const (
 	// MCPConfigFormatHermes injects a Hermes Agent MCP config file.
 	MCPConfigFormatHermes MCPConfigFormat = "hermes"
 
+	// MCPConfigFormatGemini injects a Gemini CLI MCP config file.
+	MCPConfigFormatGemini MCPConfigFormat = "gemini"
+
 	// MCPConfigFormatNone means no MCP config injection.
 	MCPConfigFormatNone MCPConfigFormat = "none"
 )

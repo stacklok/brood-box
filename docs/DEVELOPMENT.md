@@ -52,6 +52,7 @@ task verify
 | `task image-claude-code` | Build claude-code guest image |
 | `task image-codex` | Build codex guest image |
 | `task image-opencode` | Build opencode guest image |
+| `task image-gemini` | Build gemini guest image |
 | `task image-all` | Build all guest images |
 | `task image-push` | Push all images to GHCR |
 
