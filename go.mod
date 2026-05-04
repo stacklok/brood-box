@@ -16,7 +16,7 @@ require (
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
-	github.com/stacklok/go-microvm v0.0.32
+	github.com/stacklok/go-microvm v0.0.33
 	github.com/stacklok/toolhive v0.24.0
 	github.com/stacklok/toolhive-core v0.0.16
 	github.com/stretchr/testify v1.11.1
@@ -146,7 +146,7 @@ require (
 	github.com/insomniacslk/dhcp v0.0.0-20260220084031-5adc3eb26f91 // indirect
 	github.com/jpillora/backoff v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
-	github.com/klauspost/compress v1.18.5 // indirect
+	github.com/klauspost/compress v1.18.6 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
 	github.com/lestrrat-go/httpcc v1.0.1 // indirect
 	github.com/lestrrat-go/httprc/v3 v3.0.5 // indirect
