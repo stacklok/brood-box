@@ -175,8 +175,8 @@ func builtinAgents() map[string]domainagent.Agent {
 					Format: "jsonc", Filter: &settings.FieldFilter{
 						// NOTE: "mcp" is excluded — the VM cannot reach host MCP servers.
 						// Only the toolhive-proxied sandbox-tools should be present.
-						AllowKeys: []string{"providers", "models", "agent", "tools", "plugin", "theme", "command", "instructions", "formatter", "shell", "permission"},
-						DenySubKeys: map[string][]string{"providers": {
+						AllowKeys: []string{"provider", "models", "agent", "tools", "plugin", "theme", "command", "instructions", "formatter", "shell", "permission"},
+						DenySubKeys: map[string][]string{"provider": {
 							"*.api_key", "*.apiKey", "*.secret", "*.token",
 							"*.password", "*.credentials", "*.accessToken",
 							"*.access_token", "*.client_secret",
