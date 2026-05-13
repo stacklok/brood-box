@@ -111,6 +111,15 @@ func (c *FSWorkspaceCloner) CreateSnapshot(ctx context.Context, workspacePath st
 			return nil
 		}
 
+		// Skip the snapshot cache directory to prevent recursive self-copy
+		// when the snapshot base dir falls within the workspace tree.
+		if path == c.snapshotBaseDir || strings.HasPrefix(path, c.snapshotBaseDir+string(os.PathSeparator)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+
 		destPath := filepath.Join(tmpDir, relPath)
 
 		// Handle symlinks first (metadata-only, fast — stays synchronous).
