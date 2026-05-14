@@ -53,7 +53,7 @@ type FSWorkspaceCloner struct {
 func NewFSWorkspaceCloner(cloner FileCloner, snapshotBaseDir string, logger *slog.Logger) *FSWorkspaceCloner {
 	return &FSWorkspaceCloner{
 		cloner:          cloner,
-		snapshotBaseDir: snapshotBaseDir,
+		snapshotBaseDir: filepath.Clean(snapshotBaseDir),
 		logger:          logger,
 	}
 }
@@ -108,6 +108,15 @@ func (c *FSWorkspaceCloner) CreateSnapshot(ctx context.Context, workspacePath st
 
 		// Skip the root directory itself.
 		if relPath == "." {
+			return nil
+		}
+
+		// Skip the snapshot cache directory to prevent recursive self-copy
+		// when the snapshot base dir falls within the workspace tree.
+		if path == c.snapshotBaseDir || strings.HasPrefix(path, c.snapshotBaseDir+string(os.PathSeparator)) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 

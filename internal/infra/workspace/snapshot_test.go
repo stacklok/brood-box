@@ -296,6 +296,46 @@ func TestCleanupStaleSnapshots_NonExistentDir(t *testing.T) {
 	CleanupStaleSnapshots(filepath.Join(t.TempDir(), "does-not-exist"), logger)
 }
 
+func TestCreateSnapshot_SelfRecursionPrevention(t *testing.T) {
+	t.Parallel()
+
+	// Simulate the bug scenario: snapshot base dir lives INSIDE the workspace.
+	// When the workspace is the home directory (e.g. CWD=~/), the XDG cache
+	// dir ~/.cache/broodbox/snapshots/ falls within the workspace tree.
+	workspaceDir := t.TempDir()
+	snapshotBaseDir := filepath.Join(workspaceDir, ".cache", "broodbox", "snapshots")
+
+	// Create files in the workspace (including under the snapshot base dir
+	// to simulate prior cache content, e.g. firmware downloads).
+	require.NoError(t, os.WriteFile(filepath.Join(workspaceDir, "main.go"), []byte("package main"), 0o644))
+	require.NoError(t, os.MkdirAll(filepath.Join(workspaceDir, "src"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(workspaceDir, "src", "lib.go"), []byte("package src"), 0o644))
+
+	// Pre-populate a file inside the snapshot cache (simulates firmware downloads).
+	require.NoError(t, os.MkdirAll(filepath.Join(snapshotBaseDir, "firmware", "v1.0"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotBaseDir, "firmware", "v1.0", "libkrunfw.so"), []byte("firmware"), 0o644))
+
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
+	cloner := NewFSWorkspaceCloner(&fallbackCloner{}, snapshotBaseDir, logger)
+	matcher := &testMatcher{excluded: map[string]bool{}}
+
+	snap, err := cloner.CreateSnapshot(context.Background(), workspaceDir, matcher)
+	require.NoError(t, err)
+	defer func() { _ = snap.Cleanup() }()
+
+	// Regular files should be in the snapshot.
+	data, err := os.ReadFile(filepath.Join(snap.SnapshotPath, "main.go"))
+	require.NoError(t, err)
+	assert.Equal(t, "package main", string(data))
+
+	// The snapshot cache directory tree should NOT be inside the snapshot.
+	// (Parent dirs .cache/ and .cache/broodbox/ are created as empty stubs
+	// because the walker must enter them before reaching snapshots/ where
+	// the skip fires — that's harmless and doesn't cause recursion.)
+	_, err = os.Stat(filepath.Join(snap.SnapshotPath, ".cache", "broodbox", "snapshots"))
+	assert.True(t, os.IsNotExist(err), "snapshot cache directory should not be copied into the snapshot")
+}
+
 func TestPlatformCloner(t *testing.T) {
 	t.Parallel()
 
