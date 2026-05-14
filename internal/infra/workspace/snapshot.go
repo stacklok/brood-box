@@ -53,7 +53,7 @@ type FSWorkspaceCloner struct {
 func NewFSWorkspaceCloner(cloner FileCloner, snapshotBaseDir string, logger *slog.Logger) *FSWorkspaceCloner {
 	return &FSWorkspaceCloner{
 		cloner:          cloner,
-		snapshotBaseDir: snapshotBaseDir,
+		snapshotBaseDir: filepath.Clean(snapshotBaseDir),
 		logger:          logger,
 	}
 }
