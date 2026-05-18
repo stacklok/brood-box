@@ -88,6 +88,17 @@ type VMConfig struct {
 	// Valid values: "always", "if-not-present", "never".
 	// Empty defaults to "if-not-present".
 	PullPolicy string
+
+	// ExtraPorts are additional host->guest TCP forwards in addition to SSH.
+	// Host side always binds 127.0.0.1 (enforced by the runtime).
+	ExtraPorts []PortForward
+}
+
+// PortForward maps a host TCP port to a guest TCP port.
+// Host side always binds 127.0.0.1.
+type PortForward struct {
+	Host  uint16
+	Guest uint16
 }
 
 // HostService describes an HTTP service exposed from host to guest.
