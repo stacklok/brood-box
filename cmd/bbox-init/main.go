@@ -77,7 +77,8 @@ func main() {
 		return
 	}
 
-	// Make /home/sandbox writable. On certain host kernels (e.g. openSUSE
+	// Make /home/sandbox writable and reconcile ownership of host-injected files.
+	// On certain host kernels (e.g. openSUSE
 	// MicroOS / Tumbleweed), the root virtiofs rejects writes even though
 	// the mount is nominally rw. A tmpfs on the home directory works
 	// around this so agents can create config files.
