@@ -78,6 +78,10 @@ func main() {
 	}
 
 	// Make /home/sandbox writable and reconcile ownership of host-injected files.
+	// On certain host kernels (e.g. openSUSE
+	// MicroOS / Tumbleweed), the root virtiofs rejects writes even though
+	// the mount is nominally rw. A tmpfs on the home directory works
+	// around this so agents can create config files.
 	if err := homefs.MakeWritable(logger, homefs.SandboxHome, homefs.SandboxUID, homefs.SandboxGID); err != nil {
 		logger.Warn("failed to make home writable, agents may not start",
 			"error", err)
