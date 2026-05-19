@@ -36,18 +36,15 @@ const (
 // MakeWritable ensures the sandbox user's home directory is both writable
 // and owned by the sandbox user. It mounts an overlayfs (with tmpfs upper)
 // when the underlying virtiofs rejects writes, falling back to a tmpfs +
-// copy approach on kernels without overlayfs. After the home is writable,
-// it recursively chowns the tree so host-injected files (settings,
-// credentials, skills) are readable by the sandbox user — host-side
-// rootfs hooks on macOS cannot chown to UID 1000, and go-microvm's
-// boot-time fixup short-circuits when /home/sandbox itself is already
-// correctly owned (the OCI image default). This must be called before
-// seccomp blocks mount(2).
+// copy approach on kernels without overlayfs. It then recursively chowns
+// the tree so host-injected files (settings, credentials, skills) are
+// readable by the sandbox user; macOS host-side rootfs hooks cannot chown
+// to UID 1000, so reconciliation must happen inside the guest. Must be
+// called before seccomp blocks mount(2).
 func MakeWritable(logger *slog.Logger, home string, uid, gid int) error {
 	// Reconcile ownership unconditionally on return so host-injected files
-	// are readable by the sandbox user even if the mount step fails (on a
-	// read-only FS, Lchown will EROFS and just log warnings — which is
-	// strictly more useful than skipping the chown silently).
+	// are readable by the sandbox user even if the mount step fails. On a
+	// read-only FS, Lchown returns EROFS and is logged as a warning.
 	defer chownRecursive(home, uid, gid, logger)
 
 	// Probe writability as the sandbox user (not root). We run as PID 1

@@ -107,12 +107,10 @@ func copyOwnership(src, dst string) {
 }
 
 // chownRecursive sets uid:gid on all entries under root. Walk errors and
-// chown errors are logged rather than aborting the walk: a failed chown
-// means the sandbox user cannot access that one path, but giving up on
-// the rest of the tree would silently hide errors that are otherwise
-// recoverable. Entries already owned by uid:gid are skipped to avoid
-// triggering overlayfs copy-up on every file when the home tree is
-// already correctly owned (the Linux common case).
+// chown errors are logged and the walk continues; a failed chown means
+// the sandbox user cannot access that one path. Entries already owned by
+// uid:gid are skipped to avoid triggering overlayfs copy-up on every file
+// when the home tree is already correctly owned (the Linux common case).
 func chownRecursive(root string, uid, gid int, logger *slog.Logger) {
 	_ = filepath.WalkDir(root, func(path string, _ fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
