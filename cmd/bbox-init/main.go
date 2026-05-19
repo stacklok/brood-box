@@ -77,10 +77,12 @@ func main() {
 		return
 	}
 
-	// Make /home/sandbox writable. On certain host kernels (e.g. openSUSE
-	// MicroOS / Tumbleweed), the root virtiofs rejects writes even though
-	// the mount is nominally rw. A tmpfs on the home directory works
-	// around this so agents can create config files.
+	// Make /home/sandbox writable and reconcile ownership of host-injected
+	// content. On certain host kernels (e.g. openSUSE MicroOS / Tumbleweed)
+	// the root virtiofs rejects writes even though the mount is nominally
+	// rw; a tmpfs on the home directory works around this. MakeWritable
+	// also chowns the tree to the sandbox user so files written by macOS
+	// host-side rootfs hooks (which cannot chown to UID 1000) are readable.
 	if err := homefs.MakeWritable(logger, homefs.SandboxHome, homefs.SandboxUID, homefs.SandboxGID); err != nil {
 		logger.Warn("failed to make home writable, agents may not start",
 			"error", err)

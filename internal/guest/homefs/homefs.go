@@ -33,14 +33,23 @@ const (
 	overlayWork  = "/tmp/.home-work"
 )
 
-// MakeWritable mounts an overlayfs on the sandbox home directory so that
-// writes go to a tmpfs-backed upper layer. The original virtiofs contents
-// remain visible as the lower layer. If overlayfs is not supported, a
-// tmpfs + copy fallback is used. This must be called before seccomp
-// blocks mount(2).
-//
-// If the home directory is already writable, this is a no-op.
+// MakeWritable ensures the sandbox user's home directory is both writable
+// and owned by the sandbox user. It mounts an overlayfs (with tmpfs upper)
+// when the underlying virtiofs rejects writes, falling back to a tmpfs +
+// copy approach on kernels without overlayfs. After the home is writable,
+// it recursively chowns the tree so host-injected files (settings,
+// credentials, skills) are readable by the sandbox user — host-side
+// rootfs hooks on macOS cannot chown to UID 1000, and go-microvm's
+// boot-time fixup short-circuits when /home/sandbox itself is already
+// correctly owned (the OCI image default). This must be called before
+// seccomp blocks mount(2).
 func MakeWritable(logger *slog.Logger, home string, uid, gid int) error {
+	// Reconcile ownership unconditionally on return so host-injected files
+	// are readable by the sandbox user even if the mount step fails (on a
+	// read-only FS, Lchown will EROFS and just log warnings — which is
+	// strictly more useful than skipping the chown silently).
+	defer chownRecursive(home, uid, gid, logger)
+
 	// Probe writability as the sandbox user (not root). We run as PID 1
 	// (root), so os.Create() would always succeed on a normal FS — we
 	// must test as the actual sandbox user to catch permission issues.
@@ -51,7 +60,12 @@ func MakeWritable(logger *slog.Logger, home string, uid, gid int) error {
 
 	logger.Info("home directory is read-only via virtiofs, mounting overlay",
 		"home", home)
+	return mountOverlayOrTmpfs(logger, home)
+}
 
+// mountOverlayOrTmpfs mounts an overlayfs with a tmpfs upper layer on home,
+// falling back to a plain tmpfs + copy when overlayfs is unavailable.
+func mountOverlayOrTmpfs(logger *slog.Logger, home string) error {
 	// Create upper and work directories on tmpfs.
 	for _, dir := range []string{overlayUpper, overlayWork} {
 		if err := os.MkdirAll(dir, 0o700); err != nil {
@@ -66,12 +80,7 @@ func MakeWritable(logger *slog.Logger, home string, uid, gid int) error {
 	if err := syscall.Mount("overlay", home, "overlay", 0, opts); err != nil {
 		logger.Warn("overlayfs mount failed, falling back to tmpfs copy",
 			"error", err)
-		return fallbackTmpfs(logger, home, uid, gid)
-	}
-
-	// Chown the overlay mount point so the sandbox user owns it.
-	if err := os.Chown(home, uid, gid); err != nil {
-		logger.Warn("chown overlay mount point failed", "error", err)
+		return fallbackTmpfs(logger, home)
 	}
 
 	logger.Info("overlay mounted on home directory", "home", home)
@@ -136,7 +145,7 @@ func probeWritableAs(dir string, uid, gid int) bool {
 // fallbackTmpfs is used when overlayfs is not available in the guest kernel.
 // It mounts a tmpfs directly on the home directory after copying existing
 // contents into a staging area.
-func fallbackTmpfs(logger *slog.Logger, home string, uid, gid int) error {
+func fallbackTmpfs(logger *slog.Logger, home string) error {
 	logger.Info("falling back to tmpfs + copy for writable home")
 
 	staging := "/tmp/.home-staging"
@@ -164,10 +173,8 @@ func fallbackTmpfs(logger *slog.Logger, home string, uid, gid int) error {
 		return fmt.Errorf("restoring home from staging: %w", err)
 	}
 
-	// Fix ownership.
-	chownRecursive(home, uid, gid, logger)
-
-	// Clean up staging.
+	// Clean up staging. Ownership of the tmpfs contents is reconciled by
+	// MakeWritable's recursive chown after this returns.
 	_ = os.RemoveAll(staging)
 
 	logger.Info("tmpfs mounted on home directory", "home", home)

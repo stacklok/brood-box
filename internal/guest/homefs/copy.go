@@ -106,13 +106,29 @@ func copyOwnership(src, dst string) {
 	_ = os.Lchown(dst, int(stat.Uid), int(stat.Gid))
 }
 
-// chownRecursive sets uid:gid on all entries under root. Failures are
-// logged rather than silently discarded because a failed chown means
-// the sandbox user cannot access its own SSH keys or config files.
+// chownRecursive sets uid:gid on all entries under root. Walk errors and
+// chown errors are logged rather than aborting the walk: a failed chown
+// means the sandbox user cannot access that one path, but giving up on
+// the rest of the tree would silently hide errors that are otherwise
+// recoverable. Entries already owned by uid:gid are skipped to avoid
+// triggering overlayfs copy-up on every file when the home tree is
+// already correctly owned (the Linux common case).
 func chownRecursive(root string, uid, gid int, logger *slog.Logger) {
-	_ = filepath.WalkDir(root, func(path string, _ fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(root, func(path string, _ fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			logger.Warn("walk error during chown, continuing",
+				"path", path, "error", walkErr)
+			return nil
+		}
+		info, err := os.Lstat(path)
 		if err != nil {
-			return err
+			logger.Warn("lstat failed during chown, continuing",
+				"path", path, "error", err)
+			return nil
+		}
+		stat, ok := info.Sys().(*syscall.Stat_t)
+		if ok && int(stat.Uid) == uid && int(stat.Gid) == gid {
+			return nil
 		}
 		if err := os.Lchown(path, uid, gid); err != nil {
 			logger.Warn("chown failed, sandbox user may lack access",
