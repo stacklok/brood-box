@@ -170,8 +170,7 @@ func fallbackTmpfs(logger *slog.Logger, home string) error {
 		return fmt.Errorf("restoring home from staging: %w", err)
 	}
 
-	// Clean up staging. Ownership of the tmpfs contents is reconciled by
-	// MakeWritable's recursive chown after this returns.
+	// Clean up staging.
 	_ = os.RemoveAll(staging)
 
 	logger.Info("tmpfs mounted on home directory", "home", home)
