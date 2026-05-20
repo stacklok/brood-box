@@ -484,6 +484,8 @@ github.com/mark3labs/mcp-go v0.49.0 h1:7Ssx4d7/T86qnWoJIdye7wEEvUzv39UIbnZb/FqUZ
 github.com/mark3labs/mcp-go v0.49.0/go.mod h1:BflTAZAzXlrTpiO44gmjMu89n2FO56rJ9m31fp4zd5k=
 github.com/mark3labs/mcp-go v0.53.0 h1:nzjUi/L448XxwrfmVjiZ03vWgYOWVBrJK0wkZH7fVWo=
 github.com/mark3labs/mcp-go v0.53.0/go.mod h1:Zg9cB2HdwdMMVgY0xtTzq3KvYIOJQDsaut+jWjwDaQY=
+github.com/mark3labs/mcp-go v0.54.0 h1:PZhQvd+5xrT43cUoiaKn/hDcvLUhcLc1twSEKYPTcTA=
+github.com/mark3labs/mcp-go v0.54.0/go.mod h1:+8WclSK1ZUweCP3hvktSji8n8ABG/95QaEkeVE/Uwas=
 github.com/mattn/go-colorable v0.1.1/go.mod h1:FuOcm+DKB9mbwrcAfNl7/TZVBZ6rcnceauSikq3lYCQ=
 github.com/mattn/go-colorable v0.1.6/go.mod h1:u6P/XSegPjTcexA+o6vUJrdnUu04hMope9wVRipJSqc=
 github.com/mattn/go-colorable v0.1.9/go.mod h1:u6P/XSegPjTcexA+o6vUJrdnUu04hMope9wVRipJSqc=
@@ -632,6 +634,8 @@ github.com/prometheus/procfs v0.20.1 h1:XwbrGOIplXW/AU3YhIhLODXMJYyC1isLFfYCsTEy
 github.com/prometheus/procfs v0.20.1/go.mod h1:o9EMBZGRyvDrSPH1RqdxhojkuXstoe4UlK79eF5TGGo=
 github.com/redis/go-redis/v9 v9.18.0 h1:pMkxYPkEbMPwRdenAzUNyFNrDgHx9U+DrBabWNfSRQs=
 github.com/redis/go-redis/v9 v9.18.0/go.mod h1:k3ufPphLU5YXwNTUcCRXGxUoF1fqxnhFQmscfkCoDA0=
+github.com/redis/go-redis/v9 v9.19.0 h1:XPVaaPSnG6RhYf7p+rmSa9zZfeVAnWsH5h3lxthOm/k=
+github.com/redis/go-redis/v9 v9.19.0/go.mod h1:v/M13XI1PVCDcm01VtPFOADfZtHf8YW3baQf57KlIkA=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec h1:W09IVJc94icq4NjY3clb7Lk8O1qJ8BdBEF8z0ibU0rE=
 github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec/go.mod h1:qqbHyh8v60DhA7CoWK5oRCqLrMHRGoxYCSS9EjAz6Eo=
 github.com/rivo/uniseg v0.4.7 h1:WUdvkW8uEhrYfLC4ZzdpI2ztxP1I582+49Oc5Mq64VQ=
@@ -694,12 +698,16 @@ github.com/stacklok/toolhive v0.24.0 h1:fHKPu+N+QhfD5UBTds8F9EErbwLxYwmvRCIQfC/g
 github.com/stacklok/toolhive v0.24.0/go.mod h1:Ul9EX0x/M9z9QGnWHCNK27bht9V/sjP1W6ZS6TY57uQ=
 github.com/stacklok/toolhive v0.27.2 h1:Y56y9VfMNMtSqy/l6iQU3mbUQ/PR+UAwgzeZZnjHQjs=
 github.com/stacklok/toolhive v0.27.2/go.mod h1:7884+hO1sNR7SWxzUS/XeGjtkpvl2aTPemSKYTJK5H8=
+github.com/stacklok/toolhive v0.28.0 h1:JpDaz/UnIeSMXCisvoFTehol32RLJ7ZQdHrmZR0Wmug=
+github.com/stacklok/toolhive v0.28.0/go.mod h1:7GJuKiueNrLiUljmeKGsfo6S7mDcvquIy3RpYQrD6xY=
 github.com/stacklok/toolhive-core v0.0.16 h1:Td/o/zrO3Pbr6tkx4r0k8Bqn9DySlwgah2vknE8tj5A=
 github.com/stacklok/toolhive-core v0.0.16/go.mod h1:iHp39rCHZxXzU5FmXKK9aoH48NE+K0ob+MtdTS9CvAk=
 github.com/stacklok/toolhive-core v0.0.17 h1:yGKXntWyw5ZO5GMxfSHi9doJhSXA8w5ORSXWveJ3OGc=
 github.com/stacklok/toolhive-core v0.0.17/go.mod h1:o/zVzleR/xNCNXdTwNx8A41hApu0GZsHZS42qcXYUr8=
 github.com/stacklok/toolhive-core v0.0.19 h1:tnHlxsssxWjLjYIsWngnNTUIEhkeOLcXnZLNq4oQg/g=
 github.com/stacklok/toolhive-core v0.0.19/go.mod h1:pIFIL73eaKwdTCBKBzYoiFXYixqXJYFbXt6q5lRrYD8=
+github.com/stacklok/toolhive-core v0.0.21 h1:UxCDSmhw0k4QP6gr0F1CLfPuI3bVHBu3VuHt/DLYH50=
+github.com/stacklok/toolhive-core v0.0.21/go.mod h1:59Fo8iGJEEGJB6i/N/4fiB2Z+7AhBbPrguiggtED5TU=
 github.com/stretchr/objx v0.1.0/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.1.1/go.mod h1:HFkY916IF+rwdDfMAkV7OtwuqBVzrE8GR6GFx+wExME=
 github.com/stretchr/objx v0.2.0/go.mod h1:qt09Ya8vawLte6SNmTgCsAVtYtaKzEcn8ATUoHMkEqE=
@@ -877,8 +885,12 @@ golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f h1:W3F4c+6OLc6H2lb//N1q4WpJk
 golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f/go.mod h1:J1xhfL/vlindoeF/aINzNzt2Bket5bjo9sdOYzOsU80=
 golang.org/x/exp/event v0.0.0-20260312153236-7ab1446f8b90 h1:VIKxsuSw/bPhvjnuIZPuMSWDEDvHGAmMytHXdtWuO68=
 golang.org/x/exp/event v0.0.0-20260312153236-7ab1446f8b90/go.mod h1:fkoWXYWD397AL2Y3xF7vvyrz6dhJ5rDRrKMZvfnrM3o=
+golang.org/x/exp/event v0.0.0-20260410095643-746e56fc9e2f h1:YHf3wxw5NqqQAc7dMuxCMInepnLP+u/jBVjet0qpYXw=
+golang.org/x/exp/event v0.0.0-20260410095643-746e56fc9e2f/go.mod h1:k42SSvLLwqm/AUsIHNoVjjzXtDkAkMs4ttVJfiwxIfk=
 golang.org/x/exp/jsonrpc2 v0.0.0-20260410095643-746e56fc9e2f h1:u1LeTNol3OqLaQNr9EKsmTz3y9cJ0O3nxvDR4JSV/+8=
 golang.org/x/exp/jsonrpc2 v0.0.0-20260410095643-746e56fc9e2f/go.mod h1:fA1ErkYRDYEBIaye2R4yrszC5HFVyLmGigxSQxH+NHs=
+golang.org/x/exp/jsonrpc2 v0.0.0-20260508232706-74f9aab9d74a h1:M/srLnnRhZyDcQZFIzJlM+ljIdP9dF5rBnoBRye2mYs=
+golang.org/x/exp/jsonrpc2 v0.0.0-20260508232706-74f9aab9d74a/go.mod h1:T8WG9RoOCLSSBGdia5R05Tcnfzy1ISOxcWjPC8Vqsm4=
 golang.org/x/lint v0.0.0-20190930215403-16217165b5de/go.mod h1:6SW0HCj/g11FgYtHlgUYUwCkIfeOF89ocIRzGO/8vkc=
 golang.org/x/lint v0.0.0-20200302205851-738671d3881b/go.mod h1:3xt1FjdF8hUf6vQPIChWIBhFzV8gjjsPE/fR3IyQdNY=
 golang.org/x/mod v0.0.0-20190513183733-4bf6d317e70e/go.mod h1:mXi4GBBbnImb6dmsKGUJ2LatrhH/nqhxcFungHvyanc=
