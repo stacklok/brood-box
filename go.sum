@@ -700,6 +700,8 @@ github.com/stacklok/toolhive v0.27.2 h1:Y56y9VfMNMtSqy/l6iQU3mbUQ/PR+UAwgzeZZnjH
 github.com/stacklok/toolhive v0.27.2/go.mod h1:7884+hO1sNR7SWxzUS/XeGjtkpvl2aTPemSKYTJK5H8=
 github.com/stacklok/toolhive v0.28.0 h1:JpDaz/UnIeSMXCisvoFTehol32RLJ7ZQdHrmZR0Wmug=
 github.com/stacklok/toolhive v0.28.0/go.mod h1:7GJuKiueNrLiUljmeKGsfo6S7mDcvquIy3RpYQrD6xY=
+github.com/stacklok/toolhive v0.28.1 h1:4OU+1M+P8MS69Wq7pmx2uGpIOGCO53sGzg+Aj6KFcqg=
+github.com/stacklok/toolhive v0.28.1/go.mod h1:8IM993ZJRT53wSWgjEhbGdUVYhNWXqdnm6fQjZZbnRI=
 github.com/stacklok/toolhive-core v0.0.16 h1:Td/o/zrO3Pbr6tkx4r0k8Bqn9DySlwgah2vknE8tj5A=
 github.com/stacklok/toolhive-core v0.0.16/go.mod h1:iHp39rCHZxXzU5FmXKK9aoH48NE+K0ob+MtdTS9CvAk=
 github.com/stacklok/toolhive-core v0.0.17 h1:yGKXntWyw5ZO5GMxfSHi9doJhSXA8w5ORSXWveJ3OGc=
