@@ -8,6 +8,7 @@ package config
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/bytesize"
@@ -69,6 +70,15 @@ func (c *Config) Validate() error {
 	if !IsValidWorkspaceMode(c.Workspace.Mode) {
 		return fmt.Errorf("workspace.mode %q: valid values are %v",
 			c.Workspace.Mode, ValidWorkspaceModes())
+	}
+	if c.MCP.SessionTTL != "" {
+		d, err := time.ParseDuration(c.MCP.SessionTTL)
+		if err != nil {
+			return fmt.Errorf("mcp.session_ttl %q: %w", c.MCP.SessionTTL, err)
+		}
+		if d < 0 {
+			return fmt.Errorf("mcp.session_ttl must be non-negative, got %s", d)
+		}
 	}
 	for name, override := range c.Agents {
 		if err := agent.ValidateEnvForwardPatterns(override.EnvForward); err != nil {
@@ -277,6 +287,36 @@ type MCPConfig struct {
 
 	// Authz configures authorization for the MCP proxy.
 	Authz *MCPAuthzConfig `yaml:"authz,omitempty"`
+
+	// SessionTTL is the idle-eviction timeout for MCP sessions on the host
+	// vMCP server, parsed by time.ParseDuration ("12h", "30m", "1h30m"). Empty
+	// uses DefaultMCPSessionTTL. Stored as a string (not time.Duration) so the
+	// YAML wire format is human-readable rather than nanosecond integers.
+	//
+	// NOTE: MCP.SessionTTL is intentionally NOT merged from workspace-local
+	// config — it is operational rather than a security/policy knob, so the
+	// global value (or --mcp-session-ttl) is authoritative.
+	SessionTTL string `yaml:"session_ttl,omitempty"`
+}
+
+// DefaultMCPSessionTTL is the default idle-eviction timeout for host vMCP
+// sessions when neither config nor flag overrides it. 12h covers a typical
+// workday including long breaks; the toolhive default of 30m is too short
+// for interactive agent use where the user steps away mid-session.
+const DefaultMCPSessionTTL = 12 * time.Hour
+
+// ResolvedSessionTTL parses MCP.SessionTTL and returns the effective duration,
+// falling back to DefaultMCPSessionTTL when empty. Validation runs at config
+// load time, so this assumes the value already parses cleanly.
+func (m MCPConfig) ResolvedSessionTTL() time.Duration {
+	if m.SessionTTL == "" {
+		return DefaultMCPSessionTTL
+	}
+	d, err := time.ParseDuration(m.SessionTTL)
+	if err != nil || d <= 0 {
+		return DefaultMCPSessionTTL
+	}
+	return d
 }
 
 // MCPFileConfig is the user-facing MCP configuration format.
@@ -657,6 +697,7 @@ func clampTmpSize(s bytesize.ByteSize) bytesize.ByteSize {
 //   - Review.ExcludePatterns: additive (global + local).
 //   - Defaults.EgressProfile: local can only tighten (not widen).
 //   - Network.AllowHosts: additive (global + local).
+//   - MCP.SessionTTL: local value is IGNORED (operational, not policy).
 //   - Agents map: local extends/overrides global per key.
 //
 // Returns global unchanged when local is nil.
@@ -753,6 +794,11 @@ func MergeConfigs(global, local *Config) *Config {
 	// MCP.Authz: local can only tighten (not widen). Same security pattern
 	// as egress profiles — a workspace config cannot escalate permissions.
 	result.MCP.Authz = MergeMCPAuthzConfig(global.MCP.Authz, local.MCP.Authz)
+
+	// MCP.SessionTTL: workspace-local value is IGNORED. Same handling as
+	// review.enabled — operational, not security/policy, so global is
+	// authoritative.
+	// (result.MCP.SessionTTL already carries the global value via *global copy.)
 
 	// Agents: local extends/overrides global per key.
 	// Security fields (EgressProfile, MCP.Authz) use tighten-only merge.

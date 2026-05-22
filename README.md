@@ -199,6 +199,7 @@ mcp:
   enabled: true
   group: "default"
   port: 4483
+  session_ttl: "12h"   # idle eviction timeout for host MCP sessions
 
 git:
   forward_token: true

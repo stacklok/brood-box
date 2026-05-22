@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
@@ -39,6 +40,7 @@ type VMCPProvider struct {
 	port        uint16
 	mcpConfig   *domainconfig.MCPFileConfig
 	authzConfig *domainconfig.MCPAuthzConfig
+	sessionTTL  time.Duration
 	server      *vmcpserver.Server
 	logger      *slog.Logger
 	logWriter   io.Writer
@@ -48,14 +50,18 @@ type VMCPProvider struct {
 // backends discovered in the given ToolHive group.
 // mcpConfig provides Cedar policies and aggregation settings (nil = no custom config).
 // authzConfig controls MCP authorization (nil = full-access, no restrictions).
+// sessionTTL is the idle-eviction timeout for host vMCP sessions; zero defers
+// to toolhive's built-in default (30m), which is typically too short — callers
+// should pass domainconfig.DefaultMCPSessionTTL or a configured value.
 // logWriter receives toolhive's zap logs (typically the bbox log file).
 // If nil, toolhive logs are discarded.
-func NewVMCPProvider(group string, port uint16, mcpConfig *domainconfig.MCPFileConfig, authzConfig *domainconfig.MCPAuthzConfig, logger *slog.Logger, logWriter io.Writer) *VMCPProvider {
+func NewVMCPProvider(group string, port uint16, mcpConfig *domainconfig.MCPFileConfig, authzConfig *domainconfig.MCPAuthzConfig, sessionTTL time.Duration, logger *slog.Logger, logWriter io.Writer) *VMCPProvider {
 	return &VMCPProvider{
 		group:       group,
 		port:        port,
 		mcpConfig:   mcpConfig,
 		authzConfig: authzConfig,
+		sessionTTL:  sessionTTL,
 		logger:      logger,
 		logWriter:   logWriter,
 	}
@@ -163,6 +169,7 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 			GroupRef:        p.group,
 			Port:            int(p.port),
 			EndpointPath:    "/mcp",
+			SessionTTL:      p.sessionTTL,
 			AuthMiddleware:  authMiddleware,
 			AuthzMiddleware: authzMiddleware,
 			AuthInfoHandler: authInfoHandler,
