@@ -90,6 +90,7 @@ func rootCmd() *cobra.Command {
 		mcpPort           uint16
 		mcpConfig         string
 		mcpAuthzProfile   string
+		mcpSessionTTL     time.Duration
 		noGitToken        bool
 		noGitSSHAgent     bool
 		noSaveCredentials bool
@@ -165,6 +166,7 @@ Example:
 				mcpPort:           mcpPort,
 				mcpConfig:         mcpConfig,
 				mcpAuthzProfile:   mcpAuthzProfile,
+				mcpSessionTTL:     mcpSessionTTL,
 				noGitToken:        noGitToken,
 				noGitSSHAgent:     noGitSSHAgent,
 				noSaveCredentials: noSaveCredentials,
@@ -204,6 +206,7 @@ Example:
 	cmd.Flags().Uint16Var(&mcpPort, "mcp-port", 4483, "Port for MCP proxy on VM gateway")
 	cmd.Flags().StringVar(&mcpConfig, "mcp-config", "", "Path to MCP config YAML (Cedar policies and aggregation settings)")
 	cmd.Flags().StringVar(&mcpAuthzProfile, "mcp-authz-profile", "", "MCP authorization profile: full-access, observe, safe-tools, custom (default: full-access)")
+	cmd.Flags().DurationVar(&mcpSessionTTL, "mcp-session-ttl", 0, "Idle timeout for host MCP sessions, e.g. 12h or 30m (0 = use config or default 12h)")
 	cmd.Flags().BoolVar(&noGitToken, "no-git-token", false, "Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM")
 	cmd.Flags().BoolVar(&noGitSSHAgent, "no-git-ssh-agent", false, "Disable SSH agent forwarding into the VM")
 	cmd.Flags().BoolVar(&noSaveCredentials, "no-save-credentials", false, "Disable saving agent credentials between sessions (enabled by default)")
@@ -363,6 +366,7 @@ type runFlags struct {
 	mcpPort           uint16
 	mcpConfig         string
 	mcpAuthzProfile   string
+	mcpSessionTTL     time.Duration
 	noGitToken        bool
 	noGitSSHAgent     bool
 	noSaveCredentials bool
@@ -782,6 +786,9 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		return fmt.Errorf("invalid --mcp-authz-profile %q: valid values are %v",
 			flags.mcpAuthzProfile, domainconfig.ValidMCPAuthzProfiles())
 	}
+	if flags.mcpSessionTTL < 0 {
+		return fmt.Errorf("--mcp-session-ttl must be non-negative, got %s", flags.mcpSessionTTL)
+	}
 
 	// Wire MCP proxy (enabled by default, --no-mcp to disable).
 	mcpEnabled := !flags.noMCP
@@ -835,7 +842,16 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			}
 		}
 
-		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpFileConfig, authzCfg, logger, logFile)
+		// Resolve session TTL: flag (non-zero) > config > default (12h).
+		sessionTTL := flags.mcpSessionTTL
+		if sessionTTL == 0 && cfg != nil {
+			sessionTTL = cfg.MCP.ResolvedSessionTTL()
+		}
+		if sessionTTL == 0 {
+			sessionTTL = domainconfig.DefaultMCPSessionTTL
+		}
+
+		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpFileConfig, authzCfg, sessionTTL, logger, logFile)
 		deps.MCPProvider = mcpProvider
 		defer func() { _ = mcpProvider.Close() }()
 		// Ensure sandbox config reflects MCP enabled state for the application layer.

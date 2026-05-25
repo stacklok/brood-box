@@ -74,6 +74,7 @@ bbox <agent-name> [flags] [-- <agent-args...>]
 | `--mcp-port` | `4483` | Port for MCP proxy on VM gateway |
 | `--mcp-config` | (none) | Path to MCP config YAML (Cedar policies and aggregation settings) |
 | `--mcp-authz-profile` | `full-access` | MCP authorization profile: `full-access`, `observe`, `safe-tools`, `custom` |
+| `--mcp-session-ttl` | `12h` | Idle timeout for host MCP sessions (e.g. `12h`, `30m`) |
 | `--no-git-token` | `false` | Disable forwarding GITHUB_TOKEN/GH_TOKEN into the VM |
 | `--no-git-ssh-agent` | `false` | Disable SSH agent forwarding into the VM |
 | `--no-settings` | `false` | Disable injecting host agent settings (rules, skills, etc.) into the VM |
@@ -160,6 +161,7 @@ mcp:
   enabled: true
   group: "default"
   port: 4483
+  session_ttl: "12h"        # Idle timeout for host MCP sessions (default: 12h)
   # Optional inline MCP config (Cedar policies and aggregation)
   # config:
   #   authz:

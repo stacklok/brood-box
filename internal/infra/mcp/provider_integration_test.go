@@ -51,12 +51,13 @@ func TestVMCPProvider_Services_Integration(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	provider := mcp.NewVMCPProvider(
-		"default",  // group
-		4483,       // port
-		nil,        // no custom MCP config
-		nil,        // full-access (no authz restrictions)
-		logger,     // logger
-		io.Discard, // log writer
+		"default",                   // group
+		4483,                        // port
+		nil,                         // no custom MCP config
+		nil,                         // full-access (no authz restrictions)
+		config.DefaultMCPSessionTTL, // session TTL
+		logger,                      // logger
+		io.Discard,                  // log writer
 	)
 
 	ctx := context.Background()
@@ -93,6 +94,7 @@ func TestVMCPProvider_Services_WithAuthzProfiles_Integration(t *testing.T) {
 				4483,
 				nil,
 				&config.MCPAuthzConfig{Profile: profile},
+				config.DefaultMCPSessionTTL,
 				logger,
 				io.Discard,
 			)
