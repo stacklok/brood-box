@@ -184,7 +184,7 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 		microvm.WithMemory(cfg.Memory.MiB()),
 		microvm.WithLogLevel(cfg.LogLevel),
 		microvm.WithTmpSize(cfg.TmpSize.MiB()),
-		microvm.WithPorts(microvm.PortForward{Host: sshPort, Guest: 22}),
+		microvm.WithPorts(buildPortForwards(sshPort, cfg.ExtraPorts)...),
 		microvm.WithRootFSHook(
 			hooks.InjectAuthorizedKeys(pubKey),
 			hooks.InjectFile("/etc/ssh/ssh_host_ecdsa_key", hostKeyPEM, 0o600),
@@ -462,4 +462,15 @@ func pickFreePort() (uint16, error) {
 		return 0, fmt.Errorf("closing ephemeral listener: %w", err)
 	}
 	return port, nil
+}
+
+// buildPortForwards returns the SSH forward followed by any extra forwards.
+// The SSH forward (host -> guest:22) is always first.
+func buildPortForwards(sshPort uint16, extra []domvm.PortForward) []microvm.PortForward {
+	out := make([]microvm.PortForward, 0, 1+len(extra))
+	out = append(out, microvm.PortForward{Host: sshPort, Guest: 22})
+	for _, pf := range extra {
+		out = append(out, microvm.PortForward{Host: pf.Host, Guest: pf.Guest})
+	}
+	return out
 }

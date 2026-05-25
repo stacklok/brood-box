@@ -60,6 +60,9 @@ type RunOpts struct {
 	// SSHPort is the host port for SSH (0 = auto-pick).
 	SSHPort uint16
 
+	// ExtraPorts are additional host->guest TCP forwards beyond SSH.
+	ExtraPorts []domvm.PortForward
+
 	// ImageOverride overrides the agent's OCI image reference.
 	ImageOverride string
 
@@ -530,6 +533,7 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		CPUs:             ag.DefaultCPUs,
 		Memory:           ag.DefaultMemory,
 		SSHPort:          opts.SSHPort,
+		ExtraPorts:       opts.ExtraPorts,
 		WorkspacePath:    workspacePath,
 		EnvVars:          envVars,
 		EgressPolicy:     egressPolicy,

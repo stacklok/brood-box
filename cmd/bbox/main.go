@@ -17,6 +17,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -54,6 +55,7 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/progress"
 	"github.com/stacklok/brood-box/pkg/domain/snapshot"
+	domvm "github.com/stacklok/brood-box/pkg/domain/vm"
 	"github.com/stacklok/brood-box/pkg/domain/workspace"
 	"github.com/stacklok/brood-box/pkg/sandbox"
 )
@@ -104,6 +106,7 @@ func rootCmd() *cobra.Command {
 		timings           bool
 		exec              string
 		envForward        []string
+		ports             []string
 	)
 
 	cmd := &cobra.Command{
@@ -180,6 +183,7 @@ Example:
 				exec:              exec,
 				commandArgs:       commandArgs,
 				envForward:        envForward,
+				ports:             ports,
 			})
 		},
 		SilenceUsage:  true,
@@ -191,6 +195,7 @@ Example:
 	cmd.Flags().StringVar(&tmpSize, "tmp-size", "", "Size of /tmp tmpfs inside the VM, e.g. 512m or 2g (empty = agent default)")
 	cmd.Flags().StringVar(&wsPath, "workspace", "", "Workspace directory to mount (default: current directory)")
 	cmd.Flags().Uint16Var(&sshPort, "ssh-port", 0, "Host SSH port (0 = auto-pick)")
+	cmd.Flags().StringSliceVar(&ports, "port", nil, "Forward an additional TCP port from guest to host as HOST:GUEST, bound to 127.0.0.1 (repeatable)")
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/broodbox/config.yaml)")
 	cmd.Flags().StringVar(&image, "image", "", "Override OCI image reference")
 	cmd.Flags().BoolVar(&debug, "debug", false, "Enable debug-level logging to file (default: info level)")
@@ -380,6 +385,7 @@ type runFlags struct {
 	exec              string
 	commandArgs       []string
 	envForward        []string
+	ports             []string
 }
 
 func run(parentCtx context.Context, agentName string, flags runFlags) error {
@@ -403,6 +409,11 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// match nothing (useless typo); reject here with a clear error.
 	if err := agent.ValidateEnvForwardPatterns(flags.envForward); err != nil {
 		return fmt.Errorf("invalid --env-forward: %w", err)
+	}
+
+	parsedPorts, portsErr := parsePortForwards(flags.ports)
+	if portsErr != nil {
+		return portsErr
 	}
 
 	// --no-image-cache + --pull=never is a contradiction: "never" requires the
@@ -954,6 +965,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		TmpSizeMiB:      tmpSizeMiB,
 		Workspace:       ws,
 		SSHPort:         flags.sshPort,
+		ExtraPorts:      parsedPorts,
 		ImageOverride:   flags.image,
 		EgressProfile:   flags.egressProfile,
 		AllowHosts:      parsedAllowHosts,
@@ -1444,6 +1456,36 @@ func imageCacheDir() (string, error) {
 // this notice, `git submodule add` would silently half-land: the entry
 // appears in `.gitmodules` on the host, but there is no populated
 // `.git/modules/<name>/` to back it.
+// parsePortForwards parses repeated --port HOST:GUEST values into PortForward
+// entries. Rejects malformed input, port 0, and duplicate host ports.
+func parsePortForwards(specs []string) ([]domvm.PortForward, error) {
+	if len(specs) == 0 {
+		return nil, nil
+	}
+	out := make([]domvm.PortForward, 0, len(specs))
+	seenHost := make(map[uint16]struct{}, len(specs))
+	for _, spec := range specs {
+		host, guest, ok := strings.Cut(spec, ":")
+		if !ok {
+			return nil, fmt.Errorf("--port %q: expected HOST:GUEST", spec)
+		}
+		hostPort, err := strconv.ParseUint(strings.TrimSpace(host), 10, 16)
+		if err != nil || hostPort == 0 {
+			return nil, fmt.Errorf("--port %q: host port must be 1-65535", spec)
+		}
+		guestPort, err := strconv.ParseUint(strings.TrimSpace(guest), 10, 16)
+		if err != nil || guestPort == 0 {
+			return nil, fmt.Errorf("--port %q: guest port must be 1-65535", spec)
+		}
+		if _, dup := seenHost[uint16(hostPort)]; dup {
+			return nil, fmt.Errorf("--port: host port %d used more than once", hostPort)
+		}
+		seenHost[uint16(hostPort)] = struct{}{}
+		out = append(out, domvm.PortForward{Host: uint16(hostPort), Guest: uint16(guestPort)})
+	}
+	return out, nil
+}
+
 func maybePrintSubmoduleHint(w io.Writer, accepted []snapshot.FileChange) {
 	for _, ch := range accepted {
 		if filepath.Base(ch.RelPath) == ".gitmodules" {
