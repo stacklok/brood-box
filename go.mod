@@ -18,7 +18,7 @@ require (
 	github.com/spf13/cobra v1.10.2
 	github.com/stacklok/go-microvm v0.0.34
 	github.com/stacklok/toolhive v0.28.3
-	github.com/stacklok/toolhive-core v0.0.21
+	github.com/stacklok/toolhive-core v0.0.22
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.43.0
 	go.opentelemetry.io/otel/exporters/stdout/stdouttrace v1.43.0
