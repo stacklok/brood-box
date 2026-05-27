@@ -19,6 +19,7 @@ RUN apk add --no-cache \
     sed \
     gawk \
     curl \
+    jq \
     openssh-client \
     make \
     gcc \
