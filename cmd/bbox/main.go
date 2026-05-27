@@ -48,6 +48,7 @@ import (
 	infraruntime "github.com/stacklok/brood-box/internal/infra/vm/runtimebin"
 	infraws "github.com/stacklok/brood-box/internal/infra/workspace"
 	"github.com/stacklok/brood-box/internal/version"
+	"github.com/stacklok/brood-box/pkg/clients"
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
@@ -239,10 +240,10 @@ func listCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List available agents",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			registry := infraagent.NewRegistry()
-			agents := registry.List()
-			for _, a := range agents {
-				fmt.Printf("%-15s %s\n", a.Name, a.Image)
+			registry := infraagent.NewRegistry(clients.Builtins(slog.Default())...)
+			entries := registry.List()
+			for _, e := range entries {
+				fmt.Printf("%-15s %s\n", e.Agent.Name, e.Agent.Image)
 			}
 			return nil
 		},
@@ -523,8 +524,9 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		infravm.CleanupStaleLogs(filepath.Join(home, ".config", "broodbox", "vms"), logger)
 	}
 
-	// Build registry with config-based custom agents.
-	registry := infraagent.NewRegistry()
+	// Build registry: start with built-in clients, then layer in any
+	// data-only custom agents declared in config.
+	registry := infraagent.NewRegistry(clients.Builtins(logger)...)
 	cfgLoader := infraconfig.NewLoader(flags.cfgPath)
 
 	cfg, err := cfgLoader.Load()
@@ -755,9 +757,11 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		credentialStore = fsStore
 
 		if seedCreds {
-			if seeder := credentialSeederForAgent(agentName, logger); seeder != nil {
-				if err := seeder.Seed(fsStore); err != nil {
-					logger.Warn("credential seeding failed", "agent", agentName, "error", err)
+			if entry, lookupErr := registry.Get(agentName); lookupErr == nil && entry.Plugin != nil {
+				if seeder := entry.Plugin.Seeder(); seeder != nil {
+					if err := seeder.Seed(fsStore); err != nil {
+						logger.Warn("credential seeding failed", "agent", agentName, "error", err)
+					}
 				}
 			}
 		}
@@ -1065,8 +1069,8 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		var notFound *agent.ErrNotFound
 		if errors.As(err, &notFound) {
 			_, _ = fmt.Fprintf(os.Stderr, "\nAvailable agents:\n")
-			for _, a := range registry.List() {
-				_, _ = fmt.Fprintf(os.Stderr, "  %-15s %s\n", a.Name, a.Image)
+			for _, e := range registry.List() {
+				_, _ = fmt.Fprintf(os.Stderr, "  %-15s %s\n", e.Agent.Name, e.Agent.Image)
 			}
 		}
 		return err
@@ -1396,17 +1400,6 @@ func ensureDirectModeAck(yes bool, logger *slog.Logger) error {
 		logger.Warn("failed to write direct-mode ack sentinel, continuing without persisting", "error", err)
 	}
 	return nil
-}
-
-// credentialSeederForAgent returns a Seeder for the given agent,
-// or nil if no seeder is available.
-func credentialSeederForAgent(name string, logger *slog.Logger) credential.Seeder {
-	switch name {
-	case "claude-code":
-		return infracredential.NewClaudeCodeSeeder(logger)
-	default:
-		return nil
-	}
 }
 
 // runtimeCacheDir returns the directory used for extracting embedded runtime

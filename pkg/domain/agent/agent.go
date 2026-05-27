@@ -37,29 +37,6 @@ func ValidateName(name string) error {
 	return nil
 }
 
-// MCPConfigFormat identifies how an agent consumes MCP server configuration.
-type MCPConfigFormat string
-
-const (
-	// MCPConfigFormatClaudeCode injects a Claude Code MCP config file.
-	MCPConfigFormatClaudeCode MCPConfigFormat = "claude-code"
-
-	// MCPConfigFormatCodex injects a Codex MCP config file.
-	MCPConfigFormatCodex MCPConfigFormat = "codex"
-
-	// MCPConfigFormatOpenCode injects an OpenCode MCP config file.
-	MCPConfigFormatOpenCode MCPConfigFormat = "opencode"
-
-	// MCPConfigFormatHermes injects a Hermes Agent MCP config file.
-	MCPConfigFormatHermes MCPConfigFormat = "hermes"
-
-	// MCPConfigFormatGemini injects a Gemini CLI MCP config file.
-	MCPConfigFormatGemini MCPConfigFormat = "gemini"
-
-	// MCPConfigFormatNone means no MCP config injection.
-	MCPConfigFormatNone MCPConfigFormat = "none"
-)
-
 // Agent describes a coding agent that can run inside a sandbox VM.
 type Agent struct {
 	// Name is the unique identifier for this agent (e.g., "claude-code").
@@ -106,9 +83,6 @@ type Agent struct {
 	// EgressHosts maps profile names to allowed host lists for this agent.
 	EgressHosts map[egress.ProfileName][]egress.Host
 
-	// MCPConfigFormat identifies how MCP server configuration is injected.
-	MCPConfigFormat MCPConfigFormat
-
 	// CredentialPaths lists relative paths (from the sandbox user's home)
 	// whose contents are persisted between sessions for authentication.
 	// Only built-in agents should set this field.
@@ -123,13 +97,15 @@ type Agent struct {
 	SettingsManifest *settings.Manifest
 }
 
-// Registry provides access to known agents by name.
+// Registry provides access to registered clients by name. Each entry pairs
+// a declarative Agent value with an optional behavioral Plugin.
 type Registry interface {
-	// Get returns the agent with the given name, or an error if not found.
-	Get(name string) (Agent, error)
+	// Get returns the client entry with the given Agent.Name,
+	// or an error if not found.
+	Get(name string) (ClientEntry, error)
 
-	// List returns all registered agents.
-	List() []Agent
+	// List returns all registered client entries.
+	List() []ClientEntry
 }
 
 // ErrNotFound is returned when an agent is not found in the registry.

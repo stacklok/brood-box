@@ -102,22 +102,25 @@ type mockEnvProvider struct {
 func (m *mockEnvProvider) Environ() []string { return m.vars }
 
 // mockRegistry is a simple in-memory agent registry for testing.
+// It stores plain Agent values for ergonomic test setup and exposes them
+// as data-only ClientEntries (nil Plugin) — the sandbox runner does not
+// require Plugin behavior, so the tests do not provide one.
 type mockRegistry struct {
 	agents map[string]agent.Agent
 }
 
-func (m *mockRegistry) Get(name string) (agent.Agent, error) {
+func (m *mockRegistry) Get(name string) (agent.ClientEntry, error) {
 	a, ok := m.agents[name]
 	if !ok {
-		return agent.Agent{}, &agent.ErrNotFound{Name: name}
+		return agent.ClientEntry{}, &agent.ErrNotFound{Name: name}
 	}
-	return a, nil
+	return agent.ClientEntry{Agent: a}, nil
 }
 
-func (m *mockRegistry) List() []agent.Agent {
-	result := make([]agent.Agent, 0, len(m.agents))
+func (m *mockRegistry) List() []agent.ClientEntry {
+	result := make([]agent.ClientEntry, 0, len(m.agents))
 	for _, a := range m.agents {
-		result = append(result, a)
+		result = append(result, agent.ClientEntry{Agent: a})
 	}
 	return result
 }
