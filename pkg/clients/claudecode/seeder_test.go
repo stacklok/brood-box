@@ -1,7 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 Stacklok, Inc.
 // SPDX-License-Identifier: Apache-2.0
 
-package credential
+package claudecode
 
 import (
 	"encoding/json"
@@ -9,6 +9,8 @@ import (
 	"log/slog"
 	"os"
 	"testing"
+
+	infracred "github.com/stacklok/brood-box/internal/infra/credential"
 )
 
 func TestExtractExpiresAt(t *testing.T) {
@@ -73,12 +75,12 @@ func makeCreds(t *testing.T, expiresAt int64) []byte {
 	return data
 }
 
-// testSeeder creates a ClaudeCodeSeeder with injected host credential reader
+// testSeeder creates a seeder with injected host credential reader
 // and time function for testing.
-func testSeeder(t *testing.T, readHost func() ([]byte, string, error), nowMs func() int64) *ClaudeCodeSeeder {
+func testSeeder(t *testing.T, readHost func() ([]byte, string, error), nowMs func() int64) *seeder {
 	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
-	s := NewClaudeCodeSeeder(logger)
+	s := newSeeder(logger)
 	if readHost != nil {
 		s.readHost = readHost
 	}
@@ -96,18 +98,18 @@ func TestSeedExpiry(t *testing.T) {
 	t.Run("seeds when no stored credentials exist", func(t *testing.T) {
 		t.Parallel()
 		baseDir := t.TempDir()
-		store := NewFSStore(baseDir, logger)
+		store := infracred.NewFSStore(baseDir, logger)
 		hostCreds := makeCreds(t, 9999999999999)
 
-		seeder := testSeeder(t, func() ([]byte, string, error) {
+		s := testSeeder(t, func() ([]byte, string, error) {
 			return hostCreds, "test", nil
 		}, nil)
 
-		if err := seeder.Seed(store); err != nil {
+		if err := s.Seed(store); err != nil {
 			t.Fatalf("Seed failed: %v", err)
 		}
 
-		data, err := store.ReadFile("claude-code", claudeCodeCredPath)
+		data, err := store.ReadFile(Name, credPath)
 		if err != nil {
 			t.Fatalf("expected seeded file: %v", err)
 		}
@@ -119,23 +121,21 @@ func TestSeedExpiry(t *testing.T) {
 	t.Run("keeps valid stored credentials", func(t *testing.T) {
 		t.Parallel()
 		baseDir := t.TempDir()
-		store := NewFSStore(baseDir, logger)
+		store := infracred.NewFSStore(baseDir, logger)
 
-		// Pre-seed stored credentials with a far-future expiry.
-		if err := store.SeedFile("claude-code", claudeCodeCredPath, makeCreds(t, 9999999999999)); err != nil {
+		if err := store.SeedFile(Name, credPath, makeCreds(t, 9999999999999)); err != nil {
 			t.Fatal(err)
 		}
 
-		// Host has different credentials, but stored ones are still valid.
-		seeder := testSeeder(t, func() ([]byte, string, error) {
+		s := testSeeder(t, func() ([]byte, string, error) {
 			return makeCreds(t, 8888888888888), "test", nil
 		}, func() int64 { return 1000000000000 })
 
-		if err := seeder.Seed(store); err != nil {
+		if err := s.Seed(store); err != nil {
 			t.Fatalf("Seed failed: %v", err)
 		}
 
-		data, err := store.ReadFile("claude-code", claudeCodeCredPath)
+		data, err := store.ReadFile(Name, credPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -147,22 +147,21 @@ func TestSeedExpiry(t *testing.T) {
 	t.Run("overwrites expired with fresher host creds", func(t *testing.T) {
 		t.Parallel()
 		baseDir := t.TempDir()
-		store := NewFSStore(baseDir, logger)
+		store := infracred.NewFSStore(baseDir, logger)
 
-		// Store credentials that are already expired.
-		if err := store.SeedFile("claude-code", claudeCodeCredPath, makeCreds(t, 1000000000000)); err != nil {
+		if err := store.SeedFile(Name, credPath, makeCreds(t, 1000000000000)); err != nil {
 			t.Fatal(err)
 		}
 
-		seeder := testSeeder(t, func() ([]byte, string, error) {
+		s := testSeeder(t, func() ([]byte, string, error) {
 			return makeCreds(t, 3000000000000), "test", nil
 		}, func() int64 { return 2000000000000 })
 
-		if err := seeder.Seed(store); err != nil {
+		if err := s.Seed(store); err != nil {
 			t.Fatalf("Seed failed: %v", err)
 		}
 
-		data, err := store.ReadFile("claude-code", claudeCodeCredPath)
+		data, err := store.ReadFile(Name, credPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -174,23 +173,21 @@ func TestSeedExpiry(t *testing.T) {
 	t.Run("skips when host creds not fresher", func(t *testing.T) {
 		t.Parallel()
 		baseDir := t.TempDir()
-		store := NewFSStore(baseDir, logger)
+		store := infracred.NewFSStore(baseDir, logger)
 
-		// Store credentials that are expired.
-		if err := store.SeedFile("claude-code", claudeCodeCredPath, makeCreds(t, 1000000000000)); err != nil {
+		if err := store.SeedFile(Name, credPath, makeCreds(t, 1000000000000)); err != nil {
 			t.Fatal(err)
 		}
 
-		// Host creds are older than stored.
-		seeder := testSeeder(t, func() ([]byte, string, error) {
+		s := testSeeder(t, func() ([]byte, string, error) {
 			return makeCreds(t, 500000000000), "test", nil
 		}, func() int64 { return 2000000000000 })
 
-		if err := seeder.Seed(store); err != nil {
+		if err := s.Seed(store); err != nil {
 			t.Fatalf("Seed failed: %v", err)
 		}
 
-		data, err := store.ReadFile("claude-code", claudeCodeCredPath)
+		data, err := store.ReadFile(Name, credPath)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -202,17 +199,17 @@ func TestSeedExpiry(t *testing.T) {
 	t.Run("no-op when host creds unavailable", func(t *testing.T) {
 		t.Parallel()
 		baseDir := t.TempDir()
-		store := NewFSStore(baseDir, logger)
+		store := infracred.NewFSStore(baseDir, logger)
 
-		seeder := testSeeder(t, func() ([]byte, string, error) {
+		s := testSeeder(t, func() ([]byte, string, error) {
 			return nil, "", fmt.Errorf("no credentials available")
 		}, nil)
 
-		if err := seeder.Seed(store); err != nil {
+		if err := s.Seed(store); err != nil {
 			t.Fatalf("Seed should return nil when host creds unavailable: %v", err)
 		}
 
-		_, err := store.ReadFile("claude-code", claudeCodeCredPath)
+		_, err := store.ReadFile(Name, credPath)
 		if err == nil {
 			t.Fatal("expected no stored credentials when host creds unavailable")
 		}

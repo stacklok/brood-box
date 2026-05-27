@@ -66,17 +66,23 @@ This project follows DDD layered architecture with dependency injection **strict
 **Runtime Factory** (`pkg/runtime/`) — Public helper that wires default infrastructure for SDK consumers. Keeps `internal/infra/` private while providing a supported path to construct `SandboxRunner` with standard implementations:
 - `pkg/runtime/` — `NewDefaultSandboxDeps()`, `NewDefaultSandboxRunner()`, exclude matcher builders
 
+**Clients** (`pkg/clients/`) — Per-agent plugin layer. Each built-in coding agent (claude-code, codex, opencode, hermes, gemini) lives in its own subpackage and exposes a `New() agent.ClientEntry` that pairs the declarative `agent.Agent` value with a `Plugin` carrying agent-specific behavior (MCP config injection, host credential seeding). Public so SDK consumers can add their own clients — call `clients.Builtins(logger)` plus any custom entries when constructing the registry:
+- `pkg/clients/<name>/` — One package per built-in client (claudecode, codex, gemini, hermes, opencode)
+- `pkg/clients/builtins.go` — `Builtins(logger) []agent.ClientEntry` aggregator
+- `pkg/clients/internal/configio/` — Shared JSON / TOML / YAML merge helpers (internal to clients tree)
+- `pkg/clients/internal/devhosts/` — Standard dev-infra egress hosts shared by clients (internal)
+
 **Infrastructure** (`internal/infra/`) — Concrete implementations of domain interfaces. This is the only layer that touches I/O, external libraries, and system calls:
 - `internal/infra/vm/` — go-microvm VMRunner implementation, rootfs hooks
 - `internal/infra/ssh/` — Interactive PTY terminal session
 - `internal/infra/config/` — YAML config loader
-- `internal/infra/agent/` — Built-in agent registry
+- `internal/infra/agent/` — In-memory client registry (empty by default; populated from `clients.Builtins()`)
 - `internal/infra/mcp/` — VMCPProvider (vmcp proxy), Cedar authz profile resolver
 - `internal/infra/exclude/` — Gitignore-compatible exclude pattern loading + two-tier matching
 - `internal/infra/workspace/` — COW workspace cloning (FICLONE on Linux, clonefile on macOS, copy fallback)
 - `internal/infra/diff/` — SHA-256 based file diff engine
 - `internal/infra/review/` — Interactive per-file terminal review, auto-accept reviewer, flusher with hash verification
-- `internal/infra/credential/` — FS-based credential store, Claude credential seeder
+- `internal/infra/credential/` — FS-based credential store
 - `internal/infra/settings/` — FSInjector for host-to-guest settings injection (file copy, dir recursion, merge-file with field filtering, JSONC support)
 - `internal/infra/git/` — Host identity provider, `.git/config` credential sanitizer
 - `internal/infra/logging/` — Custom slog file handler
@@ -95,11 +101,18 @@ This project follows DDD layered architecture with dependency injection **strict
 
 ### DDD Rules (non-negotiable)
 
-- **`pkg/domain/` NEVER imports from `internal/infra/` or `pkg/sandbox/`.** Interfaces live in domain, implementations in infra. No exceptions.
-- **`pkg/sandbox/` NEVER imports from `internal/infra/`.** The application layer depends only on domain interfaces; concrete implementations are injected by the composition root (`cmd/`).
-- **New interfaces go in `pkg/domain/`**, new implementations go in `internal/infra/`**. If you need a new capability, define the interface in the appropriate domain package first, then implement it in infra.
+- **`pkg/domain/` NEVER imports from `internal/infra/`, `pkg/sandbox/`, or `pkg/clients/`.** Interfaces live in domain, implementations in infra or clients. No exceptions.
+- **`pkg/sandbox/` NEVER imports from `internal/infra/` or `pkg/clients/`.** The application layer depends only on domain interfaces; concrete implementations are injected by the composition root (`cmd/`).
+- **`pkg/clients/<name>/` NEVER imports from `internal/infra/`.** Clients depend on domain interfaces and may use `pkg/clients/internal/` utilities. SDK consumers can add their own clients without modifying the rest of the tree.
+- **New interfaces go in `pkg/domain/`.** Cross-layer behavior (MCP config, credential seeders) is implemented in `pkg/clients/<name>/`; generic infra adapters live in `internal/infra/`.
 - **No business logic in `infra/`**. Infrastructure adapts external systems to domain interfaces — it does not make business decisions.
 - **No I/O in `domain/`**. Domain types must be testable without mocks, fakes, or network access.
+
+### Adding a new client
+
+1. Create `pkg/clients/<name>/` with `client.go` (`New() agent.ClientEntry`), `mcp.go` (implements `agent.MCPInjector`), and optionally `seeder.go` (implements `credential.Seeder`).
+2. Add the entry to `pkg/clients/builtins.go`.
+3. Add a Dockerfile in `images/<name>/` and a Taskfile target `image-<name>` (and include it in `image-all`).
 
 ## Conventions
 

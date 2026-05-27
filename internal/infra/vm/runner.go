@@ -27,7 +27,6 @@ import (
 	"github.com/stacklok/go-microvm/net/topology"
 	microvmssh "github.com/stacklok/go-microvm/ssh"
 
-	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/config"
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/settings"
@@ -262,10 +261,10 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 		))
 	}
 
-	// Add MCP config injection hook if host services and agent format are set.
-	if len(cfg.HostServices) > 0 && cfg.MCPConfigFormat != "" && cfg.MCPConfigFormat != agent.MCPConfigFormatNone {
+	// Add MCP config injection hook if host services and injector are set.
+	if len(cfg.HostServices) > 0 && cfg.MCPConfigInjector != nil {
 		opts = append(opts, microvm.WithRootFSHook(
-			InjectMCPConfig(cfg.MCPConfigFormat, topology.GatewayIP, cfg.HostServices[0].Port, bestEffortLchown),
+			InjectMCPConfig(cfg.MCPConfigInjector, topology.GatewayIP, cfg.HostServices[0].Port, bestEffortLchown),
 		))
 	}
 

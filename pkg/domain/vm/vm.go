@@ -49,8 +49,9 @@ type VMConfig struct {
 	// Each service is reachable from the guest at http://192.168.127.1:<port>/.
 	HostServices []HostService
 
-	// MCPConfigFormat identifies how MCP config should be injected into the rootfs.
-	MCPConfigFormat agent.MCPConfigFormat
+	// MCPConfigInjector emits the agent's MCP server configuration into
+	// the guest rootfs before boot. Nil means no MCP config injection.
+	MCPConfigInjector agent.MCPInjector
 
 	// GitIdentity is the git user identity to inject into the VM.
 	GitIdentity git.Identity

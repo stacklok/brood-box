@@ -273,10 +273,17 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 
 	// 1. Resolve agent from registry.
 	s.observer.Start(progress.PhaseResolvingAgent, "Resolving agent...")
-	ag, err := s.registry.Get(agentName)
+	entry, err := s.registry.Get(agentName)
 	if err != nil {
 		s.observer.Fail("Agent not found")
 		return nil, fmt.Errorf("resolving agent: %w", err)
+	}
+	ag := entry.Agent
+
+	// Plugin is nil for data-only custom agents loaded from config.
+	var mcpInjector agent.MCPInjector
+	if entry.Plugin != nil {
+		mcpInjector = entry.Plugin.MCPConfig()
 	}
 
 	// 2. Apply config overrides.
@@ -527,27 +534,27 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	s.observer.Start(progress.PhaseStartingVM, "Starting sandbox VM...")
 
 	vmCfg := domvm.VMConfig{
-		Name:             VMName(ag.Name, workspacePath, opts.SessionID),
-		AgentName:        ag.Name,
-		Image:            ag.Image,
-		CPUs:             ag.DefaultCPUs,
-		Memory:           ag.DefaultMemory,
-		SSHPort:          opts.SSHPort,
-		ExtraPorts:       opts.ExtraPorts,
-		WorkspacePath:    workspacePath,
-		EnvVars:          envVars,
-		EgressPolicy:     egressPolicy,
-		HostServices:     hostServices,
-		MCPConfigFormat:  ag.MCPConfigFormat,
-		GitIdentity:      gitIdentity,
-		HasGitToken:      hasGitToken,
-		SSHAgentForward:  opts.SSHAgentForward,
-		CredentialPaths:  ag.CredentialPaths,
-		LogLevel:         opts.LogLevel,
-		TmpSize:          ag.DefaultTmpSize,
-		SettingsManifest: settingsManifest,
-		ExtraMounts:      extraMounts,
-		PullPolicy:       resolvePullPolicy(opts.PullPolicy, cfg),
+		Name:              VMName(ag.Name, workspacePath, opts.SessionID),
+		AgentName:         ag.Name,
+		Image:             ag.Image,
+		CPUs:              ag.DefaultCPUs,
+		Memory:            ag.DefaultMemory,
+		SSHPort:           opts.SSHPort,
+		ExtraPorts:        opts.ExtraPorts,
+		WorkspacePath:     workspacePath,
+		EnvVars:           envVars,
+		EgressPolicy:      egressPolicy,
+		HostServices:      hostServices,
+		MCPConfigInjector: mcpInjector,
+		GitIdentity:       gitIdentity,
+		HasGitToken:       hasGitToken,
+		SSHAgentForward:   opts.SSHAgentForward,
+		CredentialPaths:   ag.CredentialPaths,
+		LogLevel:          opts.LogLevel,
+		TmpSize:           ag.DefaultTmpSize,
+		SettingsManifest:  settingsManifest,
+		ExtraMounts:       extraMounts,
+		PullPolicy:        resolvePullPolicy(opts.PullPolicy, cfg),
 	}
 
 	sandboxVM, err := s.vmRunner.Start(ctx, vmCfg)

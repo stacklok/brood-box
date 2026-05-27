@@ -21,6 +21,7 @@ import (
 	infrassh "github.com/stacklok/brood-box/internal/infra/ssh"
 	infravm "github.com/stacklok/brood-box/internal/infra/vm"
 	infraworkspace "github.com/stacklok/brood-box/internal/infra/workspace"
+	"github.com/stacklok/brood-box/pkg/clients"
 	domainagent "github.com/stacklok/brood-box/pkg/domain/agent"
 	domaingit "github.com/stacklok/brood-box/pkg/domain/git"
 	"github.com/stacklok/brood-box/pkg/domain/hostservice"
@@ -121,7 +122,7 @@ func NewDefaultSandboxDeps(opts DefaultSandboxDepsOpts) sandbox.SandboxDeps {
 	}
 
 	return sandbox.SandboxDeps{
-		Registry:      infraagent.NewRegistry(),
+		Registry:      infraagent.NewRegistry(clients.Builtins(logger)...),
 		VMRunner:      infravm.NewMicroVMRunner(logger, runnerOpts...),
 		SessionRunner: infrassh.NewInteractiveSession(logger),
 		Config:        cfg,
