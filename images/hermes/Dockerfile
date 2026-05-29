@@ -10,6 +10,7 @@ FROM ${BASE_IMAGE}
 
 # Pin to a calendar-versioned Hermes Agent tag. Bump deliberately; releases
 # are roughly weekly. Override with --build-arg HERMES_VERSION=... for dev.
+# renovate: datasource=github-tags depName=NousResearch/hermes-agent
 ARG HERMES_VERSION=v2026.4.16
 
 LABEL org.opencontainers.image.source="https://github.com/NousResearch/hermes-agent" \
