@@ -46,7 +46,7 @@ RUN mkdir -p /usr/local/bin
 
 # Install go-task from GitHub releases (not packaged in Wolfi).
 # renovate: datasource=github-releases depName=go-task/task
-ARG TASK_VERSION=v3.48.0
+ARG TASK_VERSION=v3.51.1
 RUN ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && \
     curl -fsSL "https://github.com/go-task/task/releases/download/${TASK_VERSION}/task_linux_${ARCH}.tar.gz" | \
     tar -xz -C /usr/local/bin task
