@@ -53,7 +53,7 @@ RUN ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && \
 
 # Install golangci-lint from GitHub releases (not packaged in Wolfi).
 # renovate: datasource=github-releases depName=golangci/golangci-lint
-ARG GOLANGCI_LINT_VERSION=v2.10.1
+ARG GOLANGCI_LINT_VERSION=v2.12.2
 RUN ARCH="$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')" && \
     VER="${GOLANGCI_LINT_VERSION#v}" && \
     curl -fsSL "https://github.com/golangci/golangci-lint/releases/download/${GOLANGCI_LINT_VERSION}/golangci-lint-${VER}-linux-${ARCH}.tar.gz" | \
