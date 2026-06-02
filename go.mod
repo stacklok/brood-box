@@ -9,7 +9,7 @@ require (
 	charm.land/glamour/v2 v2.0.0
 	charm.land/lipgloss/v2 v2.0.3
 	github.com/adrg/xdg v0.5.3
-	github.com/cedar-policy/cedar-go v1.7.0
+	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/gofrs/flock v0.13.0
 	github.com/google/go-containerregistry v0.21.6
 	github.com/pelletier/go-toml/v2 v2.3.1
