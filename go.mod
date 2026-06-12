@@ -17,7 +17,7 @@ require (
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stacklok/go-microvm v0.0.36
-	github.com/stacklok/toolhive v0.29.1
+	github.com/stacklok/toolhive v0.29.3
 	github.com/stacklok/toolhive-core v0.0.24
 	github.com/stretchr/testify v1.11.1
 	go.opentelemetry.io/otel v1.44.0
@@ -96,7 +96,7 @@ require (
 	github.com/fxamacker/cbor/v2 v2.9.0 // indirect
 	github.com/getsentry/sentry-go v0.44.1 // indirect
 	github.com/getsentry/sentry-go/otel v0.44.1 // indirect
-	github.com/go-chi/chi/v5 v5.2.5 // indirect
+	github.com/go-chi/chi/v5 v5.3.0 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.4 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect
@@ -245,7 +245,7 @@ require (
 	golang.ngrok.com/ngrok/v2 v2.1.4 // indirect
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/exp/event v0.0.0-20260410095643-746e56fc9e2f // indirect
-	golang.org/x/exp/jsonrpc2 v0.0.0-20260529124908-c761662dc8c9 // indirect
+	golang.org/x/exp/jsonrpc2 v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/net v0.55.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect

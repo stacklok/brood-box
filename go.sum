@@ -212,6 +212,8 @@ github.com/getsentry/sentry-go/otel v0.44.1 h1:RV2zUHEvGHJmCCpMaJ52tZZAlcbMgvtas
 github.com/getsentry/sentry-go/otel v0.44.1/go.mod h1:CfzTxocQJ6JX4SLFvnBrGULBAARFAd1fHmbJCTQlOP4=
 github.com/go-chi/chi/v5 v5.2.5 h1:Eg4myHZBjyvJmAFjFvWgrqDTXFyOzjj7YIm3L3mu6Ug=
 github.com/go-chi/chi/v5 v5.2.5/go.mod h1:X7Gx4mteadT3eDOMTsXzmI4/rwUpOwBHLpAfupzFJP0=
+github.com/go-chi/chi/v5 v5.3.0 h1:halUjDxhshgXHMrao5bB8eNBXo/rnzwr8m5m36glehM=
+github.com/go-chi/chi/v5 v5.3.0/go.mod h1:R+tYY2hNuVUUjxoPtqUdgBqevM9s9njzkTLutVsOCto=
 github.com/go-errors/errors v1.4.2 h1:J6MZopCL4uSllY1OfXM374weqZFFItUbrImctkmUxIA=
 github.com/go-errors/errors v1.4.2/go.mod h1:sIVyrIiJhuEF+Pj9Ebtd6P/rEYROXFi3BopGUQ5a5Og=
 github.com/go-jose/go-jose/v3 v3.0.5 h1:BLLJWbC4nMZOfuPVxoZIxeYsn6Nl2r1fITaJ78UQlVQ=
@@ -678,6 +680,8 @@ github.com/stacklok/go-microvm v0.0.36 h1:xXm7cRT8PHPujpvy9WsI+k19EnQkP09FCmVLi3
 github.com/stacklok/go-microvm v0.0.36/go.mod h1:73KmZ087597sGduy9ZiS9qmGnIokocc6VhShTxPrFQo=
 github.com/stacklok/toolhive v0.29.1 h1:Z4c9S2EdkcaAYiboSOMCQiYbRU9baAFRdZEvKJc8Tsw=
 github.com/stacklok/toolhive v0.29.1/go.mod h1:ioz0LGjZVUrH0xj1HjMJ60is9CbpSF8OqfrGft1lTPo=
+github.com/stacklok/toolhive v0.29.3 h1:wqF/FTQKcX/N20QxbbmWiLfy9XIGb2+o74c4ofoKiI4=
+github.com/stacklok/toolhive v0.29.3/go.mod h1:sgRaWE0eroeByH2Noxa/WekGH61ZZlGkeGugTdVhDRg=
 github.com/stacklok/toolhive-core v0.0.23 h1:73afNKBKaUru7hMFldJYs23SL8JgdAOt1L0czf0EOMI=
 github.com/stacklok/toolhive-core v0.0.23/go.mod h1:Y+uuY0/XalnTbuFp5oMU243gAcs2qZV/C4BRSY+ndjo=
 github.com/stacklok/toolhive-core v0.0.24 h1:FdZTaXu3yopS7v5+x6UYk8ZxdGa7JLJA7jUDz9k/9+I=
@@ -855,6 +859,8 @@ golang.org/x/exp/event v0.0.0-20260410095643-746e56fc9e2f h1:YHf3wxw5NqqQAc7dMux
 golang.org/x/exp/event v0.0.0-20260410095643-746e56fc9e2f/go.mod h1:k42SSvLLwqm/AUsIHNoVjjzXtDkAkMs4ttVJfiwxIfk=
 golang.org/x/exp/jsonrpc2 v0.0.0-20260529124908-c761662dc8c9 h1:5KuM8PD0NKe9XN06W5UEZLpVsy09WX83/MMRDEzqC/Y=
 golang.org/x/exp/jsonrpc2 v0.0.0-20260529124908-c761662dc8c9/go.mod h1:T8WG9RoOCLSSBGdia5R05Tcnfzy1ISOxcWjPC8Vqsm4=
+golang.org/x/exp/jsonrpc2 v0.0.0-20260603202125-055de637280b h1:oe0t8Wf6SAJL9TJj1xl0m6bUb6Oakx26GG5RCtxpDAI=
+golang.org/x/exp/jsonrpc2 v0.0.0-20260603202125-055de637280b/go.mod h1:T8WG9RoOCLSSBGdia5R05Tcnfzy1ISOxcWjPC8Vqsm4=
 golang.org/x/lint v0.0.0-20190930215403-16217165b5de/go.mod h1:6SW0HCj/g11FgYtHlgUYUwCkIfeOF89ocIRzGO/8vkc=
 golang.org/x/lint v0.0.0-20200302205851-738671d3881b/go.mod h1:3xt1FjdF8hUf6vQPIChWIBhFzV8gjjsPE/fR3IyQdNY=
 golang.org/x/mod v0.0.0-20190513183733-4bf6d317e70e/go.mod h1:mXi4GBBbnImb6dmsKGUJ2LatrhH/nqhxcFungHvyanc=
