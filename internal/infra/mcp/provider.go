@@ -34,6 +34,11 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/hostservice"
 )
 
+// vmcpServerName identifies the in-process vmcp server. It is also the Cedar
+// resource entity name used during authorization policy evaluation, so
+// resource-scoped policies must reference this name.
+const vmcpServerName = "bbox-mcp"
+
 // VMCPProvider implements hostservice.Provider using toolhive's vmcp library.
 type VMCPProvider struct {
 	group       string
@@ -165,7 +170,7 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 	srv, err := vmcpserver.New(
 		ctx,
 		&vmcpserver.Config{
-			Name:            "bbox-mcp",
+			Name:            vmcpServerName,
 			GroupRef:        p.group,
 			Port:            int(p.port),
 			EndpointPath:    "/mcp",
@@ -250,7 +255,7 @@ func (p *VMCPProvider) resolveAuthMiddleware(
 					"(authz.policies)", domainconfig.MCPAuthzProfileCustom)
 		}
 		authMw, authzMw, authInfoH, err = vmcpauthfactory.NewIncomingAuthMiddleware(
-			ctx, vmcpIncomingAuth, nil, nil, nil,
+			ctx, vmcpIncomingAuth, vmcpServerName, nil, nil, nil,
 		)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("creating custom MCP auth middleware: %w", err)
@@ -278,6 +283,7 @@ func (p *VMCPProvider) resolveAuthMiddleware(
 				Policies: policies,
 			},
 		},
+		vmcpServerName,
 		nil, nil, nil,
 	)
 	if err != nil {
