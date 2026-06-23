@@ -11,7 +11,7 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/gofrs/flock v0.13.0
-	github.com/google/go-containerregistry v0.21.6
+	github.com/google/go-containerregistry v0.21.7
 	github.com/pelletier/go-toml/v2 v2.4.1
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/sergi/go-diff v1.4.0
@@ -80,7 +80,7 @@ require (
 	github.com/dgraph-io/ristretto v1.0.0 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/dlclark/regexp2 v1.11.0 // indirect
-	github.com/docker/cli v29.4.3+incompatible // indirect
+	github.com/docker/cli v29.5.3+incompatible // indirect
 	github.com/docker/docker-credential-helpers v0.9.5 // indirect
 	github.com/docker/go-connections v0.7.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
@@ -246,12 +246,12 @@ require (
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/exp/event v0.0.0-20260603202125-055de637280b // indirect
 	golang.org/x/exp/jsonrpc2 v0.0.0-20260611194520-c48552f49976 // indirect
-	golang.org/x/mod v0.36.0 // indirect
-	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/mod v0.37.0 // indirect
+	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/text v0.38.0 // indirect
 	golang.org/x/time v0.15.0 // indirect
-	golang.org/x/tools v0.45.0 // indirect
+	golang.org/x/tools v0.46.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260526163538-3dc84a4a5aaa // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260523011958-0a33c5d7ca68 // indirect
