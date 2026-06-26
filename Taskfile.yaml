@@ -80,7 +80,7 @@ tasks:
       CGO_ENABLED: "0"
     cmds:
       - mkdir -p bin
-      - go build -tags embed_runtime -ldflags "{{.LDFLAGS_EMBED}}" -o bin/{{.BINARY_NAME}} ./cmd/bbox
+      - go build -tags "embed_runtime bbox_full" -ldflags "{{.LDFLAGS_EMBED}}" -o bin/{{.BINARY_NAME}} ./cmd/bbox
     sources:
       - ./**/*.go
       - go.mod
@@ -215,7 +215,7 @@ tasks:
     env:
       CGO_ENABLED: "0"
     cmds:
-      - go install -tags embed_runtime -ldflags "{{.LDFLAGS_EMBED}}" ./cmd/bbox
+      - go install -tags "embed_runtime bbox_full" -ldflags "{{.LDFLAGS_EMBED}}" ./cmd/bbox
 
   run:
     desc: Build and run bbox

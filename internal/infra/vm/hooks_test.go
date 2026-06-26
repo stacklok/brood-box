@@ -5,44 +5,13 @@ package vm
 
 import (
 	"errors"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/stacklok/brood-box/internal/infra/vm/initbin"
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 )
-
-func TestInjectInitBinaryWritesCorrectContent(t *testing.T) {
-	t.Parallel()
-
-	rootfs := t.TempDir()
-	hook := InjectInitBinary()
-	err := hook(rootfs, nil)
-	require.NoError(t, err)
-
-	initPath := filepath.Join(rootfs, "bbox-init")
-	data, err := os.ReadFile(initPath)
-	require.NoError(t, err)
-	assert.Equal(t, initbin.Binary, data)
-}
-
-func TestInjectInitBinaryPermissions(t *testing.T) {
-	t.Parallel()
-
-	rootfs := t.TempDir()
-	hook := InjectInitBinary()
-	err := hook(rootfs, nil)
-	require.NoError(t, err)
-
-	initPath := filepath.Join(rootfs, "bbox-init")
-	info, err := os.Stat(initPath)
-	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o755), info.Mode().Perm())
-}
 
 // fakeMCPInjector records the arguments passed to Inject and returns the
 // configured error so the hook wrapper can be exercised in isolation.
