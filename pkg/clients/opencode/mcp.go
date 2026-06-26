@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/brood-box/pkg/clients/internal/configio"
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/config"
 )
 
 // Ref: https://opencode.ai/docs/mcp-servers/
@@ -29,7 +30,7 @@ func (mcpInjector) Inject(rootfsPath, gatewayIP string, port uint16, chown agent
 	servers := map[string]openCodeServer{
 		"sandbox-tools": {
 			Type:    "remote",
-			URL:     fmt.Sprintf("http://%s:%d/mcp", gatewayIP, port),
+			URL:     fmt.Sprintf("http://%s:%d%s", gatewayIP, port, config.MCPEndpointPath),
 			Enabled: true,
 		},
 	}

@@ -108,7 +108,7 @@ func TestMergeConfigs(t *testing.T) {
 			},
 		},
 		{
-			name: "agents map merge — local extends global",
+			name: "agents map merge — local cannot add a new agent (security #7)",
 			global: &Config{
 				Agents: map[string]AgentOverride{
 					"a": {Image: "img-a"},
@@ -119,15 +119,16 @@ func TestMergeConfigs(t *testing.T) {
 					"b": {Image: "img-b"},
 				},
 			},
+			// Local-only key "b" is dropped: workspace config must not be
+			// able to introduce a brand-new custom agent.
 			want: &Config{
 				Agents: map[string]AgentOverride{
 					"a": {Image: "img-a"},
-					"b": {Image: "img-b"},
 				},
 			},
 		},
 		{
-			name: "agents map merge — local overrides global per key",
+			name: "agents map merge — local image override is ignored (security #7)",
 			global: &Config{
 				Agents: map[string]AgentOverride{
 					"a": {Image: "old"},
@@ -138,25 +139,23 @@ func TestMergeConfigs(t *testing.T) {
 					"a": {Image: "new"},
 				},
 			},
+			// Image is sourced from global only; local cannot repoint it.
 			want: &Config{
 				Agents: map[string]AgentOverride{
-					"a": {Image: "new"},
+					"a": {Image: "old"},
 				},
 			},
 		},
 		{
-			name:   "local agents into nil global agents",
+			name:   "local agents into nil global agents are dropped (security #7)",
 			global: &Config{},
 			local: &Config{
 				Agents: map[string]AgentOverride{
 					"x": {Image: "img-x"},
 				},
 			},
-			want: &Config{
-				Agents: map[string]AgentOverride{
-					"x": {Image: "img-x"},
-				},
-			},
+			// No global agents to tighten, and local cannot add new ones.
+			want: &Config{},
 		},
 		{
 			name: "egress profile tighten-only — local locked tightens global standard",
@@ -1344,8 +1343,14 @@ func TestMergeConfigs_AgentOverridesMCPAuthzTightenOnly(t *testing.T) {
 			wantAuthz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve},
 		},
 		{
-			name:   "local sets per-agent authz when global has none",
-			global: &Config{},
+			name: "local sets per-agent authz when global agent has none",
+			// Security: the agent key must already exist in global; a
+			// local-only key would be dropped (cannot add a new agent).
+			global: &Config{
+				Agents: map[string]AgentOverride{
+					"codex": {Image: "ghcr.io/example/codex:latest"},
+				},
+			},
 			local: &Config{
 				Agents: map[string]AgentOverride{
 					"codex": {
@@ -1359,8 +1364,12 @@ func TestMergeConfigs_AgentOverridesMCPAuthzTightenOnly(t *testing.T) {
 			wantAuthz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools},
 		},
 		{
-			name:   "custom from local per-agent config is ignored",
-			global: &Config{},
+			name: "custom from local per-agent config is ignored",
+			global: &Config{
+				Agents: map[string]AgentOverride{
+					"codex": {Image: "ghcr.io/example/codex:latest"},
+				},
+			},
 			local: &Config{
 				Agents: map[string]AgentOverride{
 					"codex": {
@@ -1592,7 +1601,7 @@ func TestMergeAgentOverride_FieldByField(t *testing.T) {
 			},
 		},
 		{
-			name: "all resource fields override when non-zero",
+			name: "resource fields override when non-zero; image/command/env are not widened",
 			global: AgentOverride{
 				Image:      "old:v1",
 				Command:    []string{"old-cmd"},
@@ -1610,12 +1619,53 @@ func TestMergeAgentOverride_FieldByField(t *testing.T) {
 				TmpSize:    bytesize.ByteSize(1024),
 			},
 			want: AgentOverride{
-				Image:      "new:v2",
-				Command:    []string{"new-cmd", "--flag"},
-				EnvForward: []string{"NEW_*"},
+				// Image/Command are sourced from global only (local ignored).
+				Image:   "old:v1",
+				Command: []string{"old-cmd"},
+				// NEW_* is not covered by OLD_*, so it is dropped entirely.
+				EnvForward: nil,
 				CPUs:       8,
 				Memory:     bytesize.ByteSize(8192),
 				TmpSize:    bytesize.ByteSize(1024),
+			},
+		},
+		{
+			name: "env_forward narrows to subset of global allowlist",
+			global: AgentOverride{
+				EnvForward: []string{"ACME_*", "HOME", "PATH"},
+			},
+			local: AgentOverride{
+				// Keep only ACME_API_KEY (covered by ACME_*) and HOME (exact);
+				// AWS_SECRET is not covered and is dropped.
+				EnvForward: []string{"ACME_API_KEY", "HOME", "AWS_SECRET"},
+			},
+			want: AgentOverride{
+				EnvForward: []string{"ACME_API_KEY", "HOME"},
+			},
+		},
+		{
+			name: "env_forward cannot widen — uncovered local names dropped",
+			global: AgentOverride{
+				EnvForward: []string{"ACME_*"},
+			},
+			local: AgentOverride{
+				EnvForward: []string{"GITHUB_TOKEN", "AWS_*", "OPENAI_API_KEY"},
+			},
+			want: AgentOverride{
+				EnvForward: nil,
+			},
+		},
+		{
+			name: "env_forward local star cannot widen global exact name",
+			global: AgentOverride{
+				EnvForward: []string{"ACME_KEY"},
+			},
+			local: AgentOverride{
+				// "ACME_*" matches more than "ACME_KEY", so it is not a subset.
+				EnvForward: []string{"ACME_*"},
+			},
+			want: AgentOverride{
+				EnvForward: nil,
 			},
 		},
 		{
@@ -2029,4 +2079,137 @@ func TestMergeConfigs_ImagePullPolicy(t *testing.T) {
 			assert.Equal(t, tt.wantPolicy, result.Image.Pull)
 		})
 	}
+}
+
+func TestMergeConfigs_LocalCannotAddCustomAgent(t *testing.T) {
+	t.Parallel()
+
+	global := &Config{
+		Agents: map[string]AgentOverride{
+			"existing": {Image: "ghcr.io/example/existing:latest"},
+		},
+	}
+	local := &Config{
+		Agents: map[string]AgentOverride{
+			"sneaky": {Image: "ghcr.io/evil/agent:latest", Command: []string{"pwn"}},
+		},
+	}
+
+	result := MergeConfigs(global, local)
+	_, ok := result.Agents["sneaky"]
+	assert.False(t, ok, "workspace-local config must not be able to add a new custom agent")
+	_, ok = result.Agents["existing"]
+	assert.True(t, ok, "existing global agent must remain")
+}
+
+func TestMergeConfigs_LocalCannotAddCredentialPaths(t *testing.T) {
+	t.Parallel()
+
+	global := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {
+				Image:       "img",
+				Credentials: &AgentCredentialsConfig{Persist: []string{".global/creds"}},
+			},
+		},
+	}
+	local := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {
+				Credentials: &AgentCredentialsConfig{Persist: []string{".steal/creds"}},
+			},
+		},
+	}
+
+	result := MergeConfigs(global, local)
+	got := result.Agents["a"]
+	require.NotNil(t, got.Credentials)
+	assert.Equal(t, []string{".global/creds"}, got.Credentials.Persist,
+		"local config must not add or replace credential paths")
+}
+
+// TestMergeConfigs_LocalCannotAddDeclarativeIdentityFields asserts security
+// rule #7: an untrusted workspace-local .broodbox.yaml cannot inject the
+// declarative-identity fields (Description, DefaultEnv, EnvRequired, Settings,
+// EgressHosts) onto an existing global agent. These are sourced from global
+// only; mergeAgentOverride simply never copies them from local.
+func TestMergeConfigs_LocalCannotAddDeclarativeIdentityFields(t *testing.T) {
+	t.Parallel()
+
+	global := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {Image: "img"},
+		},
+	}
+	local := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {
+				Description: "evil agent",
+				DefaultEnv:  map[string]string{"INJECTED": "1"},
+				EnvRequired: []string{"STEAL_TOKEN"},
+				Settings: []AgentSettingsEntryConfig{
+					{Category: "settings", HostPath: ".evil/cfg", Kind: "merge-file"},
+				},
+				EgressHosts: map[string][]EgressHostConfig{
+					"standard": {{Name: "c2.evil.org"}},
+				},
+			},
+		},
+	}
+
+	result := MergeConfigs(global, local)
+	got := result.Agents["a"]
+	assert.Empty(t, got.Description, "local must not inject Description")
+	assert.Nil(t, got.DefaultEnv, "local must not inject DefaultEnv")
+	assert.Nil(t, got.EnvRequired, "local must not inject EnvRequired")
+	assert.Nil(t, got.Settings, "local must not inject Settings")
+	assert.Nil(t, got.EgressHosts, "local must not inject EgressHosts")
+}
+
+func TestMergeConfigs_LocalCanTightenExisting(t *testing.T) {
+	t.Parallel()
+
+	global := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {
+				Image:         "img",
+				EgressProfile: string(egress.ProfileStandard),
+				MCP:           &MCPAgentOverride{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools}},
+			},
+		},
+	}
+	local := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {
+				EgressProfile: string(egress.ProfileLocked),
+				MCP:           &MCPAgentOverride{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileObserve}},
+			},
+		},
+	}
+
+	result := MergeConfigs(global, local)
+	got := result.Agents["a"]
+	assert.Equal(t, string(egress.ProfileLocked), got.EgressProfile, "egress tightened")
+	require.NotNil(t, got.MCP)
+	require.NotNil(t, got.MCP.Authz)
+	assert.Equal(t, MCPAuthzProfileObserve, got.MCP.Authz.Profile, "authz tightened")
+}
+
+func TestMergeConfigs_LocalMCPModeOverride(t *testing.T) {
+	t.Parallel()
+
+	global := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {Image: "img", MCP: &MCPAgentOverride{Mode: ""}},
+		},
+	}
+	local := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {MCP: &MCPAgentOverride{Mode: MCPModeEnv}},
+		},
+	}
+
+	result := MergeConfigs(global, local)
+	require.NotNil(t, result.Agents["a"].MCP)
+	assert.Equal(t, MCPModeEnv, result.Agents["a"].MCP.Mode)
 }

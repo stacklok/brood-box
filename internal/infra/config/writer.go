@@ -167,6 +167,11 @@ var defaultConfigTemplate = `# Brood Box configuration
 
 # Per-agent configuration overrides. Keys are agent names
 # (e.g. claude-code, codex, opencode, or custom agent names).
+#
+# SECURITY: Custom (bring-your-own) agents may ONLY be declared here in the
+# global config (or via CLI). A per-workspace .broodbox.yaml CANNOT add a new
+# custom agent or introduce new credential paths — it may only tighten an
+# agent that already exists in this file.
 # agents:
 #   # claude-code:
 #   #   # Override the OCI image reference.
@@ -197,7 +202,7 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   #   allow_hosts: []
 #   #
 #   #   # Override MCP proxy settings for this agent.
-#   #   # Only enabled (gate) and authz (tighten-only) are supported.
+#   #   # Only enabled (gate), mode, and authz (tighten-only) are supported.
 #   #   mcp:
 #   #     enabled: true
 #   #     authz:
@@ -210,6 +215,69 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   #     categories:
 #   #       rules: true
 #   #       skills: true
+#
+#   # Custom (bring-your-own) agent declared entirely in config.
+#   # Custom agents are SAFER by default than built-ins: env_forward is empty
+#   # (no host env is forwarded), the egress profile defaults to "standard"
+#   # (so you must declare egress_hosts or set it to "permissive"), and when
+#   # MCP is enabled the authz profile defaults to "safe-tools".
+#   # my-agent:
+#   #   image: "ghcr.io/acme/my-agent:latest"
+#   #   command: ["my-agent", "--interactive"]
+#   #   description: "ACME's in-house coding agent"
+#   #
+#   #   # VM resources. If omitted (and no global defaults set), a safe
+#   #   # minimum of 2 cpus / 4096 MiB is applied so the agent can boot.
+#   #   cpus: 2
+#   #   memory: 4096
+#   #
+#   #   # Forwarded host env (empty by default — opt in explicitly).
+#   #   env_forward:
+#   #     - "ACME_API_KEY"
+#   #     - "ACME_*"
+#   #   # Env always set in the VM.
+#   #   default_env:
+#   #     ACME_MODE: "interactive"
+#   #   # Env names that must be present on the host (surfaced by
+#   #   # 'bbox agents inspect' and 'bbox agents doctor'; values never read).
+#   #   env_required:
+#   #     - "ACME_API_KEY"
+#   #
+#   #   # Egress: default profile "standard" requires hosts for it.
+#   #   egress_profile: "standard"
+#   #   egress_hosts:
+#   #     standard:
+#   #       - name: "api.acme.dev"
+#   #         ports: [443]
+#   #         protocol: 6  # TCP
+#   #       - name: "*.acme.dev"
+#   #     locked:
+#   #       - name: "api.acme.dev"
+#   #         ports: [443]
+#   #
+#   #   # MCP mode "env": the proxy is enabled and the agent learns it only
+#   #   # via the BBOX_MCP_URL env var (no config-file injection).
+#   #   mcp:
+#   #     enabled: true
+#   #     mode: "env"
+#   #     authz:
+#   #       profile: "safe-tools"
+#   #
+#   #   # Credential persistence (OFF unless declared; relative paths only).
+#   #   credentials:
+#   #     persist:
+#   #       - ".acme/credentials.json"
+#   #       - ".config/acme/"
+#   #
+#   #   # Settings injection (OFF unless declared; relative paths only).
+#   #   settings:
+#   #     - category: "settings"
+#   #       host_path: ".config/acme/settings.json"
+#   #       guest_path: ".config/acme/settings.json"
+#   #       kind: "merge-file"   # file | directory | merge-file
+#   #       format: "json"        # json | toml | jsonc (merge-file only)
+#   #       optional: true
+#   #       allow_keys: ["theme", "editor"]
 `
 
 // WriteDefault writes the default config template to the given path.

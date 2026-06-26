@@ -24,6 +24,7 @@ import (
 	"unicode"
 
 	"github.com/adrg/xdg"
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/spf13/cobra"
 	"github.com/stacklok/go-microvm/extract"
 	"github.com/stacklok/go-microvm/image"
@@ -228,6 +229,7 @@ Example:
 
 	// Add subcommands.
 	cmd.AddCommand(listCmd())
+	cmd.AddCommand(agentsCmd())
 	cmd.AddCommand(authCmd())
 	cmd.AddCommand(configCmd())
 	cmd.AddCommand(cacheCmd())
@@ -236,18 +238,16 @@ Example:
 }
 
 func listCmd() *cobra.Command {
-	return &cobra.Command{
+	var cfgPath string
+	cmd := &cobra.Command{
 		Use:   "list",
-		Short: "List available agents",
-		RunE: func(_ *cobra.Command, _ []string) error {
-			registry := infraagent.NewRegistry(clients.Builtins(slog.Default())...)
-			entries := registry.List()
-			for _, e := range entries {
-				fmt.Printf("%-15s %s\n", e.Agent.Name, e.Agent.Image)
-			}
-			return nil
+		Short: "List available agents (alias for 'agents list')",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return runAgentsList(cmd, cfgPath)
 		},
 	}
+	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/broodbox/config.yaml)")
+	return cmd
 }
 
 func authCmd() *cobra.Command {
@@ -545,67 +545,14 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		}()
 	}
 
-	// Build registry: start with built-in clients, then layer in any
-	// data-only custom agents declared in config.
-	registry := infraagent.NewRegistry(clients.Builtins(logger)...)
-	cfgLoader := infraconfig.NewLoader(flags.cfgPath)
-
-	cfg, err := cfgLoader.Load()
+	// Build registry and resolve config (global + workspace-local merge,
+	// custom-agent registration). Shared with the `bbox agents` commands.
+	resolved, err := buildResolvedRegistry(flags.cfgPath, ws, logger, os.Stderr)
 	if err != nil {
-		// Fail fast on global config errors. Silently discarding every
-		// override because one line fails validation (or the file is
-		// unreadable) is worse UX than a hard error naming the file and
-		// the exact problem — the user owns this file and wants to know.
-		return fmt.Errorf("loading global config %s: %w", cfgLoader.Path(), err)
+		return err
 	}
-	if cfg == nil {
-		cfg = &domainconfig.Config{}
-	}
-
-	// Load per-workspace config and merge. Unlike the global config, a
-	// bad workspace config is warn-and-skip: a malicious or corrupted
-	// `.broodbox.yaml` shipped by an untrusted repo must not be able to
-	// DOS the user's session — the operator can always run from a
-	// different directory or delete the file.
-	localCfgPath := filepath.Join(ws, domainconfig.LocalConfigFile)
-	localCfg, err := infraconfig.LoadFromPath(localCfgPath)
-	if err != nil {
-		_, _ = fmt.Fprintf(os.Stderr, "Warning: failed to load local config %s: %s (ignoring)\n", localCfgPath, err)
-		logger.Warn("failed to load local config, ignoring", "error", err)
-	}
-	warnLocalConfigOverrides(os.Stderr, localCfg, cfg)
-	cfg = domainconfig.MergeConfigs(cfg, localCfg)
-	if cfg == nil {
-		cfg = &domainconfig.Config{}
-	}
-
-	if cfg.Agents != nil {
-		// Register custom agents from config (only those not already built-in).
-		// Warnings use fmt.Fprintf(os.Stderr) instead of slog because the logger
-		// writes to a file — users would not see invalid agent name warnings
-		// unless they manually inspected the log.
-		for name, override := range cfg.Agents {
-			if err := agent.ValidateName(name); err != nil {
-				_, _ = fmt.Fprintf(os.Stderr, "Warning: skipping custom agent %q: %s\n", name, err)
-				continue
-			}
-			if _, err := registry.Get(name); err != nil {
-				// Not a built-in agent — register as custom if it has an image.
-				if override.Image != "" {
-					if addErr := registry.Add(agent.Agent{
-						Name:          name,
-						Image:         override.Image,
-						Command:       override.Command,
-						EnvForward:    override.EnvForward,
-						DefaultCPUs:   override.CPUs,
-						DefaultMemory: override.Memory,
-					}); addErr != nil {
-						_, _ = fmt.Fprintf(os.Stderr, "Warning: skipping custom agent %q: %s\n", name, addErr)
-					}
-				}
-			}
-		}
-	}
+	registry := resolved.registry
+	cfg := resolved.merged
 
 	// Resolve effective workspace mode. CLI wins over global config; unset
 	// means snapshot. Workspace-local .broodbox.yaml was already merged with
@@ -877,6 +824,13 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 				authzCfg = domainconfig.MergeMCPAuthzConfig(authzCfg, ao.MCP.Authz)
 			}
 		}
+
+		// Default custom (bring-your-own) agents with MCP enabled to the
+		// safe-tools authz profile when no explicit profile was supplied via
+		// CLI flag, global config, inferred custom policies, or per-agent
+		// override. Built-ins keep full-access. This is subordinate to every
+		// explicit source above, so an operator can still widen or tighten it.
+		authzCfg = applyCustomAgentAuthzDefault(authzCfg, isCustomAgent(registry, agentName))
 
 		// Resolve session TTL: flag (non-zero) > config > default (12h).
 		sessionTTL := flags.mcpSessionTTL
@@ -1152,6 +1106,138 @@ func chooseObserver(terminal *infraterminal.OSTerminal) progress.Observer {
 	return infraprogress.NewSimpleObserver(os.Stderr)
 }
 
+// resolvedRegistry bundles the registry and the layered configs produced by
+// buildResolvedRegistry. The individual global/local configs are kept
+// alongside the merged result so commands like `bbox agents inspect` can
+// attribute each field to its source (built-in / global / workspace).
+type resolvedRegistry struct {
+	registry *infraagent.Registry
+	merged   *domainconfig.Config
+	global   *domainconfig.Config
+	local    *domainconfig.Config
+}
+
+// imageRefValidator parses an OCI image reference using go-containerregistry.
+// It performs no network I/O — only syntactic validation. It is passed into
+// the domain-layer config.ValidateCustomAgent so the domain stays free of the
+// registry dependency.
+func imageRefValidator(ref string) error {
+	if _, err := name.ParseReference(ref); err != nil {
+		return err
+	}
+	return nil
+}
+
+// buildResolvedRegistry loads the global config, merges the per-workspace
+// .broodbox.yaml (with the usual warn-and-skip semantics), registers any
+// custom (data-only) agents declared in the merged config, and returns the
+// populated registry plus the layered configs.
+//
+// It is the single resolution path shared by `run()` and the `bbox agents`
+// subcommands so they all observe the same agent set and validation behavior.
+// warnWriter receives the workspace-config override warnings; pass io.Discard
+// to suppress them (e.g. for `agents inspect`).
+func buildResolvedRegistry(cfgPath, ws string, logger *slog.Logger, warnWriter io.Writer) (*resolvedRegistry, error) {
+	registry := infraagent.NewRegistry(clients.Builtins(logger)...)
+	cfgLoader := infraconfig.NewLoader(cfgPath)
+
+	global, err := cfgLoader.Load()
+	if err != nil {
+		// Fail fast on global config errors. Silently discarding every
+		// override because one line fails validation (or the file is
+		// unreadable) is worse UX than a hard error naming the file and
+		// the exact problem — the user owns this file and wants to know.
+		return nil, fmt.Errorf("loading global config %s: %w", cfgLoader.Path(), err)
+	}
+	if global == nil {
+		global = &domainconfig.Config{}
+	}
+
+	// Load per-workspace config and merge. Unlike the global config, a bad
+	// workspace config is warn-and-skip: a malicious or corrupted
+	// `.broodbox.yaml` shipped by an untrusted repo must not be able to DOS
+	// the user's session — the operator can always run from a different
+	// directory or delete the file.
+	localCfgPath := filepath.Join(ws, domainconfig.LocalConfigFile)
+	local, err := infraconfig.LoadFromPath(localCfgPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(warnWriter, "Warning: failed to load local config %s: %s (ignoring)\n", localCfgPath, err)
+		logger.Warn("failed to load local config, ignoring", "error", err)
+	}
+	warnLocalConfigOverrides(warnWriter, local, global)
+	merged := domainconfig.MergeConfigs(global, local)
+	if merged == nil {
+		merged = &domainconfig.Config{}
+	}
+
+	registerCustomAgents(registry, merged, warnWriter)
+
+	return &resolvedRegistry{registry: registry, merged: merged, global: global, local: local}, nil
+}
+
+// isCustomAgent reports whether agentName resolves to a custom (bring-your-own)
+// agent rather than a built-in. Custom agents are registered as data-only
+// entries with a nil Plugin (registerCustomAgents), whereas built-ins always
+// carry a Plugin. Unknown agents return false (treated as non-custom).
+func isCustomAgent(registry *infraagent.Registry, agentName string) bool {
+	entry, err := registry.Get(agentName)
+	if err != nil {
+		return false
+	}
+	return entry.Plugin == nil
+}
+
+// applyCustomAgentAuthzDefault returns the effective MCP authz config for an
+// agent with MCP enabled. When no authz profile was resolved from any explicit
+// source (CLI flag, global config, inferred custom policies, or the per-agent
+// tighten-only override) and the agent is a custom (bring-your-own) agent, it
+// defaults to DefaultCustomAgentMCPAuthzProfile (safe-tools). Built-in agents
+// and any agent with an already-resolved authz config are returned unchanged
+// (built-ins keep full-access). It is pure so the default can be table-tested.
+func applyCustomAgentAuthzDefault(authzCfg *domainconfig.MCPAuthzConfig, isCustom bool) *domainconfig.MCPAuthzConfig {
+	if authzCfg != nil {
+		return authzCfg
+	}
+	if !isCustom {
+		return nil
+	}
+	return &domainconfig.MCPAuthzConfig{Profile: domainconfig.DefaultCustomAgentMCPAuthzProfile}
+}
+
+// registerCustomAgents adds data-only custom agents from the merged config to
+// the registry. Agents already present (built-ins) are skipped. Each custom
+// agent is validated and mapped via the pure domain functions; invalid or
+// unmappable agents are warned and skipped rather than aborting the run.
+//
+// Warnings use the supplied writer (typically os.Stderr) instead of slog
+// because the logger writes to a file — users would not see invalid agent
+// warnings unless they manually inspected the log.
+func registerCustomAgents(registry *infraagent.Registry, merged *domainconfig.Config, warnWriter io.Writer) {
+	for name, override := range merged.Agents {
+		if _, err := registry.Get(name); err == nil {
+			// Already a built-in agent — overrides are applied at run time.
+			continue
+		}
+		if override.Image == "" {
+			// Not a custom-agent definition (e.g. an override for an agent
+			// that is not currently registered). Skip silently.
+			continue
+		}
+		if err := domainconfig.ValidateCustomAgent(name, override, imageRefValidator); err != nil {
+			_, _ = fmt.Fprintf(warnWriter, "Warning: skipping custom agent %q: %s\n", name, err)
+			continue
+		}
+		ag, err := domainconfig.AgentFromOverride(name, override, merged.Defaults)
+		if err != nil {
+			_, _ = fmt.Fprintf(warnWriter, "Warning: skipping custom agent %q: %s\n", name, err)
+			continue
+		}
+		if addErr := registry.Add(ag); addErr != nil {
+			_, _ = fmt.Fprintf(warnWriter, "Warning: skipping custom agent %q: %s\n", name, addErr)
+		}
+	}
+}
+
 // warnLocalConfigOverrides prints warnings to w for each security-sensitive
 // field set in the local per-workspace config. This makes supply-chain-style
 // overrides visible to the user without blocking execution.
@@ -1291,14 +1377,31 @@ func warnLocalConfigOverrides(w io.Writer, localCfg, globalCfg *domainconfig.Con
 	for _, name := range slices.Sorted(maps.Keys(localCfg.Agents)) {
 		safeName := sanitizeValue(name)
 		override := localCfg.Agents[name]
+
+		// Security #7: a workspace config cannot ADD a new custom agent or
+		// introduce new credential paths — both are dropped during merge.
+		// Surface the blocked attempt explicitly.
+		if _, inGlobal := globalCfg.Agents[name]; !inGlobal {
+			warnings = append(warnings, fmt.Sprintf(
+				"attempts to define a new agent %q — ignored (custom agents must be declared in global config)", safeName))
+		}
+		if override.Credentials != nil && len(override.Credentials.Persist) > 0 {
+			warnings = append(warnings, fmt.Sprintf(
+				"attempts to add %s credential paths — ignored (credentials must be declared in global config)", safeName))
+		}
+
 		if override.Image != "" {
-			warnings = append(warnings, fmt.Sprintf("overrides %s image: %s", safeName, sanitizeValue(override.Image)))
+			warnings = append(warnings, fmt.Sprintf(
+				"attempts to override %s image: %s — ignored (image must be declared in global config)",
+				safeName, sanitizeValue(override.Image)))
 		}
 		if len(override.Command) > 0 {
-			warnings = append(warnings, fmt.Sprintf("overrides %s command", safeName))
+			warnings = append(warnings, fmt.Sprintf(
+				"attempts to override %s command — ignored (command must be declared in global config)", safeName))
 		}
 		if len(override.EnvForward) > 0 {
-			warnings = append(warnings, fmt.Sprintf("overrides %s env forwarding", safeName))
+			warnings = append(warnings, fmt.Sprintf(
+				"narrows %s env forwarding (can only restrict, not widen)", safeName))
 		}
 		if len(override.AllowHosts) > 0 {
 			names := make([]string, len(override.AllowHosts))

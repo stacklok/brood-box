@@ -11,6 +11,7 @@ import (
 
 	"github.com/stacklok/brood-box/pkg/clients/internal/configio"
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/config"
 )
 
 // Ref: https://code.claude.com/docs/en/mcp
@@ -35,7 +36,7 @@ func (mcpInjector) Inject(rootfsPath, gatewayIP string, port uint16, chown agent
 	servers := map[string]claudeCodeServer{
 		"sandbox-tools": {
 			Type: "http",
-			URL:  fmt.Sprintf("http://%s:%d/mcp", gatewayIP, port),
+			URL:  fmt.Sprintf("http://%s:%d%s", gatewayIP, port, config.MCPEndpointPath),
 		},
 	}
 

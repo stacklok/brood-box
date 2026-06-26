@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/brood-box/pkg/clients/internal/configio"
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/config"
 )
 
 // Ref: https://github.com/NousResearch/hermes-agent
@@ -21,7 +22,7 @@ type mcpInjector struct{}
 // Inject merges an MCP server entry into ~/.hermes/config.yaml, preserving
 // any pre-existing YAML keys (provider config, skills, cron, etc.).
 func (mcpInjector) Inject(rootfsPath, gatewayIP string, port uint16, chown agent.ChownFunc) error {
-	mcpURL := fmt.Sprintf("http://%s:%d/mcp", gatewayIP, port)
+	mcpURL := fmt.Sprintf("http://%s:%d%s", gatewayIP, port, config.MCPEndpointPath)
 
 	hermesDir := filepath.Join(rootfsPath, configio.SandboxHome, ".hermes")
 	if err := configio.MkdirAndChown(hermesDir, chown); err != nil {

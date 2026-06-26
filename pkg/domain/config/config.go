@@ -481,17 +481,55 @@ func StricterMCPAuthzProfile(a, b string) string {
 }
 
 // MCPAgentOverride holds the subset of MCP settings that can be
-// overridden per-agent. Only Enabled (gate) and Authz (tighten-only)
-// have runtime effect at the per-agent level.
+// overridden per-agent. Only Enabled (gate), Mode, and Authz
+// (tighten-only) have runtime effect at the per-agent level.
 type MCPAgentOverride struct {
 	// Enabled controls whether the MCP proxy is active for this agent.
 	// nil means "no override" (inherit global setting), unlike
 	// MCPConfig.Enabled where nil defaults to true.
 	Enabled *bool `yaml:"enabled,omitempty"`
 
+	// Mode controls how the agent learns about the MCP proxy.
+	// "" (default) preserves legacy behavior: a config-file injector runs
+	// if the agent's plugin supplies one. "env" enables the proxy but runs
+	// NO config-file injector — the agent only learns the proxy via the
+	// universal BBOX_MCP_URL environment variable. "config" (declarative
+	// file injection) is reserved for a future release and rejected today.
+	Mode string `yaml:"mode,omitempty"`
+
 	// Authz overrides the MCP authorization profile for this agent.
 	// Tighten-only: can only make the profile stricter, not more permissive.
 	Authz *MCPAuthzConfig `yaml:"authz,omitempty"`
+}
+
+// MCPEndpointPath is the HTTP path the vmcp proxy serves the MCP endpoint on.
+// It is the single source of truth shared by the proxy server
+// (internal/infra/mcp), the universal BBOX_MCP_URL env var (pkg/sandbox), and
+// every built-in client's config injector (pkg/clients/*) so the served path
+// can never drift between producers and consumers.
+const MCPEndpointPath = "/mcp"
+
+const (
+	// MCPModeEnv enables the MCP proxy and exposes it to the agent only via
+	// the universal BBOX_MCP_URL environment variable (no config-file
+	// injection).
+	MCPModeEnv = "env"
+
+	// MCPModeConfig requests declarative config-file injection. Reserved for
+	// a future release; rejected by ValidateCustomAgent today.
+	MCPModeConfig = "config"
+)
+
+// IsValidMCPMode reports whether the given MCP mode is accepted in this
+// release. The empty string (legacy behavior) and "env" are valid.
+// "config" is recognized as a future value but is NOT yet supported.
+func IsValidMCPMode(mode string) bool {
+	switch mode {
+	case "", MCPModeEnv:
+		return true
+	default:
+		return false
+	}
 }
 
 // IsEnabled returns whether the MCP proxy is enabled.
@@ -634,16 +672,91 @@ type EgressHostConfig struct {
 	Protocol uint8    `yaml:"protocol,omitempty"`
 }
 
-// AgentOverride allows users to override built-in agent settings.
+// AgentCredentialsConfig configures credential persistence for a custom
+// agent. Persist lists relative paths (from the sandbox user's home) whose
+// contents are saved between sessions for authentication.
+type AgentCredentialsConfig struct {
+	// Persist lists relative home-directory paths to persist between
+	// sessions. Paths must be relative and must not escape the home
+	// directory (no leading "/" and no ".." element).
+	Persist []string `yaml:"persist,omitempty"`
+}
+
+// AgentSettingsEntryConfig is the YAML representation of a single settings
+// injection entry for a custom agent. It mirrors settings.Entry.
+type AgentSettingsEntryConfig struct {
+	// Category groups entries for enable/disable control (e.g. "settings",
+	// "rules", "skills").
+	Category string `yaml:"category,omitempty"`
+
+	// HostPath is relative to $HOME on the host.
+	HostPath string `yaml:"host_path"`
+
+	// GuestPath is relative to the guest home directory. Defaults to HostPath
+	// when empty.
+	GuestPath string `yaml:"guest_path,omitempty"`
+
+	// Kind selects how the entry is processed: "file", "directory", or
+	// "merge-file".
+	Kind string `yaml:"kind,omitempty"`
+
+	// Format identifies the file format for "merge-file" entries:
+	// "json", "toml", or "jsonc".
+	Format string `yaml:"format,omitempty"`
+
+	// Optional means skip silently if the host source does not exist.
+	Optional bool `yaml:"optional,omitempty"`
+
+	// AllowKeys lists top-level keys to keep for "merge-file" entries. Empty
+	// means copy all keys.
+	AllowKeys []string `yaml:"allow_keys,omitempty"`
+}
+
+// AgentOverride allows users to override built-in agent settings and to
+// declare a brand-new custom (bring-your-own) agent entirely from config.
+//
+// For built-in agents, the zero value of each field means "inherit". For a
+// custom agent (a key absent from the built-in registry), the fields below
+// fully describe the agent — see AgentFromOverride for the pure mapping into
+// an agent.Agent and ValidateCustomAgent for the load-time checks.
+//
+// Security note: custom agents may ONLY be declared in the global config or
+// via CLI. Workspace-local .broodbox.yaml cannot add a new custom agent or
+// introduce new credential paths — see MergeConfigs.
 type AgentOverride struct {
 	// Image overrides the OCI image reference.
 	Image string `yaml:"image,omitempty"`
 
+	// Description is a human-readable description of a custom agent. Purely
+	// informational (surfaced by `bbox agents inspect`).
+	Description string `yaml:"description,omitempty"`
+
 	// Command overrides the entrypoint command.
 	Command []string `yaml:"command,omitempty"`
 
-	// EnvForward overrides the env forwarding patterns.
+	// EnvForward overrides the env forwarding patterns. Custom agents default
+	// to an EMPTY list (no host env is forwarded) to avoid accidental secret
+	// leakage; operators opt in explicitly.
 	EnvForward []string `yaml:"env_forward,omitempty"`
+
+	// DefaultEnv contains environment variables always set in the VM for this
+	// agent. Applied before forwarded variables, so a forwarded variable with
+	// the same name takes precedence.
+	DefaultEnv map[string]string `yaml:"default_env,omitempty"`
+
+	// EnvRequired lists environment variable names that must be present in the
+	// host environment for this agent to run. Used by `bbox agents inspect`
+	// and `bbox agents doctor` to surface missing configuration; the values
+	// themselves are never read or printed.
+	EnvRequired []string `yaml:"env_required,omitempty"`
+
+	// Credentials configures credential persistence for this agent.
+	// OFF unless explicitly declared.
+	Credentials *AgentCredentialsConfig `yaml:"credentials,omitempty"`
+
+	// Settings declares host settings to inject into the VM for this agent.
+	// OFF unless explicitly declared.
+	Settings []AgentSettingsEntryConfig `yaml:"settings,omitempty"`
 
 	// CPUs overrides the vCPU count.
 	CPUs uint32 `yaml:"cpus,omitempty"`
@@ -656,10 +769,18 @@ type AgentOverride struct {
 	// human-readable values like "512m" or "2g".
 	TmpSize bytesize.ByteSize `yaml:"tmp_size,omitempty"`
 
-	// EgressProfile overrides the agent's default egress profile.
+	// EgressProfile overrides the agent's default egress profile. Custom
+	// agents default to "standard" when this is empty (built-ins keep their
+	// own built-in default).
 	EgressProfile string `yaml:"egress_profile,omitempty"`
 
-	// AllowHosts are additional egress hosts for this agent.
+	// EgressHosts maps egress profile names ("standard", "locked", ...) to the
+	// hosts allowed for that profile. Required for a custom agent whose
+	// effective profile is non-permissive (egress.Resolve needs hosts).
+	EgressHosts map[string][]EgressHostConfig `yaml:"egress_hosts,omitempty"`
+
+	// AllowHosts are additional egress hosts for this agent (additive on top
+	// of the profile's host list).
 	AllowHosts []EgressHostConfig `yaml:"allow_hosts,omitempty"`
 
 	// MCP overrides the global MCP proxy settings for this agent.
@@ -698,7 +819,10 @@ func clampTmpSize(s bytesize.ByteSize) bytesize.ByteSize {
 //   - Defaults.EgressProfile: local can only tighten (not widen).
 //   - Network.AllowHosts: additive (global + local).
 //   - MCP.SessionTTL: local value is IGNORED (operational, not policy).
-//   - Agents map: local extends/overrides global per key.
+//   - Agents map: local may only TIGHTEN existing global agents. A
+//     local-only agent key (a new custom agent) is DROPPED. Local Image,
+//     Command, and credential paths are ignored, and local EnvForward may
+//     only narrow (subset of) the global allowlist (security #7).
 //
 // Returns global unchanged when local is nil.
 func MergeConfigs(global, local *Config) *Config {
@@ -800,29 +924,28 @@ func MergeConfigs(global, local *Config) *Config {
 	// authoritative.
 	// (result.MCP.SessionTTL already carries the global value via *global copy.)
 
-	// Agents: local extends/overrides global per key.
-	// Security fields (EgressProfile, MCP.Authz) use tighten-only merge.
-	// Resource/identity fields use local-overrides-when-non-zero.
-	// AllowHosts are additive.
-	if len(local.Agents) > 0 {
-		if result.Agents == nil {
-			result.Agents = make(map[string]AgentOverride)
-		} else {
-			// Copy the global map to avoid mutating the original.
-			merged := make(map[string]AgentOverride, len(result.Agents)+len(local.Agents))
-			for k, v := range result.Agents {
-				merged[k] = v
-			}
-			result.Agents = merged
+	// Agents: local may only TIGHTEN existing global agents.
+	//
+	// Security (#7): workspace-local config must NOT be able to introduce a
+	// brand-new custom agent (a key absent from the global config) — a
+	// repository could otherwise ship a malicious agent definition. Such keys
+	// are DROPPED here. For existing agents, mergeAgentOverride applies
+	// tighten-only/additive semantics and additionally ignores any local
+	// Image, Command, and credential paths, and narrows (never widens)
+	// EnvForward (local config cannot widen credential persistence or
+	// repoint/forward additional host env into the agent).
+	if len(local.Agents) > 0 && len(result.Agents) > 0 {
+		// Copy the global map to avoid mutating the original.
+		merged := make(map[string]AgentOverride, len(result.Agents))
+		for k, v := range result.Agents {
+			merged[k] = v
 		}
-		for k, v := range local.Agents {
-			if ga, ok := result.Agents[k]; ok {
-				v = mergeAgentOverride(ga, v)
-			} else {
-				// New agent from local — still sanitize security fields.
-				v = sanitizeNewAgentOverride(v)
+		result.Agents = merged
+		for k, lv := range local.Agents {
+			if gv, ok := result.Agents[k]; ok {
+				result.Agents[k] = mergeAgentOverride(gv, lv)
 			}
-			result.Agents[k] = v
+			// else: local-only agent key is dropped (cannot add a new agent).
 		}
 	}
 
@@ -997,26 +1120,38 @@ func TightenSettingsCategories(global, local *SettingsCategoryConfig) *SettingsC
 
 // mergeAgentOverride merges a local (workspace) agent override into a global one.
 // Rules mirror the top-level MergeConfigs patterns:
-//   - Resource/identity fields (Image, Command, EnvForward, CPUs, Memory, TmpSize):
-//     local overrides global when non-zero.
+//   - Resource fields (CPUs, Memory, TmpSize): local overrides global when non-zero.
 //   - EgressProfile: tighten-only via egress.Stricter.
 //   - AllowHosts: additive (global + local).
-//   - MCP.Enabled: local overrides global.
+//   - MCP.Enabled / MCP.Mode: local overrides global.
 //   - MCP.Authz: tighten-only via MergeMCPAuthzConfig.
 //   - SettingsImport: tighten-only via mergeSettingsImportConfig.
+//   - EnvForward: tighten-only — local may only NARROW (subset of) the global
+//     allowlist, never add new names/prefixes.
+//
+// Security (#7): the following identity/credential fields from local config
+// are IGNORED entirely — they are sourced from the global config only:
+//   - Image, Command (a repository must not be able to repoint a built-in or
+//     declared agent at an arbitrary image or change its entrypoint)
+//   - Credentials.Persist (local cannot add new credential paths)
+//   - Description, DefaultEnv, EnvRequired, Settings, EgressHosts
+//     (declarative custom-agent identity must come from the trusted global
+//     config; a repository must not redefine an agent's settings/credentials)
 func mergeAgentOverride(global, local AgentOverride) AgentOverride {
 	result := global
 
-	// Resource/identity: local overrides when non-zero.
-	if local.Image != "" {
-		result.Image = local.Image
-	}
-	if len(local.Command) > 0 {
-		result.Command = local.Command
-	}
+	// Image/Command: IGNORED from local config (sourced from global only).
+	// Allowing local to override these would let an untrusted repository
+	// repoint an agent at an arbitrary image or change its command.
+
+	// EnvForward: tighten-only. Local may only NARROW the global allowlist
+	// (keep a subset), never add new names/prefixes — otherwise a repository's
+	// .broodbox.yaml could exfiltrate host secrets (e.g. GITHUB_TOKEN) into the
+	// VM by widening the forwarded-env set.
 	if len(local.EnvForward) > 0 {
-		result.EnvForward = local.EnvForward
+		result.EnvForward = intersectEnvForward(result.EnvForward, local.EnvForward)
 	}
+
 	if local.CPUs > 0 {
 		result.CPUs = local.CPUs
 	}
@@ -1059,6 +1194,9 @@ func mergeAgentOverride(global, local AgentOverride) AgentOverride {
 		if local.MCP.Enabled != nil {
 			result.MCP.Enabled = local.MCP.Enabled
 		}
+		if local.MCP.Mode != "" {
+			result.MCP.Mode = local.MCP.Mode
+		}
 		result.MCP.Authz = MergeMCPAuthzConfig(result.MCP.Authz, local.MCP.Authz)
 	}
 
@@ -1079,16 +1217,84 @@ func mergeAgentOverride(global, local AgentOverride) AgentOverride {
 	return result
 }
 
-// sanitizeNewAgentOverride strips security-sensitive fields that a workspace
-// config must not set on a brand-new agent (one with no global counterpart).
-// "custom" MCP authz profile is blocked (same as MergeMCPAuthzConfig).
-func sanitizeNewAgentOverride(ao AgentOverride) AgentOverride {
-	if ao.MCP != nil && ao.MCP.Authz != nil && ao.MCP.Authz.Profile == MCPAuthzProfileCustom {
-		sanitized := *ao.MCP
-		sanitized.Authz = nil
-		ao.MCP = &sanitized
+// intersectEnvForward returns the subset of local patterns that are "covered"
+// by the global allowlist — i.e. every host env var a local pattern could match
+// is also matched by some global pattern. This enforces tighten-only semantics:
+// workspace-local config may only NARROW the forwarded-env set, never add new
+// names or prefixes. A local pattern that is not fully covered by global is
+// dropped, so a malicious .broodbox.yaml cannot exfiltrate host secrets (e.g.
+// GITHUB_TOKEN, AWS_*) that the trusted global config never forwarded.
+func intersectEnvForward(global, local []string) []string {
+	if len(global) == 0 {
+		// Global forwards nothing; local cannot widen, so the result is empty.
+		return nil
 	}
-	return ao
+	var result []string
+	for _, lp := range local {
+		if envPatternCoveredBy(lp, global) {
+			result = append(result, lp)
+		}
+	}
+	return result
+}
+
+// envPatternCoveredBy reports whether every key matched by pattern is also
+// matched by at least one pattern in global. Patterns are exact names ("HOME")
+// or trailing-star prefixes ("AWS_*"); leading-star and bare-"*" patterns are
+// treated as matching nothing (mirroring matchPattern in pkg/domain/agent).
+func envPatternCoveredBy(pattern string, global []string) bool {
+	for _, gp := range global {
+		if envPatternSubset(pattern, gp) {
+			return true
+		}
+	}
+	return false
+}
+
+// envPatternSubset reports whether the set of keys matched by sub is a subset
+// of the keys matched by sup.
+//
+//   - sup is an exact name: sub is covered only if sub is the same exact name.
+//   - sup is a prefix glob "P*": sub is covered if sub is an exact name with
+//     prefix P, or a prefix glob "Q*" whose prefix Q starts with P (Q is at
+//     least as specific as P).
+func envPatternSubset(sub, sup string) bool {
+	sub = strings.TrimSpace(sub)
+	sup = strings.TrimSpace(sup)
+	if sub == "" || sub == "*" || sup == "" || sup == "*" {
+		return false
+	}
+	if strings.HasPrefix(sub, "*") || strings.HasPrefix(sup, "*") {
+		// Leading-star patterns match nothing (see matchPattern); a pattern
+		// that matches nothing is trivially a subset, but we conservatively
+		// drop it rather than silently keep a useless pattern.
+		return false
+	}
+
+	subGlob := strings.HasSuffix(sub, "*")
+	supGlob := strings.HasSuffix(sup, "*")
+
+	switch {
+	case !supGlob:
+		// sup is an exact name: only the identical exact name is a subset.
+		return !subGlob && sub == sup
+	default:
+		// sup is a prefix glob "P*".
+		supPrefix := strings.TrimSuffix(sup, "*")
+		if supPrefix == "" {
+			return false
+		}
+		if subGlob {
+			subPrefix := strings.TrimSuffix(sub, "*")
+			if subPrefix == "" {
+				return false
+			}
+			// "Q*" ⊆ "P*" iff Q starts with P.
+			return strings.HasPrefix(subPrefix, supPrefix)
+		}
+		// Exact name ⊆ "P*" iff the name starts with P.
+		return strings.HasPrefix(sub, supPrefix)
+	}
 }
 
 // ToEgressHosts converts config host entries to domain egress hosts.
