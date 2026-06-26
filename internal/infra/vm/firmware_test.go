@@ -6,6 +6,7 @@ package vm
 import (
 	"archive/tar"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -896,4 +897,66 @@ func TestDownloadToFile_HTTPError(t *testing.T) {
 	_, err = downloadToFile(t.Context(), srv.URL, tmpFile, 1<<20)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "unexpected status")
+}
+
+func TestPruneStaleFirmwareVersions(t *testing.T) {
+	t.Parallel()
+
+	cacheRoot := t.TempDir()
+	keep := "v0.0.8"
+
+	// Two stale version dirs, the current one, plus entries that must be
+	// preserved: the lock file and transient download temp entries.
+	staleA := filepath.Join(cacheRoot, "v0.0.6", "linux-amd64")
+	staleB := filepath.Join(cacheRoot, "v0.0.7", "linux-amd64")
+	current := filepath.Join(cacheRoot, keep, "linux-amd64")
+	for _, d := range []string{staleA, staleB, current} {
+		require.NoError(t, os.MkdirAll(d, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(d, "firmware.json"), []byte("{}"), 0o600))
+	}
+	lockPath := filepath.Join(cacheRoot, ".firmware.lock")
+	require.NoError(t, os.WriteFile(lockPath, nil, 0o600))
+	tmpArchive := filepath.Join(cacheRoot, "firmware-123.tar.gz")
+	require.NoError(t, os.WriteFile(tmpArchive, []byte("x"), 0o600))
+	tmpExtract := filepath.Join(cacheRoot, "firmware-extract-456")
+	require.NoError(t, os.MkdirAll(tmpExtract, 0o755))
+
+	pruneStaleFirmwareVersions(context.Background(), cacheRoot, keep)
+
+	// Stale version dirs removed.
+	for _, d := range []string{filepath.Join(cacheRoot, "v0.0.6"), filepath.Join(cacheRoot, "v0.0.7")} {
+		_, err := os.Stat(d)
+		assert.True(t, os.IsNotExist(err), "stale version %s should be removed", filepath.Base(d))
+	}
+	// Current version and non-version entries preserved.
+	_, err := os.Stat(current)
+	assert.NoError(t, err, "current version dir must be preserved")
+	_, err = os.Stat(lockPath)
+	assert.NoError(t, err, "lock file must be preserved")
+	_, err = os.Stat(tmpArchive)
+	assert.NoError(t, err, "transient temp archive must be preserved")
+	_, err = os.Stat(tmpExtract)
+	assert.NoError(t, err, "transient extract dir must be preserved")
+}
+
+func TestPruneStaleFirmwareVersions_NoStaleVersions(t *testing.T) {
+	t.Parallel()
+
+	cacheRoot := t.TempDir()
+	keep := "v0.0.8"
+	current := filepath.Join(cacheRoot, keep, "linux-amd64")
+	require.NoError(t, os.MkdirAll(current, 0o755))
+
+	// Must be a no-op when only the current version is present.
+	pruneStaleFirmwareVersions(context.Background(), cacheRoot, keep)
+
+	_, err := os.Stat(current)
+	assert.NoError(t, err, "current version dir must be preserved")
+}
+
+func TestPruneStaleFirmwareVersions_MissingCacheRoot(t *testing.T) {
+	t.Parallel()
+
+	// Must not panic when the cache root does not exist.
+	pruneStaleFirmwareVersions(context.Background(), filepath.Join(t.TempDir(), "nope"), "v0.0.8")
 }

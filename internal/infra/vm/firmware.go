@@ -276,6 +276,11 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 			return FirmwareResolution{}, err
 		}
 
+		// Fresh download succeeded — reclaim cache dirs left by older
+		// firmware versions. Only the version pinned in go.mod is ever
+		// used, so previous version dirs (tens of MB each) are dead weight.
+		pruneStaleFirmwareVersions(ctx, cacheRoot, version)
+
 		slog.DebugContext(ctx, "firmware downloaded", "dir", filepath.Dir(finalFwPath), "version", version, "arch", candidate)
 		return FirmwareResolution{
 			Dir:       filepath.Dir(finalFwPath),
@@ -292,6 +297,49 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 		lastErr = errors.New("firmware download failed")
 	}
 	return FirmwareResolution{}, lastErr
+}
+
+// pruneStaleFirmwareVersions removes firmware cache version directories under
+// cacheRoot that don't match keepVersion. Each go-microvm version bump creates
+// a new <cacheRoot>/<version>/ directory, but only the pinned version is ever
+// used, so older ones accumulate unbounded.
+//
+// It must be called only after a successful fresh download, with the firmware
+// lock held (no concurrent writers). Failures are logged at debug level and
+// never propagated: the firmware is already cached successfully, so pruning is
+// strictly best-effort cleanup. The lock file and transient temp entries
+// (firmware-*.tar.gz archives, firmware-extract-* dirs) are left untouched.
+func pruneStaleFirmwareVersions(ctx context.Context, cacheRoot, keepVersion string) {
+	entries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		slog.DebugContext(ctx, "firmware prune: cannot scan cache root", "root", cacheRoot, "error", err)
+		return
+	}
+
+	for _, entry := range entries {
+		// Only version directories are pruned; this skips .firmware.lock
+		// and any leftover firmware-*.tar.gz temp archives (plain files).
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == keepVersion {
+			continue
+		}
+		// Skip transient temp dirs created in cacheRoot during download.
+		if strings.HasPrefix(name, "firmware-") {
+			continue
+		}
+
+		stalePath := filepath.Join(cacheRoot, name)
+		if err := os.RemoveAll(stalePath); err != nil {
+			slog.DebugContext(ctx, "firmware prune: failed to remove stale version",
+				"path", stalePath, "error", err)
+			continue
+		}
+		slog.DebugContext(ctx, "firmware prune: removed stale version",
+			"path", stalePath, "version", name)
+	}
 }
 
 func findSystemFirmware(version, osName, arch string) (FirmwareResolution, error) {

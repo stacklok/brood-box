@@ -236,6 +236,11 @@ tasks:
       - rm -f internal/infra/vm/runtimebin/VERSION internal/infra/vm/runtimebin/LICENSE-GPL
       - rm -f internal/infra/vm/runtimebin/sha256sums.txt
 
+  firmware-clean:
+    desc: Remove the entire firmware download cache (~/.cache/broodbox/firmware)
+    cmds:
+      - rm -rf "${XDG_CACHE_HOME:-$HOME/.cache}/broodbox/firmware"
+
   # --- OCI guest images ---
 
   image-base:
