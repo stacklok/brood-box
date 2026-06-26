@@ -4,6 +4,7 @@
 package vm
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
@@ -12,9 +13,30 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stacklok/go-microvm/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// deadPID is a PID that is never alive in the test environment (max int32).
+const deadPID = 2147483647
+
+// writeVMState writes a go-microvm state file into <vmDir>/data using the
+// canonical schema and filename, then creates a rootfs-work/ clone stand-in so
+// removal can be observed.
+func writeVMState(t *testing.T, vmDir string, active bool, pid int) (dataDir string) {
+	t.Helper()
+	dataDir = filepath.Join(vmDir, vmDataSubdir)
+	require.NoError(t, os.MkdirAll(filepath.Join(dataDir, "rootfs-work"), 0o755))
+
+	ls, err := state.NewManager(dataDir).LoadAndLock(context.Background())
+	require.NoError(t, err)
+	ls.State.Active = active
+	ls.State.PID = pid
+	require.NoError(t, ls.Save())
+	ls.Release()
+	return dataDir
+}
 
 // testLogger returns a logger that discards output unless tests are run with -v.
 func testLogger() *slog.Logger {
@@ -328,4 +350,88 @@ func TestCleanupStaleLogs_LegacyPIDOnlySentinelStillWorks(t *testing.T) {
 
 	_, err = os.Stat(staleDir)
 	assert.True(t, os.IsNotExist(err), "legacy sentinel with dead PID should remove directory")
+}
+
+func TestCleanupStaleVMData_RemovesOrphanedDataDir(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	vmDir := filepath.Join(vmsDir, "orphan-vm")
+	dataDir := writeVMState(t, vmDir, true, deadPID)
+
+	CleanupStaleVMData(vmsDir, testLogger())
+
+	_, err := os.Stat(dataDir)
+	assert.True(t, os.IsNotExist(err), "orphaned data dir should be removed")
+	// No sentinel or logs were written, so the now-empty parent is reclaimed too.
+	_, err = os.Stat(vmDir)
+	assert.True(t, os.IsNotExist(err), "empty parent VM dir should be removed")
+}
+
+func TestCleanupStaleVMData_KeepsLiveRunner(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	vmDir := filepath.Join(vmsDir, "live-vm")
+	// Our own PID is alive, standing in for a running runner.
+	dataDir := writeVMState(t, vmDir, true, os.Getpid())
+
+	CleanupStaleVMData(vmsDir, testLogger())
+
+	_, err := os.Stat(dataDir)
+	assert.NoError(t, err, "data dir for a live runner must be preserved")
+}
+
+func TestCleanupStaleVMData_KeepsInactiveState(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	vmDir := filepath.Join(vmsDir, "inactive-vm")
+	// Active=false with a dead PID: a clean shutdown, not an orphan.
+	dataDir := writeVMState(t, vmDir, false, deadPID)
+
+	CleanupStaleVMData(vmsDir, testLogger())
+
+	_, err := os.Stat(dataDir)
+	assert.NoError(t, err, "inactive VM data dir is not an orphan and must be preserved")
+}
+
+func TestCleanupStaleVMData_PreservesParentWithLogs(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	vmDir := filepath.Join(vmsDir, "orphan-with-logs")
+	dataDir := writeVMState(t, vmDir, true, deadPID)
+	// A sentinel/log left by the bbox parent: CleanupStaleLogs owns the
+	// parent, so CleanupStaleVMData must reclaim only the data dir.
+	require.NoError(t, os.WriteFile(filepath.Join(vmDir, "broodbox.log"), []byte("log"), 0o600))
+
+	CleanupStaleVMData(vmsDir, testLogger())
+
+	_, err := os.Stat(dataDir)
+	assert.True(t, os.IsNotExist(err), "orphaned data dir should be removed")
+	_, err = os.Stat(vmDir)
+	assert.NoError(t, err, "parent VM dir with logs must be left for log cleanup")
+}
+
+func TestCleanupStaleVMData_NoStateFile(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	vmDir := filepath.Join(vmsDir, "no-state")
+	dataDir := filepath.Join(vmDir, vmDataSubdir)
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+
+	// No state file: nothing to decide on; must not touch the dir.
+	CleanupStaleVMData(vmsDir, testLogger())
+
+	_, err := os.Stat(dataDir)
+	assert.NoError(t, err, "dir without a state file must be preserved")
+}
+
+func TestCleanupStaleVMData_NonexistentVmsDir(t *testing.T) {
+	t.Parallel()
+
+	// Should not panic when vms/ doesn't exist at all.
+	CleanupStaleVMData(filepath.Join(t.TempDir(), "nonexistent"), testLogger())
 }

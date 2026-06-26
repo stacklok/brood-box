@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/stacklok/go-microvm/state"
+
 	"github.com/stacklok/brood-box/internal/infra/process"
 )
 
@@ -115,6 +117,87 @@ func CleanupStaleLogs(vmsDir string, logger *slog.Logger) {
 			"path", dirPath, "pid", pid, "reason", reason)
 		if err := os.RemoveAll(dirPath); err != nil {
 			logger.Error("failed to remove stale VM log directory", "path", dirPath, "error", err)
+		}
+	}
+}
+
+// vmDataSubdir is the per-VM data subdirectory (under ~/.config/broodbox/vms/<name>/)
+// that holds the go-microvm state file and the COW rootfs clone (rootfs-work/).
+const vmDataSubdir = "data"
+
+// CleanupStaleVMData removes orphaned VM data directories left behind when a
+// VM crashed or its bbox process was killed (SIGKILL, OOM, ...) before
+// WithCleanDataDir() could run. The COW rootfs clone under rootfs-work/ can be
+// hundreds of MB per orphan, so left unattended these accumulate unbounded.
+//
+// Each VM's go-microvm state file records the runner PID and an "active" flag.
+// A data dir whose state is still active but whose runner PID is dead was
+// orphaned and can be safely reclaimed. This complements CleanupStaleLogs:
+// that helper keys off the bbox sentinel and removes the whole VM directory,
+// but no sentinel is written when a run uses --log-file, so the data clone
+// would otherwise leak. Keying off the runner state covers that case too.
+//
+// A live runner PID is left untouched, so this is safe to run at startup
+// alongside concurrent VMs (each VM has its own uniquely named directory). A
+// recycled PID that now hosts an unrelated live process is conservatively
+// treated as alive and skipped; the orphan is reclaimed on a later run once
+// the PID is free.
+func CleanupStaleVMData(vmsDir string, logger *slog.Logger) {
+	entries, err := os.ReadDir(vmsDir)
+	if err != nil {
+		// Directory may not exist yet on first run — not an error.
+		if os.IsNotExist(err) {
+			return
+		}
+		logger.Warn("failed to scan for stale VM data directories", "error", err)
+		return
+	}
+
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		vmDir := filepath.Join(vmsDir, entry.Name())
+		dataDir := filepath.Join(vmDir, vmDataSubdir)
+
+		// Load reads go-microvm's state file without locking. A missing
+		// file (no VM ever ran here, or it was already cleaned) yields a
+		// default inactive state, which we skip below.
+		st, loadErr := state.NewManager(dataDir).Load()
+		if loadErr != nil {
+			logger.Debug("skipping VM dir with unreadable state",
+				"path", dataDir, "error", loadErr)
+			continue
+		}
+
+		// Not an orphan: no active VM recorded, or no runner PID to check.
+		if !st.Active || st.PID <= 0 {
+			continue
+		}
+
+		if process.IsAlive(st.PID) {
+			logger.Debug("skipping VM data dir owned by running runner",
+				"path", dataDir, "pid", st.PID)
+			continue
+		}
+
+		logger.Warn("removing orphaned VM data directory",
+			"path", dataDir, "pid", st.PID, "reason", "runner-dead")
+		if err := os.RemoveAll(dataDir); err != nil {
+			logger.Error("failed to remove orphaned VM data directory",
+				"path", dataDir, "error", err)
+			continue
+		}
+
+		// Drop the parent VM dir too if it is now empty — this reclaims
+		// directories from --log-file runs that left no sentinel or logs
+		// here. A non-recursive Remove only succeeds on an empty dir, so it
+		// never deletes lingering logs or a sentinel that CleanupStaleLogs
+		// still owns.
+		if err := os.Remove(vmDir); err != nil && !os.IsNotExist(err) {
+			logger.Debug("VM dir not empty after data cleanup; leaving for log cleanup",
+				"path", vmDir)
 		}
 	}
 }

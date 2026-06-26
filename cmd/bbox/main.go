@@ -519,9 +519,12 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Clean up stale snapshot dirs from previous crashes.
 	infraws.CleanupStaleSnapshots(snapDir, logger)
 
-	// Clean up stale VM log directories from previous crashes.
+	// Clean up stale VM log directories and orphaned data dirs (COW rootfs
+	// clones) left behind by crashed runs.
 	if home, homeErr := os.UserHomeDir(); homeErr == nil {
-		infravm.CleanupStaleLogs(filepath.Join(home, ".config", "broodbox", "vms"), logger)
+		vmsDir := filepath.Join(home, ".config", "broodbox", "vms")
+		infravm.CleanupStaleLogs(vmsDir, logger)
+		infravm.CleanupStaleVMData(vmsDir, logger)
 	}
 
 	// Build registry: start with built-in clients, then layer in any
