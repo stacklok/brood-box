@@ -19,6 +19,9 @@ import (
 // init script and its dependencies (dropbear, iproute2, mount).
 func InjectInitBinary() func(string, *image.OCIConfig) error {
 	return func(rootfsPath string, _ *image.OCIConfig) error {
+		if len(initbin.Binary) == 0 {
+			return fmt.Errorf("bbox-init binary not embedded: rebuild bbox with the 'bbox_full' build tag (e.g. `task build`)")
+		}
 		initPath := filepath.Join(rootfsPath, "bbox-init")
 		if err := os.WriteFile(initPath, initbin.Binary, 0o755); err != nil {
 			return fmt.Errorf("writing init binary: %w", err)
