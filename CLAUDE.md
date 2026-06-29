@@ -260,6 +260,8 @@ BBOX_KEEP_VM_DATA=1 bbox claude-code --trace
 
 The data dir path is logged in broodbox.log. Note: the VM data dir path differs from the session dir — check the log for the actual path.
 
+`BBOX_KEEP_VM_DATA=1` gates two things, not one: it preserves the *current* run's data dir by skipping `Remove()` in `Stop()` (the VM process is still stopped), **and** it disables startup stale-VM-directory reclamation. Without the latter, a crashed prior run — which leaves `Active==true` plus a dead PID in the state file, exactly what the startup sweep removes — would be silently reaped before you could re-run and inspect it. A debug line (`"BBOX_KEEP_VM_DATA set, skipping stale VM directory cleanup"`) is logged when the sweep is skipped.
+
 ### Local go-microvm development
 
 To test changes to go-microvm locally without publishing a release:
