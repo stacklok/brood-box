@@ -173,7 +173,7 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 			Name:            vmcpServerName,
 			GroupRef:        p.group,
 			Port:            int(p.port),
-			EndpointPath:    "/mcp",
+			EndpointPath:    domainconfig.MCPEndpointPath,
 			SessionTTL:      p.sessionTTL,
 			AuthMiddleware:  authMiddleware,
 			AuthzMiddleware: authzMiddleware,

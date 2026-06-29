@@ -114,6 +114,15 @@ This project follows DDD layered architecture with dependency injection **strict
 2. Add the entry to `pkg/clients/builtins.go`.
 3. Add a Dockerfile in `images/<name>/` and a Taskfile target `image-<name>` (and include it in `image-all`).
 
+### Custom (bring-your-own) agents — no Go code
+
+A custom agent can be declared entirely in global config under `agents:` (no `pkg/clients/` package, no Dockerfile in this repo). `config.AgentFromOverride` (pure, `pkg/domain/config`) maps the `AgentOverride` into an `agent.Agent`; `config.ValidateCustomAgent` runs the load-time checks (the image-ref parser is injected as a closure from the composition root to keep the domain free of go-containerregistry). Manage them with `bbox agents list|inspect|doctor`.
+
+- **Safer defaults than built-ins**: `env_forward` empty (forward nothing), egress profile `standard` (must declare `egress_hosts` for it or set `permissive`), MCP authz `safe-tools` when MCP is enabled.
+- **Universal `BBOX_*` env** (`pkg/domain/agent.BuildUniversalEnv`) is injected into *every* VM — `BBOX_AGENT_NAME`, `BBOX_WORKSPACE`, `BBOX_HOME`, `BBOX_SESSION_ID`, `BBOX_GIT_TOKEN_AVAILABLE`, `BBOX_SSH_AGENT_AVAILABLE`, plus `BBOX_MCP_URL`/`BBOX_MCP_AUTHZ_PROFILE` when MCP is active. Applied **after** forwarded host vars so it is authoritative (the env_forward allowlist can't clobber it). `BBOX_MCP_URL` uses `config.MCPEndpointPath` (`/mcp`) — the single source of truth shared by the proxy and all clients.
+- **`mcp.mode: env`**: enables the proxy but runs no config-file injector; the agent discovers it via `BBOX_MCP_URL`. (`mcp.mode: config` is not yet supported.)
+- **Security**: workspace-local `.broodbox.yaml` can **never** add a custom agent or introduce new credential paths, and can't repoint an existing agent's image/command or widen its `env_forward` — local config is tighten-only (`mergeAgentOverride`).
+
 ## Conventions
 
 - **SPDX headers required** on every `.go` and `.yaml` file:

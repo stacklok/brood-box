@@ -32,6 +32,21 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/workspace"
 )
 
+const (
+	// gatewayIP is the host-side gateway address inside the go-microvm
+	// virtual network. It mirrors go-microvm's topology.GatewayIP. The
+	// application layer must not import go-microvm's topology package (it
+	// would break the "sandbox depends only on domain" rule), so the value
+	// is duplicated here as a stable contract. An infra-layer test
+	// (internal/infra/vm) asserts topology.GatewayIP equals this literal so
+	// drift is caught at build time.
+	gatewayIP = "192.168.127.1"
+
+	// guestHomeDir is the sandbox user's home directory inside the guest VM.
+	// The guest runs as the "sandbox" user (see go-microvm guest setup).
+	guestHomeDir = "/home/sandbox"
+)
+
 // SnapshotOpts groups snapshot isolation options.
 type SnapshotOpts struct {
 	// Enabled controls whether snapshot isolation is active.
@@ -299,6 +314,28 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		}
 	}
 
+	// Enforce env_required presence before booting the VM. A missing required
+	// env var would otherwise surface as an opaque in-VM failure; fail fast
+	// here with a pointer to `bbox agents doctor <name>`. Uses the injected
+	// EnvProvider (no direct os.Getenv) to stay testable and layer-clean.
+	if len(override.EnvRequired) > 0 && s.envProvider != nil {
+		present := make(map[string]struct{}, len(override.EnvRequired))
+		for _, entry := range s.envProvider.Environ() {
+			key, _, ok := strings.Cut(entry, "=")
+			if ok {
+				present[key] = struct{}{}
+			}
+		}
+		for _, name := range override.EnvRequired {
+			if _, ok := present[name]; !ok {
+				s.observer.Fail("Missing required environment variable")
+				return nil, fmt.Errorf(
+					"agent %q requires env var %q which is not set on the host — run 'bbox agents doctor %s' for a full check",
+					agentName, name, agentName)
+			}
+		}
+	}
+
 	if opts.CPUs > 0 {
 		override.CPUs = opts.CPUs
 	}
@@ -339,10 +376,27 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		effectiveProfile = egress.ProfileName(opts.EgressProfile)
 	}
 
-	egressPolicy, err := egress.Resolve(effectiveProfile, ag.EgressHosts)
-	if err != nil {
-		s.observer.Fail("Failed to resolve egress policy")
-		return nil, fmt.Errorf("resolving egress policy: %w", err)
+	// With mcp.mode:env the MCP proxy (reachable on the gateway) is the
+	// agent's network discovery path, so a hostless non-permissive profile is
+	// legitimate: the agent reaches its tools via BBOX_MCP_URL through the
+	// proxy. egress.Resolve would otherwise reject "no hosts for standard",
+	// which would block the issue #191 canonical example from booting. Fall
+	// back to an empty (gateway-only) restricted policy in that case — all
+	// external egress stays blocked, the proxy is the only path out.
+	var egressPolicy *egress.Policy
+	if override.MCP != nil && override.MCP.Mode == config.MCPModeEnv &&
+		effectiveProfile != egress.ProfilePermissive &&
+		len(ag.EgressHosts[effectiveProfile]) == 0 {
+		egressPolicy = &egress.Policy{}
+		s.logger.Debug("egress: mcp.mode=env with no egress_hosts — restricting to gateway (MCP proxy)",
+			"profile", effectiveProfile)
+	} else {
+		var err error
+		egressPolicy, err = egress.Resolve(effectiveProfile, ag.EgressHosts)
+		if err != nil {
+			s.observer.Fail("Failed to resolve egress policy")
+			return nil, fmt.Errorf("resolving egress policy: %w", err)
+		}
 	}
 
 	// Collect extra hosts: config network hosts + agent override hosts + CLI hosts.
@@ -370,7 +424,22 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		)
 	}
 
-	// 3. Collect env vars: agent defaults → forwarded host vars → git identity.
+	// Resolve the effective MCP config early so the universal BBOX_MCP_URL is
+	// known while assembling the env map below. The host service itself is
+	// started later (step 4).
+	mcpCfg := s.resolveMCPConfig(cfg, agentName)
+
+	// Honor the per-agent MCP mode. mode:"env" enables the proxy but runs NO
+	// config-file injection — the agent learns the proxy only via the
+	// universal BBOX_MCP_URL env var. Suppress the plugin's config-file
+	// injector in that case (it is a no-op for data-only custom agents whose
+	// Plugin is nil, but for built-ins the injector must be actively dropped).
+	if mcpMode(cfg, agentName) == config.MCPModeEnv {
+		mcpInjector = nil
+	}
+
+	// 3. Collect env vars: agent defaults → forwarded host vars → git identity
+	//    → authoritative universal BBOX_* vars.
 	// Agent defaults are applied first so host-side overrides take precedence.
 	envVars := make(map[string]string)
 	for k, v := range ag.DefaultEnv {
@@ -448,9 +517,13 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 	// Determine if a GitHub token is available for credential helper injection.
 	hasGitToken := opts.GitTokenEnabled && (envVars["GITHUB_TOKEN"] != "" || envVars["GH_TOKEN"] != "")
 
-	// 4. Set up MCP host services if enabled.
+	// 4. Set up MCP host services if enabled. This runs BEFORE the universal
+	// BBOX_* env injection so the MCP env vars (BBOX_MCP_URL / authz profile)
+	// are only injected when the proxy is actually available. Otherwise a BYO
+	// agent that trusts BBOX_MCP_URL would hit a dead endpoint when discovery
+	// fails.
 	var hostServices []domvm.HostService
-	mcpCfg := s.resolveMCPConfig(cfg, agentName)
+	mcpAvailable := false
 	if mcpCfg.IsEnabled() && s.mcpProvider != nil {
 		_, mcpSpan := tracer.Start(ctx, "bbox.ConfigureMCP")
 		s.observer.Start(progress.PhaseConfiguringMCP, "Discovering MCP servers...")
@@ -464,9 +537,38 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 					Name: svc.Name, Port: svc.Port, Handler: svc.Handler,
 				})
 			}
+			mcpAvailable = len(hostServices) > 0
 			s.observer.Complete(fmt.Sprintf("MCP proxy ready on port %d", mcpCfg.Port))
 		}
 		mcpSpan.End()
+	}
+
+	// Inject the universal BBOX_* env vars AFTER forwarded host vars so they
+	// are authoritative: an untrusted host env (or env_forward allowlist)
+	// cannot clobber e.g. BBOX_AGENT_NAME. The MCP URL points at the in-VM
+	// gateway; see gatewayIP for the source of the literal. It is only set
+	// when MCP discovery actually produced services (mcpAvailable) so the
+	// guest never receives a URL for a proxy that is not running.
+	var mcpURL, mcpAuthzProfile string
+	if mcpAvailable {
+		mcpURL = fmt.Sprintf("http://%s:%d%s", gatewayIP, mcpCfg.Port, config.MCPEndpointPath)
+		mcpAuthzProfile = config.MCPAuthzProfileFullAccess
+		if mcpCfg.Authz != nil && mcpCfg.Authz.Profile != "" {
+			mcpAuthzProfile = mcpCfg.Authz.Profile
+		}
+	}
+	universalEnv := agent.BuildUniversalEnv(agent.UniversalEnvInput{
+		AgentName:         ag.Name,
+		Workspace:         opts.Workspace,
+		Home:              guestHomeDir,
+		SessionID:         opts.SessionID,
+		GitTokenAvailable: hasGitToken,
+		SSHAgentAvailable: opts.SSHAgentForward,
+		MCPURL:            mcpURL,
+		MCPAuthzProfile:   mcpAuthzProfile,
+	})
+	for k, v := range universalEnv {
+		envVars[k] = v
 	}
 
 	// 5. Set up workspace path (possibly with snapshot isolation).
@@ -882,6 +984,19 @@ func (s *SandboxRunner) resolveSettingsManifest(
 	return &settings.Manifest{Entries: filtered}
 }
 
+// mcpMode returns the effective per-agent MCP mode from the agent override,
+// or "" when no override sets it. It is read at runtime to decide whether the
+// config-file injector must be suppressed (mode:"env").
+func mcpMode(cfg *SandboxConfig, agentName string) string {
+	if cfg == nil {
+		return ""
+	}
+	if override, ok := cfg.AgentOverrides[agentName]; ok && override.MCP != nil {
+		return override.MCP.Mode
+	}
+	return ""
+}
+
 // resolveMCPConfig returns the effective MCP configuration by merging
 // global config with any agent-specific Enabled override.
 // Per-agent authz is handled at the composition root (cmd/bbox/main.go)
@@ -893,6 +1008,15 @@ func (s *SandboxRunner) resolveMCPConfig(cfg *SandboxConfig, agentName string) c
 	if override, ok := cfg.AgentOverrides[agentName]; ok && override.MCP != nil {
 		if override.MCP.Enabled != nil {
 			mcpCfg.Enabled = override.MCP.Enabled
+		} else if override.MCP.Mode == config.MCPModeEnv {
+			// mode:"env" implies the proxy must be enabled — that is the whole
+			// point of the mode (BBOX_MCP_URL is the agent's only discovery
+			// mechanism). Honor the documented invariant ("when set, MCP is
+			// enabled") so a custom agent that sets only mode:env still gets
+			// the proxy even when MCP is disabled globally. An explicit
+			// enabled:false is still respected (handled by the branch above).
+			enabled := true
+			mcpCfg.Enabled = &enabled
 		}
 	}
 

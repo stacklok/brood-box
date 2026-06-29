@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/brood-box/pkg/clients/internal/configio"
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/config"
 )
 
 // Ref: https://developers.openai.com/codex/config-reference/
@@ -19,7 +20,7 @@ type mcpInjector struct{}
 // Inject merges an MCP server entry into ~/.codex/config.toml, preserving
 // any pre-existing TOML sections.
 func (mcpInjector) Inject(rootfsPath, gatewayIP string, port uint16, chown agent.ChownFunc) error {
-	mcpURL := fmt.Sprintf("http://%s:%d/mcp", gatewayIP, port)
+	mcpURL := fmt.Sprintf("http://%s:%d%s", gatewayIP, port, config.MCPEndpointPath)
 
 	codexDir := filepath.Join(rootfsPath, configio.SandboxHome, ".codex")
 	if err := configio.MkdirAndChown(codexDir, chown); err != nil {

@@ -23,6 +23,7 @@ import (
 	"github.com/stacklok/brood-box/pkg/domain/agent"
 	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
+	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/egress"
 	"github.com/stacklok/brood-box/pkg/domain/hostservice"
 	"github.com/stacklok/brood-box/pkg/domain/session"
@@ -107,6 +108,10 @@ func (m *mockEnvProvider) Environ() []string { return m.vars }
 // require Plugin behavior, so the tests do not provide one.
 type mockRegistry struct {
 	agents map[string]agent.Agent
+	// plugins optionally attaches a Plugin to a registered agent (keyed by
+	// name) so tests can exercise built-in behavior such as MCP config
+	// injection. Agents without an entry here get a nil Plugin (data-only).
+	plugins map[string]agent.Plugin
 }
 
 func (m *mockRegistry) Get(name string) (agent.ClientEntry, error) {
@@ -114,16 +119,29 @@ func (m *mockRegistry) Get(name string) (agent.ClientEntry, error) {
 	if !ok {
 		return agent.ClientEntry{}, &agent.ErrNotFound{Name: name}
 	}
-	return agent.ClientEntry{Agent: a}, nil
+	return agent.ClientEntry{Agent: a, Plugin: m.plugins[name]}, nil
 }
 
 func (m *mockRegistry) List() []agent.ClientEntry {
 	result := make([]agent.ClientEntry, 0, len(m.agents))
 	for _, a := range m.agents {
-		result = append(result, agent.ClientEntry{Agent: a})
+		result = append(result, agent.ClientEntry{Agent: a, Plugin: m.plugins[a.Name]})
 	}
 	return result
 }
+
+// mockPlugin is a test Plugin that returns a fixed MCPInjector.
+type mockPlugin struct {
+	injector agent.MCPInjector
+}
+
+func (p *mockPlugin) MCPConfig() agent.MCPInjector { return p.injector }
+func (p *mockPlugin) Seeder() credential.Seeder    { return nil }
+
+// mockMCPInjector is a no-op MCPInjector used to assert injector selection.
+type mockMCPInjector struct{}
+
+func (mockMCPInjector) Inject(_, _ string, _ uint16, _ agent.ChownFunc) error { return nil }
 
 // mockWorkspaceCloner records calls and returns a snapshot pointing to a temp dir.
 type mockWorkspaceCloner struct {
@@ -250,7 +268,16 @@ func TestSandboxRunner_Run(t *testing.T) {
 	assert.Equal(t, uint32(2), vmRunner.startCfg.CPUs)
 	assert.Equal(t, bytesize.ByteSize(2048), vmRunner.startCfg.Memory)
 	assert.Equal(t, "/tmp/workspace", vmRunner.startCfg.WorkspacePath)
-	assert.Equal(t, map[string]string{"TEST_KEY": "secret123", "GIT_TERMINAL_PROMPT": "0"}, vmRunner.startCfg.EnvVars)
+	assert.Equal(t, map[string]string{
+		"TEST_KEY":                     "secret123",
+		"GIT_TERMINAL_PROMPT":          "0",
+		agent.EnvBBOXAgentName:         "test-agent",
+		agent.EnvBBOXWorkspace:         "/tmp/workspace",
+		agent.EnvBBOXHome:              guestHomeDir,
+		agent.EnvBBOXSessionID:         "abcd1234",
+		agent.EnvBBOXGitTokenAvailable: "0",
+		agent.EnvBBOXSSHAgentAvailable: "0",
+	}, vmRunner.startCfg.EnvVars)
 
 	// Verify terminal session was started.
 	assert.Equal(t, "127.0.0.1", sessionRunner.runOpts.Host)
@@ -848,7 +875,17 @@ func TestSandboxRunner_Prepare_Success(t *testing.T) {
 	assert.Equal(t, VMName("test-agent", snapshotDir, "abcd1234"), sb.VMConfig.Name)
 	assert.Equal(t, snapshotDir, sb.WorkspacePath)
 	assert.NotNil(t, sb.Snapshot)
-	assert.Equal(t, map[string]string{"TEST_KEY": "secret123", "GIT_TERMINAL_PROMPT": "0"}, sb.EnvVars)
+	assert.Equal(t, map[string]string{
+		"TEST_KEY":            "secret123",
+		"GIT_TERMINAL_PROMPT": "0",
+		// Universal BBOX_* vars are always injected (MCP disabled here).
+		agent.EnvBBOXAgentName:         "test-agent",
+		agent.EnvBBOXWorkspace:         workspaceDir,
+		agent.EnvBBOXHome:              guestHomeDir,
+		agent.EnvBBOXSessionID:         "abcd1234",
+		agent.EnvBBOXGitTokenAvailable: "0",
+		agent.EnvBBOXSSHAgentAvailable: "0",
+	}, sb.EnvVars)
 	assert.Equal(t, snapshot.NopMatcher, sb.DiffMatcher)
 	assert.Equal(t, snapshotDir, vmRunner.startCfg.WorkspacePath)
 	assert.True(t, cloner.createCalled)
@@ -930,6 +967,340 @@ func TestSandboxRunner_Prepare_EnvForwardExtra(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSandboxRunner_Prepare_InjectsUniversalBBOXEnv(t *testing.T) {
+	t.Parallel()
+
+	testAgent := agent.Agent{
+		Name:          "test-agent",
+		Image:         "img:latest",
+		Command:       []string{"cmd"},
+		DefaultCPUs:   2,
+		DefaultMemory: bytesize.ByteSize(2048),
+	}
+
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+	mcpProvider := &mockMCPProvider{
+		services: []hostservice.Service{{Name: "mcp", Port: 4483}},
+	}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test-agent": testAgent}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config: &SandboxConfig{
+			MCP: domainconfig.MCPConfig{
+				Authz: &domainconfig.MCPAuthzConfig{Profile: domainconfig.MCPAuthzProfileSafeTools},
+			},
+		},
+		EnvProvider: &mockEnvProvider{vars: []string{"GITHUB_TOKEN=ghp_secret"}},
+		Logger:      testLogger(),
+		MCPProvider: mcpProvider,
+	})
+
+	sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+		Workspace:       "/tmp/ws",
+		EgressProfile:   string(egress.ProfilePermissive),
+		SessionID:       "abcd1234",
+		GitTokenEnabled: true,
+		EnvForwardExtra: []string{"GITHUB_TOKEN"},
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	env := vmRunner.startCfg.EnvVars
+	assert.Equal(t, "test-agent", env[agent.EnvBBOXAgentName])
+	assert.Equal(t, "/tmp/ws", env[agent.EnvBBOXWorkspace])
+	assert.Equal(t, guestHomeDir, env[agent.EnvBBOXHome])
+	assert.Equal(t, "abcd1234", env[agent.EnvBBOXSessionID])
+	assert.Equal(t, "1", env[agent.EnvBBOXGitTokenAvailable], "git token was forwarded")
+	assert.Equal(t, "0", env[agent.EnvBBOXSSHAgentAvailable])
+	assert.Equal(t, "http://"+gatewayIP+":4483"+domainconfig.MCPEndpointPath, env[agent.EnvBBOXMCPURL])
+	assert.Equal(t, domainconfig.MCPAuthzProfileSafeTools, env[agent.EnvBBOXMCPAuthzProfile])
+}
+
+// TestSandboxRunner_Prepare_MCPModeEnv_SuppressesInjector asserts that when a
+// built-in agent (with a plugin supplying an MCP config injector) has the
+// per-agent mcp.mode set to "env", the config-file injector is dropped while
+// the proxy stays enabled (BBOX_MCP_URL is still set).
+func TestSandboxRunner_Prepare_MCPModeEnv_SuppressesInjector(t *testing.T) {
+	t.Parallel()
+
+	testAgent := agent.Agent{
+		Name: "test-agent", Image: "img:latest", Command: []string{"cmd"},
+		DefaultCPUs: 2, DefaultMemory: bytesize.ByteSize(2048),
+	}
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+	mcpProvider := &mockMCPProvider{services: []hostservice.Service{{Name: "mcp", Port: 4483}}}
+	injector := mockMCPInjector{}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry: &mockRegistry{
+			agents:  map[string]agent.Agent{"test-agent": testAgent},
+			plugins: map[string]agent.Plugin{"test-agent": &mockPlugin{injector: injector}},
+		},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config: &SandboxConfig{
+			AgentOverrides: map[string]domainconfig.AgentOverride{
+				"test-agent": {MCP: &domainconfig.MCPAgentOverride{Mode: domainconfig.MCPModeEnv}},
+			},
+		},
+		EnvProvider: &mockEnvProvider{},
+		Logger:      testLogger(),
+		MCPProvider: mcpProvider,
+	})
+
+	sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+		Workspace:     "/tmp/ws",
+		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	assert.Nil(t, vmRunner.startCfg.MCPConfigInjector,
+		"mcp.mode:env must suppress the config-file injector")
+	assert.Equal(t, "http://"+gatewayIP+":4483"+domainconfig.MCPEndpointPath, vmRunner.startCfg.EnvVars[agent.EnvBBOXMCPURL],
+		"mcp.mode:env must still enable the proxy via BBOX_MCP_URL")
+}
+
+// TestSandboxRunner_Prepare_MCPDefaultMode_UsesInjector is the companion to the
+// mode:env test: with no mode override, a plugin's injector is used.
+func TestSandboxRunner_Prepare_MCPDefaultMode_UsesInjector(t *testing.T) {
+	t.Parallel()
+
+	testAgent := agent.Agent{
+		Name: "test-agent", Image: "img:latest", Command: []string{"cmd"},
+		DefaultCPUs: 2, DefaultMemory: bytesize.ByteSize(2048),
+	}
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+	mcpProvider := &mockMCPProvider{services: []hostservice.Service{{Name: "mcp", Port: 4483}}}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry: &mockRegistry{
+			agents:  map[string]agent.Agent{"test-agent": testAgent},
+			plugins: map[string]agent.Plugin{"test-agent": &mockPlugin{injector: mockMCPInjector{}}},
+		},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+		MCPProvider:   mcpProvider,
+	})
+
+	sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+		Workspace:     "/tmp/ws",
+		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	assert.NotNil(t, vmRunner.startCfg.MCPConfigInjector,
+		"default mode must use the plugin's config-file injector")
+}
+
+func TestSandboxRunner_Prepare_BBOXMCPURLAbsentWhenMCPDisabled(t *testing.T) {
+	t.Parallel()
+
+	testAgent := agent.Agent{
+		Name: "test-agent", Image: "img:latest", Command: []string{"cmd"},
+		DefaultCPUs: 2, DefaultMemory: bytesize.ByteSize(2048),
+	}
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test-agent": testAgent}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+		// No MCPProvider wired => MCP effectively disabled.
+	})
+
+	sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+		Workspace:     "/tmp/ws",
+		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	_, ok := vmRunner.startCfg.EnvVars[agent.EnvBBOXMCPURL]
+	assert.False(t, ok, "BBOX_MCP_URL must be absent when MCP is disabled")
+}
+
+// TestSandboxRunner_Prepare_BBOXMCPURLAbsentWhenDiscoveryFails asserts that the
+// MCP env vars are NOT injected when MCP is enabled but service discovery fails
+// (or yields no services) — otherwise a BYO agent would trust a dead endpoint.
+func TestSandboxRunner_Prepare_BBOXMCPURLAbsentWhenDiscoveryFails(t *testing.T) {
+	t.Parallel()
+
+	testAgent := agent.Agent{
+		Name: "test-agent", Image: "img:latest", Command: []string{"cmd"},
+		DefaultCPUs: 2, DefaultMemory: bytesize.ByteSize(2048),
+	}
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+	// MCP enabled by default (empty MCPConfig), provider returns an error.
+	mcpProvider := &mockMCPProvider{err: fmt.Errorf("discovery failed")}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test-agent": testAgent}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+		MCPProvider:   mcpProvider,
+	})
+
+	sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+		Workspace:     "/tmp/ws",
+		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	require.True(t, mcpProvider.called, "MCP discovery must have been attempted")
+	_, hasURL := vmRunner.startCfg.EnvVars[agent.EnvBBOXMCPURL]
+	assert.False(t, hasURL, "BBOX_MCP_URL must be absent when MCP discovery fails")
+	_, hasAuthz := vmRunner.startCfg.EnvVars[agent.EnvBBOXMCPAuthzProfile]
+	assert.False(t, hasAuthz, "BBOX_MCP_AUTHZ_PROFILE must be absent when MCP discovery fails")
+	assert.Empty(t, vmRunner.startCfg.HostServices, "no host services when discovery fails")
+}
+
+func TestSandboxRunner_Prepare_BBOXEnvNotOverridableByHost(t *testing.T) {
+	t.Parallel()
+
+	// The agent forwards a wildcard that would match BBOX_AGENT_NAME, and the
+	// host sets BBOX_AGENT_NAME=evil. The universal vars are applied AFTER
+	// forwarding, so the real agent name must win.
+	testAgent := agent.Agent{
+		Name:          "test-agent",
+		Image:         "img:latest",
+		Command:       []string{"cmd"},
+		EnvForward:    []string{"BBOX_*"},
+		DefaultCPUs:   2,
+		DefaultMemory: bytesize.ByteSize(2048),
+	}
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"test-agent": testAgent}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{vars: []string{"BBOX_AGENT_NAME=evil"}},
+		Logger:        testLogger(),
+	})
+
+	sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+		Workspace:     "/tmp/ws",
+		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	assert.Equal(t, "test-agent", vmRunner.startCfg.EnvVars[agent.EnvBBOXAgentName],
+		"host-forwarded BBOX_AGENT_NAME must not override the real agent name")
+}
+
+func TestSandboxRunner_Prepare_CustomAgentEgressDefaultsStandard(t *testing.T) {
+	t.Parallel()
+
+	// A data-only custom agent (nil Plugin) declaring standard egress hosts.
+	customAgent, err := domainconfig.AgentFromOverride("custom", domainconfig.AgentOverride{
+		Image:   "ghcr.io/acme/custom:latest",
+		Command: []string{"run"},
+		EgressHosts: map[string][]domainconfig.EgressHostConfig{
+			"standard": {{Name: "api.acme.dev", Ports: []uint16{443}}},
+		},
+	}, domainconfig.DefaultsConfig{})
+	require.NoError(t, err)
+
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"custom": customAgent}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config:        &SandboxConfig{},
+		EnvProvider:   &mockEnvProvider{},
+		Logger:        testLogger(),
+	})
+
+	sb, err := runner.Prepare(context.Background(), "custom", RunOpts{
+		Workspace: "/tmp/ws",
+		SessionID: "abcd1234",
+		// No EgressProfile override => uses the agent's default "standard".
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	require.NotNil(t, vmRunner.startCfg.EgressPolicy, "standard profile must produce a restricted policy")
+	require.Len(t, vmRunner.startCfg.EgressPolicy.AllowedHosts, 1)
+	assert.Equal(t, "api.acme.dev", vmRunner.startCfg.EgressPolicy.AllowedHosts[0].Name)
+}
+
+// TestSandboxRunner_Prepare_MCPModeEnvHostlessStandardBoots verifies the issue
+// #191 canonical example (image, command, env_forward, mcp.mode:env — NO
+// egress_hosts) actually boots: with mcp.mode:env the MCP proxy is the agent's
+// network discovery path, so a hostless non-permissive profile yields an empty
+// (gateway-only) restricted policy instead of failing egress.Resolve. All
+// external egress stays blocked; the proxy is the only path out.
+func TestSandboxRunner_Prepare_MCPModeEnvHostlessStandardBoots(t *testing.T) {
+	t.Parallel()
+
+	// Canonical aider example: mcp.mode=env, no egress_hosts. AgentFromOverride
+	// defaults the egress profile to "standard" (DefaultCustomAgentEgressProfile).
+	customAgent, err := domainconfig.AgentFromOverride("aider", domainconfig.AgentOverride{
+		Image:      "ghcr.io/acme/aider-bbox:latest",
+		Command:    []string{"aider"},
+		EnvForward: []string{"OPENAI_API_KEY", "AIDER_*"},
+		MCP:        &domainconfig.MCPAgentOverride{Mode: domainconfig.MCPModeEnv},
+	}, domainconfig.DefaultsConfig{})
+	require.NoError(t, err)
+	assert.Equal(t, egress.ProfileStandard, customAgent.DefaultEgressProfile, "precondition: defaults to standard")
+
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"aider": customAgent}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config: &SandboxConfig{
+			AgentOverrides: map[string]domainconfig.AgentOverride{
+				"aider": {MCP: &domainconfig.MCPAgentOverride{Mode: domainconfig.MCPModeEnv}},
+			},
+		},
+		EnvProvider: &mockEnvProvider{},
+		Logger:      testLogger(),
+	})
+
+	sb, err := runner.Prepare(context.Background(), "aider", RunOpts{
+		Workspace: "/tmp/ws",
+		SessionID: "abcd1234",
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	// An empty restricted policy (not nil) — gateway-only, all external egress blocked.
+	require.NotNil(t, vmRunner.startCfg.EgressPolicy, "mcp.mode=env hostless standard must produce a gateway-only restricted policy")
+	assert.Empty(t, vmRunner.startCfg.EgressPolicy.AllowedHosts, "no external hosts allowed — proxy is the only path out")
 }
 
 func TestSandboxRunner_Prepare_AgentNotFound(t *testing.T) {
@@ -1602,6 +1973,48 @@ func TestResolveMCPConfig(t *testing.T) {
 			wantGroup:   "global-group",
 			wantPort:    5555,
 			wantEnabled: true,
+		},
+		{
+			name: "mode:env enables MCP even when globally disabled",
+			cfg: &SandboxConfig{
+				MCP: domainconfig.MCPConfig{
+					Enabled: boolPtr(false),
+					Group:   "global-group",
+					Port:    5555,
+				},
+				AgentOverrides: map[string]domainconfig.AgentOverride{
+					"test": {
+						MCP: &domainconfig.MCPAgentOverride{
+							Mode: domainconfig.MCPModeEnv,
+						},
+					},
+				},
+			},
+			agentName:   "test",
+			wantGroup:   "global-group",
+			wantPort:    5555,
+			wantEnabled: true,
+		},
+		{
+			name: "explicit enabled:false wins over mode:env",
+			cfg: &SandboxConfig{
+				MCP: domainconfig.MCPConfig{
+					Group: "global-group",
+					Port:  5555,
+				},
+				AgentOverrides: map[string]domainconfig.AgentOverride{
+					"test": {
+						MCP: &domainconfig.MCPAgentOverride{
+							Enabled: boolPtr(false),
+							Mode:    domainconfig.MCPModeEnv,
+						},
+					},
+				},
+			},
+			agentName:   "test",
+			wantGroup:   "global-group",
+			wantPort:    5555,
+			wantEnabled: false,
 		},
 		{
 			name: "agent not in map uses global",

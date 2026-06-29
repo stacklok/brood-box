@@ -6,11 +6,15 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	infraagent "github.com/stacklok/brood-box/internal/infra/agent"
+	"github.com/stacklok/brood-box/pkg/clients"
 	"github.com/stacklok/brood-box/pkg/domain/bytesize"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
 )
@@ -198,7 +202,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 			},
 			global: defaultGlobal,
 			expected: wrapWarnings(
-				"overrides myagent image: ghcr.io/evil/image:latest",
+				"attempts to override myagent image: ghcr.io/evil/image:latest — ignored (image must be declared in global config)",
 			),
 		},
 		{
@@ -209,7 +213,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				},
 			},
 			global:   defaultGlobal,
-			expected: wrapWarnings("overrides myagent command"),
+			expected: wrapWarnings("attempts to override myagent command — ignored (command must be declared in global config)"),
 		},
 		{
 			name: "agent env forwarding",
@@ -219,7 +223,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				},
 			},
 			global:   defaultGlobal,
-			expected: wrapWarnings("overrides myagent env forwarding"),
+			expected: wrapWarnings("narrows myagent env forwarding (can only restrict, not widen)"),
 		},
 		{
 			name: "agent allow_hosts",
@@ -321,9 +325,9 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 			},
 			global: defaultGlobal,
 			expected: wrapWarnings(
-				"overrides a-agent image: img-a",
-				"overrides m-agent image: img-m",
-				"overrides z-agent image: img-z",
+				"attempts to override a-agent image: img-a — ignored (image must be declared in global config)",
+				"attempts to override m-agent image: img-m — ignored (image must be declared in global config)",
+				"attempts to override z-agent image: img-z — ignored (image must be declared in global config)",
 			),
 		},
 		// --- ANSI escape sanitization (CRITICAL-2 fix) ---
@@ -348,7 +352,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				},
 			},
 			global:    defaultGlobal,
-			contains:  []string{"overrides evil[0magent image: img"},
+			contains:  []string{"attempts to override evil[0magent image: img"},
 			notContai: []string{"\x1b", "\x07"},
 		},
 		{
@@ -359,7 +363,7 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				},
 			},
 			global:    defaultGlobal,
-			contains:  []string{"overrides myagent image: ghcr.io/evil[2J/image"},
+			contains:  []string{"attempts to override myagent image: ghcr.io/evil[2J/image"},
 			notContai: []string{"\x1b"},
 		},
 		// --- Combined: all fields set ---
@@ -413,9 +417,9 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				"sets default memory: 4g",
 				"adds egress hosts: global-extra.com",
 				"sets git token forwarding: false",
-				"overrides myagent image: custom:v1",
-				"overrides myagent command",
-				"overrides myagent env forwarding",
+				"attempts to override myagent image: custom:v1 — ignored (image must be declared in global config)",
+				"attempts to override myagent command — ignored (command must be declared in global config)",
+				"narrows myagent env forwarding (can only restrict, not widen)",
 				"adds myagent egress hosts: agent-extra.com",
 				"sets myagent egress profile: locked",
 				"sets myagent MCP authz profile: observe (can only tighten, not widen)",
@@ -427,8 +431,32 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
+			// These cases exercise the per-field OVERRIDE warnings for agents
+			// that already exist globally. To isolate that behavior from the
+			// separately tested "local adds a new agent" / "local adds
+			// credentials" warnings, ensure every agent key present locally is
+			// also present in the global config (with no credential paths).
+			global := tt.global
+			if tt.local != nil && len(tt.local.Agents) > 0 {
+				merged := &domainconfig.Config{}
+				if tt.global != nil {
+					*merged = *tt.global
+				}
+				agents := map[string]domainconfig.AgentOverride{}
+				for k, v := range merged.Agents {
+					agents[k] = v
+				}
+				for k := range tt.local.Agents {
+					if _, ok := agents[k]; !ok {
+						agents[k] = domainconfig.AgentOverride{Image: "ghcr.io/global/base:latest"}
+					}
+				}
+				merged.Agents = agents
+				global = merged
+			}
+
 			var buf bytes.Buffer
-			warnLocalConfigOverrides(&buf, tt.local, tt.global)
+			warnLocalConfigOverrides(&buf, tt.local, global)
 			got := buf.String()
 
 			if tt.expected != "" || (tt.contains == nil && tt.notContai == nil) {
@@ -447,6 +475,128 @@ func TestWarnLocalConfigOverrides(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestWarnLocalConfigOverrides_BlockedAgentAdditions(t *testing.T) {
+	t.Parallel()
+
+	t.Run("local adds a new agent", func(t *testing.T) {
+		t.Parallel()
+		local := &domainconfig.Config{
+			Agents: map[string]domainconfig.AgentOverride{
+				"sneaky": {Image: "ghcr.io/evil/agent:latest"},
+			},
+		}
+		var buf bytes.Buffer
+		warnLocalConfigOverrides(&buf, local, &domainconfig.Config{})
+		got := buf.String()
+		if !strings.Contains(got, `attempts to define a new agent "sneaky"`) {
+			t.Errorf("expected new-agent warning, got:\n%s", got)
+		}
+	})
+
+	t.Run("local adds credential paths to existing agent", func(t *testing.T) {
+		t.Parallel()
+		local := &domainconfig.Config{
+			Agents: map[string]domainconfig.AgentOverride{
+				"existing": {Credentials: &domainconfig.AgentCredentialsConfig{Persist: []string{".x/creds"}}},
+			},
+		}
+		global := &domainconfig.Config{
+			Agents: map[string]domainconfig.AgentOverride{
+				"existing": {Image: "ghcr.io/global/agent:latest"},
+			},
+		}
+		var buf bytes.Buffer
+		warnLocalConfigOverrides(&buf, local, global)
+		got := buf.String()
+		if !strings.Contains(got, "attempts to add existing credential paths") {
+			t.Errorf("expected credential warning, got:\n%s", got)
+		}
+	})
+}
+
+func TestRegisterCustomAgents(t *testing.T) {
+	t.Parallel()
+
+	registry := infraagent.NewRegistry(clients.Builtins(slog.New(slog.NewTextHandler(io.Discard, nil)))...)
+
+	merged := &domainconfig.Config{
+		Agents: map[string]domainconfig.AgentOverride{
+			// Valid custom agent — should be registered.
+			"good": {
+				Image:         "ghcr.io/acme/good:latest",
+				Command:       []string{"run"},
+				EgressProfile: "permissive",
+			},
+			// Invalid custom agent (bad image ref + escaping credential path) —
+			// must be warned and skipped, not abort the run.
+			"badagent": {
+				Image:         "::::bad ref::::",
+				Command:       []string{"run"},
+				EgressProfile: "permissive",
+				Credentials:   &domainconfig.AgentCredentialsConfig{Persist: []string{"../escape.json"}},
+			},
+			// Override with empty Image (an override for an unregistered agent) —
+			// skipped silently (no warning).
+			"emptyimage": {
+				Command: []string{"run"},
+			},
+			// A built-in name present in config — must be skipped (kept as built-in).
+			"claude-code": {
+				Image: "ghcr.io/evil/replacement:latest",
+			},
+		},
+	}
+
+	var warn bytes.Buffer
+	registerCustomAgents(registry, merged, &warn)
+
+	// Valid custom agent is registered as a data-only entry (nil Plugin).
+	entry, err := registry.Get("good")
+	if err != nil {
+		t.Fatalf("expected custom agent %q to be registered: %v", "good", err)
+	}
+	if entry.Plugin != nil {
+		t.Errorf("custom agent %q should have a nil Plugin (data-only entry)", "good")
+	}
+	if entry.Agent.Image != "ghcr.io/acme/good:latest" {
+		t.Errorf("custom agent image = %q, want %q", entry.Agent.Image, "ghcr.io/acme/good:latest")
+	}
+
+	// Invalid agent is not registered.
+	if _, err := registry.Get("badagent"); err == nil {
+		t.Errorf("invalid custom agent %q must not be registered", "badagent")
+	}
+
+	// Empty-image override is not registered.
+	if _, err := registry.Get("emptyimage"); err == nil {
+		t.Errorf("empty-image override %q must not be registered", "emptyimage")
+	}
+
+	// Built-in keeps its own plugin entry — not replaced by the local override.
+	cc, err := registry.Get("claude-code")
+	if err != nil {
+		t.Fatalf("built-in claude-code must remain registered: %v", err)
+	}
+	if cc.Plugin == nil {
+		t.Errorf("built-in claude-code must keep its Plugin (override must not replace it)")
+	}
+	if cc.Agent.Image == "ghcr.io/evil/replacement:latest" {
+		t.Errorf("built-in claude-code image must not be replaced by a local override")
+	}
+
+	got := warn.String()
+	if !strings.Contains(got, `skipping custom agent "badagent"`) {
+		t.Errorf("expected warning for invalid agent, got:\n%s", got)
+	}
+	// Empty-image override and built-in skip are silent.
+	if strings.Contains(got, "emptyimage") {
+		t.Errorf("empty-image override should be skipped silently, got:\n%s", got)
+	}
+	if strings.Contains(got, "claude-code") {
+		t.Errorf("built-in name in config should be skipped silently, got:\n%s", got)
 	}
 }
 
@@ -697,5 +847,100 @@ func TestCacheDirFunctions(t *testing.T) {
 				t.Errorf("%s() path should contain %q, got: %s", tt.name, tt.expectSub, path)
 			}
 		})
+	}
+}
+
+// TestApplyCustomAgentAuthzDefault asserts the safe-tools default is applied
+// to custom agents with MCP enabled and no explicit authz, while built-ins and
+// already-resolved configs are left unchanged.
+func TestApplyCustomAgentAuthzDefault(t *testing.T) {
+	t.Parallel()
+
+	explicit := &domainconfig.MCPAuthzConfig{Profile: domainconfig.MCPAuthzProfileObserve}
+
+	tests := []struct {
+		name     string
+		in       *domainconfig.MCPAuthzConfig
+		isCustom bool
+		want     *domainconfig.MCPAuthzConfig
+	}{
+		{
+			name:     "custom agent with no authz defaults to safe-tools",
+			in:       nil,
+			isCustom: true,
+			want:     &domainconfig.MCPAuthzConfig{Profile: domainconfig.DefaultCustomAgentMCPAuthzProfile},
+		},
+		{
+			name:     "built-in agent with no authz stays full-access (nil)",
+			in:       nil,
+			isCustom: false,
+			want:     nil,
+		},
+		{
+			name:     "custom agent with explicit authz is unchanged",
+			in:       explicit,
+			isCustom: true,
+			want:     explicit,
+		},
+		{
+			name:     "built-in agent with explicit authz is unchanged",
+			in:       explicit,
+			isCustom: false,
+			want:     explicit,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			got := applyCustomAgentAuthzDefault(tt.in, tt.isCustom)
+			if tt.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil authz config, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected %+v, got nil", tt.want)
+			}
+			if got.Profile != tt.want.Profile {
+				t.Errorf("profile = %q, want %q", got.Profile, tt.want.Profile)
+			}
+		})
+	}
+
+	// Confirm the default constant really is safe-tools (the secure default).
+	if domainconfig.DefaultCustomAgentMCPAuthzProfile != domainconfig.MCPAuthzProfileSafeTools {
+		t.Errorf("DefaultCustomAgentMCPAuthzProfile = %q, want %q",
+			domainconfig.DefaultCustomAgentMCPAuthzProfile, domainconfig.MCPAuthzProfileSafeTools)
+	}
+}
+
+// TestIsCustomAgent asserts built-ins (Plugin != nil) are not custom, while
+// data-only registered agents (nil Plugin) are.
+func TestIsCustomAgent(t *testing.T) {
+	t.Parallel()
+
+	registry := infraagent.NewRegistry(clients.Builtins(slog.New(slog.NewTextHandler(io.Discard, nil)))...)
+	customAgent, err := domainconfig.AgentFromOverride("my-custom", domainconfig.AgentOverride{
+		Image:         "ghcr.io/acme/my-custom:latest",
+		Command:       []string{"run"},
+		EgressProfile: "permissive",
+	}, domainconfig.DefaultsConfig{})
+	if err != nil {
+		t.Fatalf("building custom agent: %v", err)
+	}
+	if err := registry.Add(customAgent); err != nil {
+		t.Fatalf("adding custom agent: %v", err)
+	}
+
+	if isCustomAgent(registry, "claude-code") {
+		t.Error("claude-code is a built-in, isCustomAgent should be false")
+	}
+	if !isCustomAgent(registry, "my-custom") {
+		t.Error("my-custom is data-only, isCustomAgent should be true")
+	}
+	if isCustomAgent(registry, "does-not-exist") {
+		t.Error("unknown agent should not be reported as custom")
 	}
 }

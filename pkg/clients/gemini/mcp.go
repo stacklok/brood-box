@@ -9,6 +9,7 @@ import (
 
 	"github.com/stacklok/brood-box/pkg/clients/internal/configio"
 	"github.com/stacklok/brood-box/pkg/domain/agent"
+	"github.com/stacklok/brood-box/pkg/domain/config"
 )
 
 // Ref: https://github.com/google-gemini/gemini-cli/blob/main/docs/tools/mcp-server.md
@@ -29,7 +30,7 @@ func (mcpInjector) Inject(rootfsPath, gatewayIP string, port uint16, chown agent
 
 	return configio.MergeJSONMapEntries(geminiDir, "settings.json", "mcpServers", map[string]any{
 		"sandbox-tools": map[string]any{
-			"httpUrl": fmt.Sprintf("http://%s:%d/mcp", gatewayIP, port),
+			"httpUrl": fmt.Sprintf("http://%s:%d%s", gatewayIP, port, config.MCPEndpointPath),
 		},
 	}, chown)
 }
