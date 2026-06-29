@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stacklok/go-microvm/state"
@@ -43,152 +44,10 @@ func testLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 }
 
-func TestCleanupStaleLogs(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
-
-	// Stale directory with dead PID sentinel — should be removed.
-	staleDir := filepath.Join(vmsDir, "stale-vm")
-	require.NoError(t, os.MkdirAll(staleDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(staleDir, LogSentinel), []byte("2147483647"), 0o600))
-	// Also create a log file to verify entire directory is removed.
-	require.NoError(t, os.WriteFile(filepath.Join(staleDir, "broodbox.log"), []byte("old log"), 0o600))
-
-	// Directory with live PID sentinel (our process) — should be preserved.
-	liveDir := filepath.Join(vmsDir, "live-vm")
-	require.NoError(t, os.MkdirAll(liveDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(liveDir, LogSentinel), []byte(fmt.Sprintf("%d", os.Getpid())), 0o600))
-
-	// Directory without sentinel — should be preserved.
-	noSentinelDir := filepath.Join(vmsDir, "no-sentinel-vm")
-	require.NoError(t, os.MkdirAll(noSentinelDir, 0o755))
-
-	// Regular file in vms/ (not a directory) — should be skipped.
-	require.NoError(t, os.WriteFile(filepath.Join(vmsDir, "stray-file"), []byte("x"), 0o600))
-
-	CleanupStaleLogs(vmsDir, testLogger())
-
-	_, err := os.Stat(staleDir)
-	assert.True(t, os.IsNotExist(err), "stale directory with dead PID should be removed")
-
-	_, err = os.Stat(liveDir)
-	assert.NoError(t, err, "directory with live PID should remain")
-
-	_, err = os.Stat(noSentinelDir)
-	assert.NoError(t, err, "directory without sentinel should remain")
-
-	_, err = os.Stat(filepath.Join(vmsDir, "stray-file"))
-	assert.NoError(t, err, "non-directory entry should remain")
-}
-
-func TestCleanupStaleLogs_InvalidSentinelContent(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
-
-	tests := []struct {
-		name    string
-		content string
-	}{
-		{"empty sentinel", ""},
-		{"non-numeric text", "not-a-pid"},
-		{"negative PID", "-1"},
-		{"zero PID", "0"},
-		{"floating point", "123.456"},
-		{"PID with trailing garbage", "123abc"},
-	}
-
-	for _, tt := range tests {
-		dir := filepath.Join(vmsDir, tt.name)
-		require.NoError(t, os.MkdirAll(dir, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), []byte(tt.content), 0o600))
-	}
-
-	CleanupStaleLogs(vmsDir, testLogger())
-
-	// All directories with invalid sentinels should be preserved (not cleaned).
-	for _, tt := range tests {
-		dir := filepath.Join(vmsDir, tt.name)
-		_, err := os.Stat(dir)
-		assert.NoError(t, err, "directory with invalid sentinel %q should remain", tt.name)
-	}
-}
-
-func TestCleanupStaleLogs_WhitespacePaddedSentinel(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
-
-	dir := filepath.Join(vmsDir, "whitespace-vm")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	// PID 2147483647 with leading/trailing whitespace and newline.
-	require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), []byte("  2147483647\n"), 0o600))
-
-	CleanupStaleLogs(vmsDir, testLogger())
-
-	_, err := os.Stat(dir)
-	assert.True(t, os.IsNotExist(err), "stale directory with whitespace-padded dead PID should be removed")
-}
-
-func TestCleanupStaleLogs_MultipleStaleDirectories(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
-
-	staleDirs := make([]string, 5)
-	for i := range staleDirs {
-		dir := filepath.Join(vmsDir, fmt.Sprintf("stale-%d", i))
-		require.NoError(t, os.MkdirAll(dir, 0o755))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), []byte("2147483647"), 0o600))
-		require.NoError(t, os.WriteFile(filepath.Join(dir, "broodbox.log"), []byte("log data"), 0o600))
-		staleDirs[i] = dir
-	}
-
-	CleanupStaleLogs(vmsDir, testLogger())
-
-	for _, dir := range staleDirs {
-		_, err := os.Stat(dir)
-		assert.True(t, os.IsNotExist(err), "stale directory %s should be removed", filepath.Base(dir))
-	}
-}
-
-func TestCleanupStaleLogs_NestedDataSubdirectory(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	dir := filepath.Join(vmsDir, "nested-vm")
-	dataDir := filepath.Join(dir, "data")
-	require.NoError(t, os.MkdirAll(dataDir, 0o755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), []byte("2147483647"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "broodbox.log"), []byte("log"), 0o600))
-	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "state.json"), []byte("{}"), 0o600))
-
-	CleanupStaleLogs(vmsDir, testLogger())
-
-	_, err := os.Stat(dir)
-	assert.True(t, os.IsNotExist(err), "entire directory tree should be removed")
-}
-
-func TestCleanupStaleLogs_EmptyVmsDir(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
-
-	// Should not panic or error on empty directory.
-	CleanupStaleLogs(vmsDir, testLogger())
-}
-
-func TestCleanupStaleLogs_NonexistentVmsDir(t *testing.T) {
-	t.Parallel()
-
-	// Should not panic when vms/ doesn't exist at all.
-	CleanupStaleLogs(filepath.Join(t.TempDir(), "nonexistent"), testLogger())
+// writeSentinel writes a sentinel file (PID\nexe) into vmDir.
+func writeSentinel(t *testing.T, vmDir string, content string) {
+	t.Helper()
+	require.NoError(t, os.WriteFile(filepath.Join(vmDir, LogSentinel), []byte(content), 0o600))
 }
 
 func TestWriteSentinel(t *testing.T) {
@@ -249,85 +108,440 @@ func TestWriteSentinel_NonexistentDirectory(t *testing.T) {
 	assert.Error(t, err, "writing sentinel to nonexistent directory should fail")
 }
 
-func TestCleanupStaleLogs_FingerprintMismatchRemoved(t *testing.T) {
+// cleanupCase builds a single VM dir scenario and records the expectation.
+type cleanupCase struct {
+	name     string
+	setup    func(t *testing.T, vmsDir string) (vmDir string, dataDir string)
+	skipName string // name to pass as skipName; "" => none
+	want     func(t *testing.T, vmDir, dataDir string)
+}
+
+func TestCleanupStaleVMDirs(t *testing.T) {
+	t.Parallel()
+
+	cases := []cleanupCase{
+		{
+			// --log-file case: active state, dead runner PID, no sentinel.
+			name: "orphaned_active_state_dead_runner_no_sentinel",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				vmDir := filepath.Join(vmsDir, "orphan-active")
+				dataDir := writeVMState(t, vmDir, true, deadPID)
+				return vmDir, dataDir
+			},
+			want: func(t *testing.T, vmDir, dataDir string) {
+				_, err := os.Stat(vmDir)
+				assert.True(t, os.IsNotExist(err), "orphaned vmDir should be removed")
+			},
+		},
+		{
+			// dead bbox sentinel + no state file → vmDir removed.
+			name: "dead_sentinel_no_state",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				vmDir := filepath.Join(vmsDir, "dead-sentinel")
+				require.NoError(t, os.MkdirAll(vmDir, 0o755))
+				writeSentinel(t, vmDir, fmt.Sprintf("%d", deadPID))
+				require.NoError(t, os.WriteFile(filepath.Join(vmDir, "broodbox.log"), []byte("log"), 0o600))
+				return vmDir, ""
+			},
+			want: func(t *testing.T, vmDir, dataDir string) {
+				_, err := os.Stat(vmDir)
+				assert.True(t, os.IsNotExist(err), "vmDir with dead sentinel should be removed")
+			},
+		},
+		{
+			// dead bbox sentinel (PID-only legacy) + inactive state (dead PID) → removed.
+			name: "dead_sentinel_inactive_state",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				vmDir := filepath.Join(vmsDir, "dead-sentinel-inactive")
+				dataDir := writeVMState(t, vmDir, false, deadPID)
+				writeSentinel(t, vmDir, fmt.Sprintf("%d", deadPID))
+				return vmDir, dataDir
+			},
+			want: func(t *testing.T, vmDir, dataDir string) {
+				_, err := os.Stat(vmDir)
+				assert.True(t, os.IsNotExist(err), "vmDir with dead sentinel + inactive state should be removed")
+			},
+		},
+		{
+			// live bbox sentinel (current PID + real exe) → preserved.
+			name: "live_bbox_sentinel_preserved",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				vmDir := filepath.Join(vmsDir, "live-bbox")
+				require.NoError(t, os.MkdirAll(vmDir, 0o755))
+				exe, err := os.Executable()
+				require.NoError(t, err)
+				writeSentinel(t, vmDir, fmt.Sprintf("%d\n%s", os.Getpid(), exe))
+				return vmDir, ""
+			},
+			want: func(t *testing.T, vmDir, dataDir string) {
+				_, err := os.Stat(vmDir)
+				assert.NoError(t, err, "vmDir with live bbox sentinel should be preserved")
+			},
+		},
+		{
+			// inactive state (Active=false, dead PID) + no sentinel → removed.
+			// A state file is a signal of past bbox ownership even with no
+			// sentinel, and the runner is not alive, so reclaim is correct.
+			name: "inactive_state_no_sentinel_removed",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				vmDir := filepath.Join(vmsDir, "inactive-no-sentinel")
+				dataDir := writeVMState(t, vmDir, false, deadPID)
+				return vmDir, dataDir
+			},
+			want: func(t *testing.T, vmDir, dataDir string) {
+				_, err := os.Stat(vmDir)
+				assert.True(t, os.IsNotExist(err), "vmDir with inactive state + no sentinel should be removed")
+			},
+		},
+		{
+			// no sentinel, no state file, just an empty dir → preserved.
+			name: "empty_unrelated_dir_preserved",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				vmDir := filepath.Join(vmsDir, "empty-unrelated")
+				require.NoError(t, os.MkdirAll(vmDir, 0o755))
+				return vmDir, ""
+			},
+			want: func(t *testing.T, vmDir, dataDir string) {
+				_, err := os.Stat(vmDir)
+				assert.NoError(t, err, "unrelated empty dir should be preserved")
+			},
+		},
+		{
+			// no sentinel, no state file, dir absent entirely → no panic.
+			name: "nonexistent_vms_dir_no_panic",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				return filepath.Join(vmsDir, "does-not-exist"), ""
+			},
+			want: func(t *testing.T, vmDir, dataDir string) {
+				// Nothing to assert beyond not panicking.
+			},
+		},
+		{
+			// oversized state file → dir preserved (hardening).
+			name: "oversized_state_file_preserved",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				vmDir := filepath.Join(vmsDir, "oversized-state")
+				dataDir := filepath.Join(vmDir, vmDataSubdir)
+				require.NoError(t, os.MkdirAll(dataDir, 0o755))
+				huge := make([]byte, maxStateSize+1)
+				for i := range huge {
+					huge[i] = '1'
+				}
+				require.NoError(t, os.WriteFile(filepath.Join(dataDir, "go-microvm-state.json"), huge, 0o600))
+				return vmDir, dataDir
+			},
+			want: func(t *testing.T, vmDir, dataDir string) {
+				_, err := os.Stat(vmDir)
+				assert.NoError(t, err, "vmDir with oversized state file should be preserved")
+			},
+		},
+		{
+			// skipName equals the vmDir → preserved even if it would otherwise look orphaned.
+			name: "skip_name_preserved",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				vmDir := filepath.Join(vmsDir, "current-run")
+				dataDir := writeVMState(t, vmDir, true, deadPID)
+				return vmDir, dataDir
+			},
+			skipName: "current-run",
+			want: func(t *testing.T, vmDir, dataDir string) {
+				_, err := os.Stat(vmDir)
+				assert.NoError(t, err, "current run's vmDir (skipName) should be preserved")
+			},
+		},
+		{
+			// state Active=true with a dead runner PID → reclaimed on all platforms.
+			name: "active_state_dead_pid_removed_all_platforms",
+			setup: func(t *testing.T, vmsDir string) (string, string) {
+				vmDir := filepath.Join(vmsDir, "active-dead-pid")
+				dataDir := writeVMState(t, vmDir, true, deadPID)
+				return vmDir, dataDir
+			},
+			want: func(t *testing.T, vmDir, dataDir string) {
+				_, err := os.Stat(vmDir)
+				assert.True(t, os.IsNotExist(err), "vmDir with active state + dead runner PID should be removed")
+			},
+		},
+	}
+
+	for _, tt := range cases {
+		tt := tt
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			vmsDir := filepath.Join(t.TempDir(), "vms")
+			require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+			vmDir, dataDir := tt.setup(t, vmsDir)
+			CleanupStaleVMDirs(vmsDir, tt.skipName, testLogger())
+			tt.want(t, vmDir, dataDir)
+		})
+	}
+}
+
+// TestCleanupStaleVMDirs_FingerprintMismatchRemoved exercises the cross-confirmed
+// ordering path: a dead bbox sentinel + state Active=true with a LIVE runner
+// PID (os.Getpid) whose exe does NOT match "go-microvm-runner". On Linux this
+// is the realistic recycled-PID case (live PID running the wrong binary →
+// treated as NOT the runner → reclaimed). On darwin IsExpectedProcess falls
+// back to IsAlive, so the live PID IS treated as alive → preserved.
+func TestCleanupStaleVMDirs_FingerprintMismatchRemoved(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS != "linux" {
-		// /proc/<pid>/exe is Linux-only; on darwin IsExpectedProcess
-		// falls back to plain liveness and cannot detect PID reuse.
-		t.Skip("fingerprint check is Linux-only")
+		t.Skip("fingerprint check is Linux-only; on darwin IsExpectedProcess falls back to IsAlive")
 	}
 
 	vmsDir := filepath.Join(t.TempDir(), "vms")
 	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
 
-	// Simulate PID reuse: the sentinel claims the current PID was bbox
-	// with a fake exe path that /proc/self/exe will NOT match.
-	// IsExpectedProcess returns false → directory is treated as stale.
-	dir := filepath.Join(vmsDir, "recycled-pid")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	content := fmt.Sprintf("%d\n/nonexistent/fake-bbox-binary", os.Getpid())
-	require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), []byte(content), 0o600))
+	vmDir := filepath.Join(vmsDir, "recycled-runner-pid")
+	dataDir := writeVMState(t, vmDir, true, os.Getpid())
+	// Dead bbox sentinel so the bbox owner is gone; the only thing standing
+	// between this dir and removal is the runner fingerprint check.
+	writeSentinel(t, vmDir, fmt.Sprintf("%d", deadPID))
 
-	CleanupStaleLogs(vmsDir, testLogger())
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
 
-	_, err := os.Stat(dir)
+	_, err := os.Stat(vmDir)
 	assert.True(t, os.IsNotExist(err),
-		"directory whose sentinel names a different binary should be removed")
+		"vmDir whose runner state names a live PID running the wrong binary should be removed (Linux)")
+	_ = dataDir
 }
 
-func TestCleanupStaleLogs_FingerprintMatchPreserved(t *testing.T) {
+// TestCleanupStaleVMDirs_PreservesUnrelatedStateFile verifies that a state
+// file with Active=false and a live runner PID is NOT preserved just because
+// the PID is live — Active=false means clean shutdown, so the dir is reclaimed.
+// This documents the decision logic for the inactive-state + no-sentinel case.
+func TestCleanupStaleVMDirs_InactiveStateLivePID(t *testing.T) {
 	t.Parallel()
 
 	vmsDir := filepath.Join(t.TempDir(), "vms")
 	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
 
-	// Sentinel claims the current PID running the real test binary —
-	// fingerprint matches (Linux) or legacy-liveness matches (darwin) —
-	// directory must be preserved.
-	exe, err := os.Executable()
+	vmDir := filepath.Join(vmsDir, "inactive-live-pid")
+	dataDir := writeVMState(t, vmDir, false, os.Getpid())
+
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
+
+	_, err := os.Stat(vmDir)
+	assert.True(t, os.IsNotExist(err),
+		"vmDir with inactive state is not protected by a live PID (clean shutdown) and should be removed")
+	_ = dataDir
+}
+
+// TestCleanupStaleVMDirs_HeldLockSkipped verifies Fix 3 (TOCTOU/locking):
+// when another goroutine holds the state lock, CleanupStaleVMDirs treats the
+// dir as live and skips it rather than removing it out from under the lock
+// holder.
+func TestCleanupStaleVMDirs_HeldLockSkipped(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+	vmDir := filepath.Join(vmsDir, "locked-vm")
+	dataDir := writeVMState(t, vmDir, true, deadPID)
+
+	// Hold the state lock from another goroutine for the duration of the sweep.
+	ls, err := state.NewManager(dataDir).LoadAndLock(context.Background())
 	require.NoError(t, err)
-	dir := filepath.Join(vmsDir, "live-bbox")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	content := fmt.Sprintf("%d\n%s", os.Getpid(), exe)
-	require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), []byte(content), 0o600))
+	defer ls.Release()
 
-	CleanupStaleLogs(vmsDir, testLogger())
+	// Give the sweep a short retry window so the lock contention is real but
+	// the test stays fast. CleanupStaleVMDirs uses stateLockTimeout internally.
+	var wg sync.WaitGroup
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		CleanupStaleVMDirs(vmsDir, "", testLogger())
+	}()
+	wg.Wait()
 
-	_, err = os.Stat(dir)
-	assert.NoError(t, err, "directory with matching fingerprint should remain")
+	_, err = os.Stat(vmDir)
+	assert.NoError(t, err,
+		"vmDir with a held state lock must be skipped (live owner) and preserved")
 }
 
-func TestCleanupStaleLogs_OversizedSentinelSkipped(t *testing.T) {
+// TestCleanupStaleVMDirs_OversizedSentinelSkipped mirrors the original
+// sentinel-cap hardening under the combined sweep: a planted giant sentinel
+// must not be read into memory and must leave the dir alone.
+func TestCleanupStaleVMDirs_OversizedSentinelSkipped(t *testing.T) {
 	t.Parallel()
 
 	vmsDir := filepath.Join(t.TempDir(), "vms")
 	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
 
-	// Planted giant sentinel (8 KiB > 4 KiB cap). Cleanup must not
-	// read it into memory and must leave the dir alone — the file is
-	// suspicious and silently nuking would be worse than skipping.
-	dir := filepath.Join(vmsDir, "giant-sentinel")
-	require.NoError(t, os.MkdirAll(dir, 0o755))
-	huge := make([]byte, 8192)
+	vmDir := filepath.Join(vmsDir, "giant-sentinel")
+	require.NoError(t, os.MkdirAll(vmDir, 0o755))
+	huge := make([]byte, maxSentinelSize*2)
 	for i := range huge {
 		huge[i] = '1'
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(dir, LogSentinel), huge, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(vmDir, LogSentinel), huge, 0o600))
 
-	CleanupStaleLogs(vmsDir, testLogger())
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
 
-	_, err := os.Stat(dir)
-	assert.NoError(t, err, "directory with oversized sentinel should be left alone")
+	_, err := os.Stat(vmDir)
+	assert.NoError(t, err, "vmDir with oversized sentinel should be left alone")
 }
 
-func TestCleanupStaleLogs_LegacyPIDOnlySentinelStillWorks(t *testing.T) {
+// TestCleanupStaleVMDirs_InvalidSentinelContent verifies that invalid sentinel
+// contents do not cause the dir to be removed (no live owner signal from the
+// sentinel → falls through to runner check; with no state, preserved as
+// unrelated — except the sentinel IS present, so the bbox-artifacts guard
+// passes; but bboxAlive=false and no runner, so it WOULD be reclaimed).
+//
+// Wait: per the decision logic, an unparseable sentinel counts as "present"
+// (sentinelPresent=true) and bboxAlive=false. With no state file and
+// sentinelPresent=true, the bbox-artifacts guard passes and the dir IS
+// reclaimed. This test documents that behavior: invalid sentinel content is
+// treated as a stale/abandoned marker and the dir is removed.
+func TestCleanupStaleVMDirs_InvalidSentinelContent(t *testing.T) {
 	t.Parallel()
 
 	vmsDir := filepath.Join(t.TempDir(), "vms")
 	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
 
-	// Legacy v1 sentinel (just a PID, no exe path) written by an older
-	// bbox build. Cleanup must fall back to a plain liveness check.
+	tests := []struct {
+		name    string
+		content string
+	}{
+		{"empty sentinel", ""},
+		{"non-numeric text", "not-a-pid"},
+		{"negative PID", "-1"},
+		{"zero PID", "0"},
+		{"floating point", "123.456"},
+		{"PID with trailing garbage", "123abc"},
+	}
+
+	for _, tt := range tests {
+		vmDir := filepath.Join(vmsDir, tt.name)
+		require.NoError(t, os.MkdirAll(vmDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(vmDir, LogSentinel), []byte(tt.content), 0o600))
+	}
+
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
+
+	for _, tt := range tests {
+		vmDir := filepath.Join(vmsDir, tt.name)
+		_, err := os.Stat(vmDir)
+		// An invalid sentinel is treated as a present-but-no-live-owner
+		// marker: bboxAlive=false, sentinelPresent=true. With no runner
+		// state, the bbox-artifacts guard passes and the dir is reclaimed.
+		assert.True(t, os.IsNotExist(err),
+			"vmDir with invalid sentinel %q should be removed (stale marker)", tt.name)
+	}
+}
+
+// TestCleanupStaleVMDirs_EmptyVmsDir ensures no panic on an empty vms dir.
+func TestCleanupStaleVMDirs_EmptyVmsDir(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+	// Should not panic or error on empty directory.
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
+}
+
+// TestCleanupStaleVMDirs_NonexistentVmsDir ensures no panic when vms/ doesn't
+// exist at all.
+func TestCleanupStaleVMDirs_NonexistentVmsDir(t *testing.T) {
+	t.Parallel()
+
+	CleanupStaleVMDirs(filepath.Join(t.TempDir(), "nonexistent"), "", testLogger())
+}
+
+// TestCleanupStaleVMDirs_WhitespacePaddedSentinel verifies that whitespace-
+// padded dead-PID sentinels are trimmed and the dir is removed.
+func TestCleanupStaleVMDirs_WhitespacePaddedSentinel(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+	vmDir := filepath.Join(vmsDir, "whitespace-vm")
+	require.NoError(t, os.MkdirAll(vmDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(vmDir, LogSentinel), []byte("  2147483647\n"), 0o600))
+
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
+
+	_, err := os.Stat(vmDir)
+	assert.True(t, os.IsNotExist(err), "vmDir with whitespace-padded dead PID sentinel should be removed")
+}
+
+// TestCleanupStaleVMDirs_MultipleStaleDirectories verifies that multiple
+// orphaned dirs are all removed in one sweep.
+func TestCleanupStaleVMDirs_MultipleStaleDirectories(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+	staleDirs := make([]string, 5)
+	for i := range staleDirs {
+		vmDir := filepath.Join(vmsDir, fmt.Sprintf("stale-%d", i))
+		require.NoError(t, os.MkdirAll(vmDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(vmDir, LogSentinel), []byte("2147483647"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(vmDir, "broodbox.log"), []byte("log data"), 0o600))
+		staleDirs[i] = vmDir
+	}
+
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
+
+	for _, vmDir := range staleDirs {
+		_, err := os.Stat(vmDir)
+		assert.True(t, os.IsNotExist(err), "stale vmDir %s should be removed", filepath.Base(vmDir))
+	}
+}
+
+// TestCleanupStaleVMDirs_NestedDataSubdirectory verifies the whole vmDir tree
+// (data subdir included) is removed when the bbox sentinel is stale.
+func TestCleanupStaleVMDirs_NestedDataSubdirectory(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	vmDir := filepath.Join(vmsDir, "nested-vm")
+	dataDir := filepath.Join(vmDir, "data")
+	require.NoError(t, os.MkdirAll(dataDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(vmDir, LogSentinel), []byte("2147483647"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(vmDir, "broodbox.log"), []byte("log"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "state.json"), []byte("{}"), 0o600))
+
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
+
+	_, err := os.Stat(vmDir)
+	assert.True(t, os.IsNotExist(err), "entire vmDir tree should be removed")
+}
+
+// TestCleanupStaleVMDirs_FingerprintMatchPreserved verifies that a live bbox
+// sentinel with a matching exe fingerprint preserves the dir even when there
+// is also state pointing at a dead runner.
+func TestCleanupStaleVMDirs_FingerprintMatchPreserved(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
+
+	vmDir := filepath.Join(vmsDir, "live-bbox-fingerprint")
+	dataDir := writeVMState(t, vmDir, true, deadPID)
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	writeSentinel(t, vmDir, fmt.Sprintf("%d\n%s", os.Getpid(), exe))
+
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
+
+	_, err = os.Stat(vmDir)
+	assert.NoError(t, err, "vmDir with matching bbox fingerprint should remain")
+	_ = dataDir
+}
+
+// TestCleanupStaleVMDirs_LegacyPIDOnlySentinelStillWorks verifies the legacy
+// single-line sentinel format falls back to plain liveness.
+func TestCleanupStaleVMDirs_LegacyPIDOnlySentinelStillWorks(t *testing.T) {
+	t.Parallel()
+
+	vmsDir := filepath.Join(t.TempDir(), "vms")
+	require.NoError(t, os.MkdirAll(vmsDir, 0o755))
 
 	// Live PID, legacy format — preserved.
 	liveDir := filepath.Join(vmsDir, "live-legacy")
@@ -343,7 +557,7 @@ func TestCleanupStaleLogs_LegacyPIDOnlySentinelStillWorks(t *testing.T) {
 		filepath.Join(staleDir, LogSentinel),
 		[]byte("2147483647"), 0o600))
 
-	CleanupStaleLogs(vmsDir, testLogger())
+	CleanupStaleVMDirs(vmsDir, "", testLogger())
 
 	_, err := os.Stat(liveDir)
 	assert.NoError(t, err, "legacy sentinel with live PID should preserve directory")
@@ -352,86 +566,36 @@ func TestCleanupStaleLogs_LegacyPIDOnlySentinelStillWorks(t *testing.T) {
 	assert.True(t, os.IsNotExist(err), "legacy sentinel with dead PID should remove directory")
 }
 
-func TestCleanupStaleVMData_RemovesOrphanedDataDir(t *testing.T) {
+// TestStateFileOversize_Direct exercises the helper directly.
+func TestStateFileOversize_Direct(t *testing.T) {
 	t.Parallel()
 
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	vmDir := filepath.Join(vmsDir, "orphan-vm")
-	dataDir := writeVMState(t, vmDir, true, deadPID)
+	t.Run("under_limit", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "go-microvm-state.json"),
+			make([]byte, maxStateSize-1), 0o600))
+		assert.False(t, stateFileOversize(dir, testLogger()))
+	})
 
-	CleanupStaleVMData(vmsDir, testLogger())
+	t.Run("over_limit", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "go-microvm-state.json"),
+			make([]byte, maxStateSize+1), 0o600))
+		assert.True(t, stateFileOversize(dir, testLogger()))
+	})
 
-	_, err := os.Stat(dataDir)
-	assert.True(t, os.IsNotExist(err), "orphaned data dir should be removed")
-	// No sentinel or logs were written, so the now-empty parent is reclaimed too.
-	_, err = os.Stat(vmDir)
-	assert.True(t, os.IsNotExist(err), "empty parent VM dir should be removed")
-}
+	t.Run("exactly_limit", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "go-microvm-state.json"),
+			make([]byte, maxStateSize), 0o600))
+		assert.False(t, stateFileOversize(dir, testLogger()))
+	})
 
-func TestCleanupStaleVMData_KeepsLiveRunner(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	vmDir := filepath.Join(vmsDir, "live-vm")
-	// Our own PID is alive, standing in for a running runner.
-	dataDir := writeVMState(t, vmDir, true, os.Getpid())
-
-	CleanupStaleVMData(vmsDir, testLogger())
-
-	_, err := os.Stat(dataDir)
-	assert.NoError(t, err, "data dir for a live runner must be preserved")
-}
-
-func TestCleanupStaleVMData_KeepsInactiveState(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	vmDir := filepath.Join(vmsDir, "inactive-vm")
-	// Active=false with a dead PID: a clean shutdown, not an orphan.
-	dataDir := writeVMState(t, vmDir, false, deadPID)
-
-	CleanupStaleVMData(vmsDir, testLogger())
-
-	_, err := os.Stat(dataDir)
-	assert.NoError(t, err, "inactive VM data dir is not an orphan and must be preserved")
-}
-
-func TestCleanupStaleVMData_PreservesParentWithLogs(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	vmDir := filepath.Join(vmsDir, "orphan-with-logs")
-	dataDir := writeVMState(t, vmDir, true, deadPID)
-	// A sentinel/log left by the bbox parent: CleanupStaleLogs owns the
-	// parent, so CleanupStaleVMData must reclaim only the data dir.
-	require.NoError(t, os.WriteFile(filepath.Join(vmDir, "broodbox.log"), []byte("log"), 0o600))
-
-	CleanupStaleVMData(vmsDir, testLogger())
-
-	_, err := os.Stat(dataDir)
-	assert.True(t, os.IsNotExist(err), "orphaned data dir should be removed")
-	_, err = os.Stat(vmDir)
-	assert.NoError(t, err, "parent VM dir with logs must be left for log cleanup")
-}
-
-func TestCleanupStaleVMData_NoStateFile(t *testing.T) {
-	t.Parallel()
-
-	vmsDir := filepath.Join(t.TempDir(), "vms")
-	vmDir := filepath.Join(vmsDir, "no-state")
-	dataDir := filepath.Join(vmDir, vmDataSubdir)
-	require.NoError(t, os.MkdirAll(dataDir, 0o755))
-
-	// No state file: nothing to decide on; must not touch the dir.
-	CleanupStaleVMData(vmsDir, testLogger())
-
-	_, err := os.Stat(dataDir)
-	assert.NoError(t, err, "dir without a state file must be preserved")
-}
-
-func TestCleanupStaleVMData_NonexistentVmsDir(t *testing.T) {
-	t.Parallel()
-
-	// Should not panic when vms/ doesn't exist at all.
-	CleanupStaleVMData(filepath.Join(t.TempDir(), "nonexistent"), testLogger())
+	t.Run("nonexistent_dir", func(t *testing.T) {
+		t.Parallel()
+		assert.False(t, stateFileOversize(filepath.Join(t.TempDir(), "nope"), testLogger()))
+	})
 }

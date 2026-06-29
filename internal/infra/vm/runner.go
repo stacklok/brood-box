@@ -430,15 +430,25 @@ func (v *microvmVM) RootFSPath() string {
 	return v.vm.RootFSPath()
 }
 
-// vmDataDir returns a per-VM data directory under ~/.config/broodbox/vms/<name>/data.
-// This isolates state files and locks so multiple VMs can run in parallel.
-// The parent directory is used by bbox for logs and is cleaned by CleanupStaleLogs.
+// vmDataSubdir is the per-VM data subdirectory name under
+// ~/.config/broodbox/vms/<name>/. It holds the go-microvm state file and the
+// COW rootfs clone (rootfs-work/). The "data" segment is a brood-box layout
+// choice: go-microvm's WithDataDir takes an opaque path, so this name is an
+// internal contract between vmDataDir and the cleanup sweep (which looks for
+// <vmDir>/data when fingerprinting the runner state) — not a go-microvm
+// requirement.
+const vmDataSubdir = "data"
+
+// vmDataDir returns a per-VM data directory under
+// ~/.config/broodbox/vms/<name>/data. This isolates state files and locks so
+// multiple VMs can run in parallel. The parent directory is used by bbox for
+// logs and is cleaned by CleanupStaleVMDirs.
 func vmDataDir(name string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("determining home directory: %w", err)
 	}
-	return filepath.Join(home, ".config", "broodbox", "vms", name, "data"), nil
+	return filepath.Join(home, ".config", "broodbox", "vms", name, vmDataSubdir), nil
 }
 
 // VMDataDir returns a per-VM data directory under ~/.config/broodbox/vms/<name>/data.

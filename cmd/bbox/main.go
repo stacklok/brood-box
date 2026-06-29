@@ -521,10 +521,28 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	// Clean up stale VM log directories and orphaned data dirs (COW rootfs
 	// clones) left behind by crashed runs.
-	if home, homeErr := os.UserHomeDir(); homeErr == nil {
+	//
+	// BBOX_KEEP_VM_DATA=1 disables startup stale-dir reclamation in addition
+	// to gating Stop(): a crashed run under that env var leaves Active==true
+	// + a dead PID — exactly what the sweep removes — so without this gate
+	// the documented debug procedure (set the env var → re-run → inspect)
+	// would silently nuke the dir the user wanted to inspect.
+	if os.Getenv("BBOX_KEEP_VM_DATA") == "1" {
+		logger.Debug("BBOX_KEEP_VM_DATA set, skipping stale VM directory cleanup")
+	} else if home, homeErr := os.UserHomeDir(); homeErr == nil {
 		vmsDir := filepath.Join(home, ".config", "broodbox", "vms")
-		infravm.CleanupStaleLogs(vmsDir, logger)
-		infravm.CleanupStaleVMData(vmsDir, logger)
+		// Background the sweep: data/rootfs-work/ can be GBs of small files,
+		// and an unbounded synchronous RemoveAll would serialize before VM
+		// boot on every interactive invocation. Each VM dir is uniquely
+		// named and the current run's vmName is passed as skipName, so there
+		// is no TOCTOU against the current run.
+		go func() {
+			start := time.Now()
+			logger.Debug("starting stale VM directory cleanup", "vms_dir", vmsDir)
+			infravm.CleanupStaleVMDirs(vmsDir, vmName, logger)
+			logger.Debug("finished stale VM directory cleanup",
+				"vms_dir", vmsDir, "elapsed", time.Since(start))
+		}()
 	}
 
 	// Build registry: start with built-in clients, then layer in any
