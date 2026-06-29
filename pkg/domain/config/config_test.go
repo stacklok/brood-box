@@ -2195,7 +2195,7 @@ func TestMergeConfigs_LocalCanTightenExisting(t *testing.T) {
 	assert.Equal(t, MCPAuthzProfileObserve, got.MCP.Authz.Profile, "authz tightened")
 }
 
-func TestMergeConfigs_LocalMCPModeOverride(t *testing.T) {
+func TestMergeConfigs_LocalMCPModeIgnored(t *testing.T) {
 	t.Parallel()
 
 	global := &Config{
@@ -2211,5 +2211,57 @@ func TestMergeConfigs_LocalMCPModeOverride(t *testing.T) {
 
 	result := MergeConfigs(global, local)
 	require.NotNil(t, result.Agents["a"].MCP)
-	assert.Equal(t, MCPModeEnv, result.Agents["a"].MCP.Mode)
+	// Security (#2, CWE-862): MCP.Mode is sourced from global only. A
+	// workspace-local .broodbox.yaml setting mcp.mode: "env" must be IGNORED
+	// — otherwise it would suppress a built-in agent's config-file injector.
+	assert.Equal(t, "", result.Agents["a"].MCP.Mode)
+}
+
+func TestMergeConfigs_LocalMCPEnabledTightenOnly(t *testing.T) {
+	t.Parallel()
+
+	t.Run("local cannot re-enable MCP disabled globally", func(t *testing.T) {
+		t.Parallel()
+		disabled := false
+		enabled := true
+		global := &Config{
+			Agents: map[string]AgentOverride{
+				"a": {Image: "img", MCP: &MCPAgentOverride{Enabled: &disabled}},
+			},
+		}
+		local := &Config{
+			Agents: map[string]AgentOverride{
+				"a": {MCP: &MCPAgentOverride{Enabled: &enabled}},
+			},
+		}
+
+		result := MergeConfigs(global, local)
+		require.NotNil(t, result.Agents["a"].MCP)
+		require.NotNil(t, result.Agents["a"].MCP.Enabled)
+		// Security (#3, CWE-862): per-agent MCP.Enabled is tighten-only —
+		// workspace-local may only DISABLE, never re-enable what the operator
+		// disabled globally.
+		assert.False(t, *result.Agents["a"].MCP.Enabled)
+	})
+
+	t.Run("local can disable MCP enabled globally", func(t *testing.T) {
+		t.Parallel()
+		enabled := true
+		disabled := false
+		global := &Config{
+			Agents: map[string]AgentOverride{
+				"a": {Image: "img", MCP: &MCPAgentOverride{Enabled: &enabled}},
+			},
+		}
+		local := &Config{
+			Agents: map[string]AgentOverride{
+				"a": {MCP: &MCPAgentOverride{Enabled: &disabled}},
+			},
+		}
+
+		result := MergeConfigs(global, local)
+		require.NotNil(t, result.Agents["a"].MCP)
+		require.NotNil(t, result.Agents["a"].MCP.Enabled)
+		assert.False(t, *result.Agents["a"].MCP.Enabled)
+	})
 }

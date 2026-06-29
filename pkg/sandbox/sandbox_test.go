@@ -1255,6 +1255,54 @@ func TestSandboxRunner_Prepare_CustomAgentEgressDefaultsStandard(t *testing.T) {
 	assert.Equal(t, "api.acme.dev", vmRunner.startCfg.EgressPolicy.AllowedHosts[0].Name)
 }
 
+// TestSandboxRunner_Prepare_MCPModeEnvHostlessStandardBoots verifies the issue
+// #191 canonical example (image, command, env_forward, mcp.mode:env — NO
+// egress_hosts) actually boots: with mcp.mode:env the MCP proxy is the agent's
+// network discovery path, so a hostless non-permissive profile yields an empty
+// (gateway-only) restricted policy instead of failing egress.Resolve. All
+// external egress stays blocked; the proxy is the only path out.
+func TestSandboxRunner_Prepare_MCPModeEnvHostlessStandardBoots(t *testing.T) {
+	t.Parallel()
+
+	// Canonical aider example: mcp.mode=env, no egress_hosts. AgentFromOverride
+	// defaults the egress profile to "standard" (DefaultCustomAgentEgressProfile).
+	customAgent, err := domainconfig.AgentFromOverride("aider", domainconfig.AgentOverride{
+		Image:      "ghcr.io/acme/aider-bbox:latest",
+		Command:    []string{"aider"},
+		EnvForward: []string{"OPENAI_API_KEY", "AIDER_*"},
+		MCP:        &domainconfig.MCPAgentOverride{Mode: domainconfig.MCPModeEnv},
+	}, domainconfig.DefaultsConfig{})
+	require.NoError(t, err)
+	assert.Equal(t, egress.ProfileStandard, customAgent.DefaultEgressProfile, "precondition: defaults to standard")
+
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry:      &mockRegistry{agents: map[string]agent.Agent{"aider": customAgent}},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config: &SandboxConfig{
+			AgentOverrides: map[string]domainconfig.AgentOverride{
+				"aider": {MCP: &domainconfig.MCPAgentOverride{Mode: domainconfig.MCPModeEnv}},
+			},
+		},
+		EnvProvider: &mockEnvProvider{},
+		Logger:      testLogger(),
+	})
+
+	sb, err := runner.Prepare(context.Background(), "aider", RunOpts{
+		Workspace: "/tmp/ws",
+		SessionID: "abcd1234",
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	// An empty restricted policy (not nil) — gateway-only, all external egress blocked.
+	require.NotNil(t, vmRunner.startCfg.EgressPolicy, "mcp.mode=env hostless standard must produce a gateway-only restricted policy")
+	assert.Empty(t, vmRunner.startCfg.EgressPolicy.AllowedHosts, "no external hosts allowed — proxy is the only path out")
+}
+
 func TestSandboxRunner_Prepare_AgentNotFound(t *testing.T) {
 	t.Parallel()
 

@@ -366,3 +366,23 @@ func TestValidateCustomAgent_ImageRefValidator(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid image reference")
 }
+
+// TestValidateCustomAgent_CanonicalAiderExample is the issue #191
+// acceptance-criteria example: image, command, env_forward, mcp.mode:env — NO
+// egress_profile, NO egress_hosts. ValidateCustomAgent must accept this: with
+// mcp.mode==env the MCP proxy is the agent's network discovery path, and
+// egress.Resolve remains the authoritative runtime safety net (rejects a
+// hostless non-permissive profile at VM start), so the load-time gate is
+// loosened for the env mode only.
+func TestValidateCustomAgent_CanonicalAiderExample(t *testing.T) {
+	t.Parallel()
+
+	o := AgentOverride{
+		Image:      "ghcr.io/example/aider:latest",
+		Command:    []string{"aider"},
+		EnvForward: []string{"AIDER_API_KEY"},
+		MCP:        &MCPAgentOverride{Mode: MCPModeEnv},
+		// No EgressProfile, no EgressHosts — defaults to standard.
+	}
+	require.NoError(t, ValidateCustomAgent("aider", o, nil))
+}

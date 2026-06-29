@@ -1043,6 +1043,20 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		// Print available agents on not-found errors.
 		var notFound *agent.ErrNotFound
 		if errors.As(err, &notFound) {
+			// If the name was declared in the merged config but dropped during
+			// registration (registerCustomAgents warns and skips invalid
+			// custom agents), point at `bbox agents doctor` instead of the
+			// generic "Available agents" list — the user did declare it, it
+			// just failed validation, so "you typo'd" is the wrong message.
+			if cfg != nil {
+				if _, declared := cfg.Agents[notFound.Name]; declared {
+					_, _ = fmt.Fprintf(os.Stderr,
+						"\nAgent %q is declared in config but was not registered (it failed validation).\n"+
+							"Run 'bbox agents doctor %s' for details.\n",
+						notFound.Name, notFound.Name)
+					return err
+				}
+			}
 			_, _ = fmt.Fprintf(os.Stderr, "\nAvailable agents:\n")
 			for _, e := range registry.List() {
 				_, _ = fmt.Fprintf(os.Stderr, "  %-15s %s\n", e.Agent.Name, e.Agent.Image)

@@ -1123,7 +1123,11 @@ func TightenSettingsCategories(global, local *SettingsCategoryConfig) *SettingsC
 //   - Resource fields (CPUs, Memory, TmpSize): local overrides global when non-zero.
 //   - EgressProfile: tighten-only via egress.Stricter.
 //   - AllowHosts: additive (global + local).
-//   - MCP.Enabled / MCP.Mode: local overrides global.
+//   - MCP.Enabled: tighten-only — local may only DISABLE (Enabled:false), never
+//     re-enable what the operator disabled globally (#3, CWE-862).
+//   - MCP.Mode: IGNORED from local, sourced from global only. Allowing local to
+//     set mcp.mode: "env" would suppress a built-in agent's config-file
+//     injector (#2, CWE-862).
 //   - MCP.Authz: tighten-only via MergeMCPAuthzConfig.
 //   - SettingsImport: tighten-only via mergeSettingsImportConfig.
 //   - EnvForward: tighten-only — local may only NARROW (subset of) the global
@@ -1133,6 +1137,8 @@ func TightenSettingsCategories(global, local *SettingsCategoryConfig) *SettingsC
 // are IGNORED entirely — they are sourced from the global config only:
 //   - Image, Command (a repository must not be able to repoint a built-in or
 //     declared agent at an arbitrary image or change its entrypoint)
+//   - MCP.Mode (a repository must not be able to suppress a built-in's MCP
+//     config-file injector by flipping mode to "env")
 //   - Credentials.Persist (local cannot add new credential paths)
 //   - Description, DefaultEnv, EnvRequired, Settings, EgressHosts
 //     (declarative custom-agent identity must come from the trusted global
@@ -1182,7 +1188,16 @@ func mergeAgentOverride(global, local AgentOverride) AgentOverride {
 		)
 	}
 
-	// MCP: merge Enabled and Authz separately.
+	// MCP: Enabled is tighten-only; Mode is IGNORED from local.
+	//
+	// Security (#2, CWE-862): Mode is sourced from the global config only.
+	// Allowing a workspace-local .broodbox.yaml to set mcp.mode: "env" would
+	// suppress a built-in agent's config-file injector (sandbox.go drops it
+	// when mode==env), fail-opening the agent's MCP access.
+	//
+	// Security (#3, CWE-862): Enabled is tighten-only — local may only
+	// DISABLE MCP (Enabled:false), never re-enable what the operator
+	// disabled globally. Mirrors mergeSettingsImportConfig.
 	if local.MCP != nil {
 		if result.MCP == nil {
 			result.MCP = &MCPAgentOverride{}
@@ -1191,11 +1206,8 @@ func mergeAgentOverride(global, local AgentOverride) AgentOverride {
 			cp := *result.MCP
 			result.MCP = &cp
 		}
-		if local.MCP.Enabled != nil {
+		if local.MCP.Enabled != nil && !*local.MCP.Enabled {
 			result.MCP.Enabled = local.MCP.Enabled
-		}
-		if local.MCP.Mode != "" {
-			result.MCP.Mode = local.MCP.Mode
 		}
 		result.MCP.Authz = MergeMCPAuthzConfig(result.MCP.Authz, local.MCP.Authz)
 	}

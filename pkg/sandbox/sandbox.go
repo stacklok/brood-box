@@ -314,6 +314,28 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		}
 	}
 
+	// Enforce env_required presence before booting the VM. A missing required
+	// env var would otherwise surface as an opaque in-VM failure; fail fast
+	// here with a pointer to `bbox agents doctor <name>`. Uses the injected
+	// EnvProvider (no direct os.Getenv) to stay testable and layer-clean.
+	if len(override.EnvRequired) > 0 && s.envProvider != nil {
+		present := make(map[string]struct{}, len(override.EnvRequired))
+		for _, entry := range s.envProvider.Environ() {
+			key, _, ok := strings.Cut(entry, "=")
+			if ok {
+				present[key] = struct{}{}
+			}
+		}
+		for _, name := range override.EnvRequired {
+			if _, ok := present[name]; !ok {
+				s.observer.Fail("Missing required environment variable")
+				return nil, fmt.Errorf(
+					"agent %q requires env var %q which is not set on the host — run 'bbox agents doctor %s' for a full check",
+					agentName, name, agentName)
+			}
+		}
+	}
+
 	if opts.CPUs > 0 {
 		override.CPUs = opts.CPUs
 	}
@@ -354,10 +376,27 @@ func (s *SandboxRunner) Prepare(ctx context.Context, agentName string, opts RunO
 		effectiveProfile = egress.ProfileName(opts.EgressProfile)
 	}
 
-	egressPolicy, err := egress.Resolve(effectiveProfile, ag.EgressHosts)
-	if err != nil {
-		s.observer.Fail("Failed to resolve egress policy")
-		return nil, fmt.Errorf("resolving egress policy: %w", err)
+	// With mcp.mode:env the MCP proxy (reachable on the gateway) is the
+	// agent's network discovery path, so a hostless non-permissive profile is
+	// legitimate: the agent reaches its tools via BBOX_MCP_URL through the
+	// proxy. egress.Resolve would otherwise reject "no hosts for standard",
+	// which would block the issue #191 canonical example from booting. Fall
+	// back to an empty (gateway-only) restricted policy in that case — all
+	// external egress stays blocked, the proxy is the only path out.
+	var egressPolicy *egress.Policy
+	if override.MCP != nil && override.MCP.Mode == config.MCPModeEnv &&
+		effectiveProfile != egress.ProfilePermissive &&
+		len(ag.EgressHosts[effectiveProfile]) == 0 {
+		egressPolicy = &egress.Policy{}
+		s.logger.Debug("egress: mcp.mode=env with no egress_hosts — restricting to gateway (MCP proxy)",
+			"profile", effectiveProfile)
+	} else {
+		var err error
+		egressPolicy, err = egress.Resolve(effectiveProfile, ag.EgressHosts)
+		if err != nil {
+			s.observer.Fail("Failed to resolve egress policy")
+			return nil, fmt.Errorf("resolving egress policy: %w", err)
+		}
 	}
 
 	// Collect extra hosts: config network hosts + agent override hosts + CLI hosts.

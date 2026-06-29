@@ -59,8 +59,13 @@ func runAgentsList(cmd *cobra.Command, cfgPath string) error {
 		return err
 	}
 	out := cmd.OutOrStdout()
+	builtins := builtinNames()
 	for _, e := range resolved.registry.List() {
-		_, _ = fmt.Fprintf(out, "%-15s %s\n", e.Agent.Name, e.Agent.Image)
+		typ := "custom"
+		if _, ok := builtins[e.Agent.Name]; ok {
+			typ = "built-in"
+		}
+		_, _ = fmt.Fprintf(out, "%-15s %-10s %s\n", e.Agent.Name, typ, e.Agent.Image)
 	}
 	return nil
 }
@@ -97,7 +102,7 @@ func runAgentsInspect(cmd *cobra.Command, cfgPath, agentName string) error {
 		// declared. Direct them to `agents doctor` for the failure detail.
 		override, declared := resolved.merged.Agents[agentName]
 		if !declared {
-			return fmt.Errorf("unknown agent %q", agentName)
+			return fmt.Errorf("unknown agent %q — run 'bbox agents list' to see available agents", agentName)
 		}
 		ag, mapErr := domainconfig.AgentFromOverride(agentName, override, resolved.merged.Defaults)
 		if mapErr != nil {
@@ -136,13 +141,13 @@ func renderInspect(w io.Writer, ag domainagent.Agent, resolved *resolvedRegistry
 	}
 
 	// Env: names/patterns only.
-	_, _ = fmt.Fprintf(w, "Env forward: %s\n", joinOrNone(ag.EnvForward))
+	_, _ = fmt.Fprintf(w, "Env forward: %s  [%s]\n", joinOrNone(ag.EnvForward), fieldSourceEnvForward(agentName, resolved, isBuiltin))
 	_, _ = fmt.Fprintf(w, "Default env: %s\n", joinOrNone(sortedKeys(ag.DefaultEnv)))
 	if len(override.EnvRequired) > 0 {
 		_, _ = fmt.Fprintf(w, "Required env:\n")
 		for _, name := range override.EnvRequired {
 			_, present := os.LookupEnv(name)
-			status := "MISSING"
+			status := "MISSING — set it on the host (e.g. export " + name + "=…)"
 			if present {
 				status = "present"
 			}
@@ -155,7 +160,7 @@ func renderInspect(w io.Writer, ag domainagent.Agent, resolved *resolvedRegistry
 		ag.DefaultCPUs, ag.DefaultMemory, ag.DefaultTmpSize)
 
 	// Egress.
-	_, _ = fmt.Fprintf(w, "Egress:      profile=%s\n", ag.DefaultEgressProfile)
+	_, _ = fmt.Fprintf(w, "Egress:      profile=%s  [%s]\n", ag.DefaultEgressProfile, fieldSourceEgressProfile(agentName, resolved, isBuiltin))
 	for _, profile := range sortedProfiles(ag.EgressHosts) {
 		names := make([]string, 0, len(ag.EgressHosts[profile]))
 		for _, h := range ag.EgressHosts[profile] {
@@ -239,7 +244,7 @@ func runAgentsDoctor(cmd *cobra.Command, cfgPath, agentName string) error {
 	_, regErr := resolved.registry.Get(agentName)
 	_, declared := resolved.merged.Agents[agentName]
 	if regErr != nil && !declared {
-		return fmt.Errorf("unknown agent %q", agentName)
+		return fmt.Errorf("unknown agent %q — run 'bbox agents list' to see available agents", agentName)
 	}
 
 	override := resolved.merged.Agents[agentName]
@@ -317,7 +322,7 @@ func runDoctor(
 		if present {
 			add(true, fmt.Sprintf("required env %s present", name))
 		} else {
-			add(false, fmt.Sprintf("required env %s is missing", name))
+			add(false, fmt.Sprintf("required env %s is missing — set it on the host (e.g. export %s=…)", name, name))
 		}
 	}
 
@@ -371,6 +376,54 @@ func fieldSourceImage(agentName string, resolved *resolvedRegistry, isBuiltin bo
 		return "built-in"
 	}
 	return fieldSource(false, setByWorkspace, setByGlobal)
+}
+
+// fieldSourceEnvForward attributes the EnvForward field for the inspect output.
+// EnvForward is tighten-only: a workspace-local override that narrows the
+// global allowlist shows as "workspace"; otherwise "global" when the global
+// override set it; otherwise "built-in".
+func fieldSourceEnvForward(agentName string, resolved *resolvedRegistry, isBuiltin bool) string {
+	setByGlobal := false
+	if o, ok := resolved.global.Agents[agentName]; ok && len(o.EnvForward) > 0 {
+		setByGlobal = true
+	}
+	setByWorkspace := false
+	if resolved.local != nil {
+		if o, ok := resolved.local.Agents[agentName]; ok && len(o.EnvForward) > 0 {
+			setByWorkspace = true
+		}
+	}
+	if !setByGlobal && !setByWorkspace && isBuiltin {
+		return "built-in"
+	}
+	if setByWorkspace {
+		return "workspace"
+	}
+	return "global"
+}
+
+// fieldSourceEgressProfile attributes the EgressProfile field for the inspect
+// output. EgressProfile is tighten-only: a workspace-local override that
+// tightens the global profile shows as "workspace"; otherwise "global" when the
+// global override set it; otherwise "built-in".
+func fieldSourceEgressProfile(agentName string, resolved *resolvedRegistry, isBuiltin bool) string {
+	setByGlobal := false
+	if o, ok := resolved.global.Agents[agentName]; ok && o.EgressProfile != "" {
+		setByGlobal = true
+	}
+	setByWorkspace := false
+	if resolved.local != nil {
+		if o, ok := resolved.local.Agents[agentName]; ok && o.EgressProfile != "" {
+			setByWorkspace = true
+		}
+	}
+	if !setByGlobal && !setByWorkspace && isBuiltin {
+		return "built-in"
+	}
+	if setByWorkspace {
+		return "workspace"
+	}
+	return "global"
 }
 
 // didLocalAddAgent reports whether the workspace-local config declared an

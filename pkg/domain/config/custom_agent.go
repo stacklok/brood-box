@@ -260,11 +260,20 @@ func ValidateCustomAgent(name string, o AgentOverride, imageRefValidator func(st
 	}
 
 	// Effective egress profile must have hosts unless permissive.
+	//
+	// Exception: when mcp.mode == env, the MCP proxy is the agent's network
+	// discovery path (it reaches the tools it needs via BBOX_MCP_URL through
+	// the proxy), so the agent may legitimately declare no egress_hosts. The
+	// runtime safety net still holds: egress.Resolve (pkg/domain/egress) is
+	// the authoritative check at VM start time and rejects a hostless
+	// non-permissive profile there, so loosening this load-time gate does not
+	// let a hostless standard-config boot.
 	effectiveProfile := DefaultCustomAgentEgressProfile
 	if o.EgressProfile != "" {
 		effectiveProfile = egress.ProfileName(o.EgressProfile)
 	}
-	if effectiveProfile != egress.ProfilePermissive {
+	mcpModeEnv := o.MCP != nil && o.MCP.Mode == MCPModeEnv
+	if effectiveProfile != egress.ProfilePermissive && !mcpModeEnv {
 		if len(o.EgressHosts[string(effectiveProfile)]) == 0 {
 			return fmt.Errorf(
 				"agent %q: egress profile %q requires egress_hosts[%q] (or set egress_profile: permissive)",
