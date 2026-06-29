@@ -34,6 +34,13 @@ const (
 	maxFirmwareExtractSize = 128 << 20
 	// maxFirmwareEntries caps the number of tar entries to prevent inode exhaustion.
 	maxFirmwareEntries = 1000
+	// firmwareTempPrefix is the shared prefix of transient download entries
+	// created directly under cacheRoot (firmware-*.tar.gz archives and
+	// firmware-extract-* dirs). pruneStaleFirmwareVersions skips any entry
+	// with this prefix so leftover temps from a crashed run are never
+	// mistaken for version directories. Both os.CreateTemp and os.MkdirTemp
+	// patterns below reference it to keep the coupling explicit.
+	firmwareTempPrefix = "firmware-"
 )
 
 type FirmwareResolution struct {
@@ -193,7 +200,7 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 		}
 		url := firmwareURL(version, osName, candidate)
 
-		tmpArchive, err := os.CreateTemp(cacheRoot, "firmware-*.tar.gz")
+		tmpArchive, err := os.CreateTemp(cacheRoot, firmwareTempPrefix+"*.tar.gz")
 		if err != nil {
 			return FirmwareResolution{}, fmt.Errorf("create firmware temp archive: %w", err)
 		}
@@ -220,7 +227,7 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 			continue
 		}
 
-		tmpDir, err := os.MkdirTemp(cacheRoot, "firmware-extract-")
+		tmpDir, err := os.MkdirTemp(cacheRoot, firmwareTempPrefix+"extract-")
 		if err != nil {
 			cleanupArchive()
 			return FirmwareResolution{}, fmt.Errorf("create firmware temp dir: %w", err)
@@ -276,6 +283,11 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 			return FirmwareResolution{}, err
 		}
 
+		// Fresh download succeeded — reclaim cache dirs left by older
+		// firmware versions. Only the version pinned in go.mod is ever
+		// used, so previous version dirs (tens of MB each) are dead weight.
+		pruneStaleFirmwareVersions(ctx, cacheRoot, version)
+
 		slog.DebugContext(ctx, "firmware downloaded", "dir", filepath.Dir(finalFwPath), "version", version, "arch", candidate)
 		return FirmwareResolution{
 			Dir:       filepath.Dir(finalFwPath),
@@ -292,6 +304,54 @@ func downloadFirmware(ctx context.Context, cacheRoot, version, osName, arch stri
 		lastErr = errors.New("firmware download failed")
 	}
 	return FirmwareResolution{}, lastErr
+}
+
+// pruneStaleFirmwareVersions removes firmware cache version directories under
+// cacheRoot that don't match keepVersion. Each go-microvm version bump creates
+// a new <cacheRoot>/<version>/ directory, but only the pinned version is ever
+// used, so older ones accumulate unbounded.
+//
+// It must be called only after a successful fresh download, with the firmware
+// lock held (no concurrent writers). Failures are logged and never propagated:
+// the firmware is already cached successfully, so pruning is strictly
+// best-effort cleanup. The lock file and transient temp entries
+// (firmware-*.tar.gz archives, firmware-extract-* dirs) are left untouched.
+func pruneStaleFirmwareVersions(ctx context.Context, cacheRoot, keepVersion string) {
+	entries, err := os.ReadDir(cacheRoot)
+	if err != nil {
+		slog.DebugContext(ctx, "firmware prune: cannot scan cache root", "root", cacheRoot, "error", err)
+		return
+	}
+
+	for _, entry := range entries {
+		// Only version directories are pruned; this skips .firmware.lock
+		// and any leftover firmware-*.tar.gz temp archives (plain files).
+		if !entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name == keepVersion {
+			continue
+		}
+		// Skip transient temp dirs created in cacheRoot during download.
+		if strings.HasPrefix(name, firmwareTempPrefix) {
+			continue
+		}
+
+		stalePath := filepath.Join(cacheRoot, name)
+		if err := os.RemoveAll(stalePath); err != nil {
+			// "not exist" is legitimately quiet; unexpected removal failures
+			// (permissions drift, read-only mount) are surfaced at Warn so
+			// they don't silently fill the cache disk over many version bumps.
+			if !errors.Is(err, os.ErrNotExist) {
+				slog.WarnContext(ctx, "firmware prune: failed to remove stale version",
+					"path", stalePath, "error", err)
+			}
+			continue
+		}
+		slog.DebugContext(ctx, "firmware prune: removed stale version",
+			"path", stalePath, "version", name)
+	}
 }
 
 func findSystemFirmware(version, osName, arch string) (FirmwareResolution, error) {
