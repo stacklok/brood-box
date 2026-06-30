@@ -174,6 +174,48 @@ func TestBuildRunImageOverride(t *testing.T) {
 		}
 	})
 
+	t.Run("allow-host folded into EgressHosts under selected profile", func(t *testing.T) {
+		t.Parallel()
+		f := baseFlags
+		f.egressProfile = "standard"
+		f.allowHosts = []string{"api.openai.com:443"}
+		o, err := buildRunImageOverride(image, cmd, f)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		hosts := o.EgressHosts["standard"]
+		if len(hosts) != 1 {
+			t.Fatalf("EgressHosts[standard] = %v, want 1 entry", hosts)
+		}
+		if hosts[0].Name != "api.openai.com" {
+			t.Errorf("Name = %q, want api.openai.com", hosts[0].Name)
+		}
+		if len(hosts[0].Ports) != 1 || hosts[0].Ports[0] != 443 {
+			t.Errorf("Ports = %v, want [443]", hosts[0].Ports)
+		}
+	})
+
+	t.Run("invalid allow-host rejected", func(t *testing.T) {
+		t.Parallel()
+		f := baseFlags
+		f.egressProfile = "standard"
+		f.allowHosts = []string{"1.2.3.4"}
+		if _, err := buildRunImageOverride(image, cmd, f); err == nil {
+			t.Error("expected error for IP-address --allow-host, got nil")
+		}
+	})
+
+	t.Run("no allow-host leaves EgressHosts nil", func(t *testing.T) {
+		t.Parallel()
+		o, err := buildRunImageOverride(image, cmd, baseFlags)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if o.EgressHosts != nil {
+			t.Errorf("EgressHosts = %v, want nil", o.EgressHosts)
+		}
+	})
+
 	t.Run("empty image rejected", func(t *testing.T) {
 		t.Parallel()
 		if _, err := buildRunImageOverride("", cmd, baseFlags); err == nil {
@@ -239,6 +281,24 @@ func TestBuildRunImageOverride_ValidateCustomAgent(t *testing.T) {
 		}
 		if err := domainconfig.ValidateCustomAgent("tool", o, imageRefValidator); err == nil {
 			t.Error("expected validation error for bad image ref, got nil")
+		}
+	})
+
+	t.Run("standard profile with allow-host passes validation without mcp", func(t *testing.T) {
+		t.Parallel()
+		// Regression: --egress-profile standard --allow-host HOST -- CMD used to
+		// fail ValidateCustomAgent because buildRunImageOverride never folded
+		// --allow-host into o.EgressHosts, leaving the "standard" profile
+		// hostless. --mcp is deliberately NOT set here — this is the documented
+		// run-image example (README.md / docs/run-image.md / --help) and it must
+		// not require enabling MCP just to satisfy the egress-hosts gate.
+		f := runImageFlags{egressProfile: "standard", allowHosts: []string{"api.openai.com:443"}}
+		o, err := buildRunImageOverride(image, cmd, f)
+		if err != nil {
+			t.Fatalf("build: %v", err)
+		}
+		if err := domainconfig.ValidateCustomAgent("tool", o, imageRefValidator); err != nil {
+			t.Fatalf("ValidateCustomAgent: %v", err)
 		}
 	})
 
@@ -327,6 +387,81 @@ func TestRunImageCmd_ArgParsing(t *testing.T) {
 			t.Error("expected error for no args, got nil")
 		}
 	})
+}
+
+func TestMCPSubFlagsWithoutMCP(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{
+			name: "no flags set, mcp off",
+			args: []string{"ghcr.io/x/y:latest", "--", "run"},
+			want: nil,
+		},
+		{
+			name: "mcp-authz-profile set without --mcp",
+			args: []string{"ghcr.io/x/y:latest", "--mcp-authz-profile", "observe", "--", "run"},
+			want: []string{"--mcp-authz-profile"},
+		},
+		{
+			name: "mcp-group set without --mcp (non-zero default still detected via Changed)",
+			args: []string{"ghcr.io/x/y:latest", "--mcp-group", "default", "--", "run"},
+			want: []string{"--mcp-group"},
+		},
+		{
+			name: "mcp-port set without --mcp (non-zero default still detected via Changed)",
+			args: []string{"ghcr.io/x/y:latest", "--mcp-port", "4483", "--", "run"},
+			want: []string{"--mcp-port"},
+		},
+		{
+			name: "multiple sub-flags set without --mcp",
+			args: []string{
+				"ghcr.io/x/y:latest",
+				"--mcp-authz-profile", "observe",
+				"--mcp-session-ttl", "30m",
+				"--mcp-config", "/tmp/x.yaml",
+				"--", "run",
+			},
+			want: []string{"--mcp-authz-profile", "--mcp-config", "--mcp-session-ttl"}, // declared order: authz-profile, group, port, config, session-ttl
+		},
+		{
+			name: "sub-flags set together with --mcp produce no warning",
+			args: []string{"ghcr.io/x/y:latest", "--mcp", "--mcp-authz-profile", "observe", "--", "run"},
+			want: nil,
+		},
+		{
+			name: "no sub-flags and no --mcp",
+			args: []string{"ghcr.io/x/y:latest", "--", "run"},
+			want: nil,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cmd := runImageCmd()
+			if err := cmd.ParseFlags(tt.args); err != nil {
+				t.Fatalf("ParseFlags: %v", err)
+			}
+			mcp, err := cmd.Flags().GetBool("mcp")
+			if err != nil {
+				t.Fatalf("GetBool(mcp): %v", err)
+			}
+			got := mcpSubFlagsWithoutMCP(cmd, mcp)
+			if len(got) != len(tt.want) {
+				t.Fatalf("mcpSubFlagsWithoutMCP() = %v, want %v", got, tt.want)
+			}
+			for i := range got {
+				if got[i] != tt.want[i] {
+					t.Errorf("mcpSubFlagsWithoutMCP()[%d] = %q, want %q", i, got[i], tt.want[i])
+				}
+			}
+		})
+	}
 }
 
 func TestRunImageCmd_FlagsRegistered(t *testing.T) {

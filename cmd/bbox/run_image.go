@@ -127,6 +127,11 @@ See: docs/run-image.md (minimum image contract)`,
 			// --env and --env-forward both append to the same forwarding list.
 			f.envForward = append(append([]string{}, envFwd...), envFwdAlt...)
 			f.traceEnabled = f.traceEnabled || os.Getenv("BBOX_TRACE") == "1"
+			if ignored := mcpSubFlagsWithoutMCP(cmd, f.mcp); len(ignored) > 0 {
+				_, _ = fmt.Fprintf(os.Stderr,
+					"Warning: %s ignored without --mcp (the MCP proxy is off by default for run-image)\n",
+					strings.Join(ignored, ", "))
+			}
 			return runRunImage(cmd.Context(), image, command, f)
 		},
 		SilenceUsage:  true,
@@ -450,21 +455,25 @@ func runRunImage(parentCtx context.Context, image string, command []string, f ru
 
 	// Map run-image flags onto the shared runFlags and drive runSandbox.
 	flags := runFlags{
-		cpus:            f.cpus,
-		memory:          f.memory,
-		tmpSize:         f.tmpSize,
-		workspace:       f.workspace,
-		sshPort:         f.sshPort,
-		cfgPath:         f.cfgPath,
-		image:           "", // image is already baked into the registered agent
-		debug:           f.debug,
-		review:          f.review,
-		workspaceMode:   f.workspaceMode,
-		yesAckDirect:    f.yesAckDirect,
-		excludes:        f.excludes,
-		logFile:         f.logFile,
-		egressProfile:   f.egressProfile,
-		allowHosts:      f.allowHosts,
+		cpus:          f.cpus,
+		memory:        f.memory,
+		tmpSize:       f.tmpSize,
+		workspace:     f.workspace,
+		sshPort:       f.sshPort,
+		cfgPath:       f.cfgPath,
+		image:         "", // image is already baked into the registered agent
+		debug:         f.debug,
+		review:        f.review,
+		workspaceMode: f.workspaceMode,
+		yesAckDirect:  f.yesAckDirect,
+		excludes:      f.excludes,
+		logFile:       f.logFile,
+		egressProfile: f.egressProfile,
+		// allowHosts is intentionally nil here: buildRunImageOverride already
+		// filed --allow-host under override.EgressHosts[profile], which
+		// runSandbox reads via ag.EgressHosts. Leaving this set would land the
+		// same hosts a second time via opts.AllowHosts (sandbox.go extraHosts).
+		allowHosts:      nil,
 		noMCP:           !f.mcp,
 		mcpGroup:        f.mcpGroup,
 		mcpPort:         f.mcpPort,
@@ -520,11 +529,17 @@ func runRunImage(parentCtx context.Context, image string, command []string, f ru
 // the ephemeral defaults. It is pure (no I/O, no go-containerregistry) so it
 // can be table-tested directly. The image is accepted pre-validated; image-ref
 // parsing stays in the caller (runRunImage via imageRefValidator).
+// egress.ParseHostFlag is pure string parsing (no I/O), so folding
+// --allow-host into EgressHosts below preserves purity.
 //
 // Ephemeral defaults baked in here:
 //   - EnvForward: from --env / --env-forward only (empty by default)
 //   - EgressProfile: "permissive" unless overridden (so the bare
 //     `bbox run-image IMG -- cmd` example boots without declaring egress_hosts)
+//   - EgressHosts: --allow-host entries, filed under the selected profile.
+//     run-image has no config file to declare egress_hosts, so --allow-host is
+//     the only way to satisfy ValidateCustomAgent's "non-permissive profile
+//     needs hosts" gate (pkg/domain/config/custom_agent.go).
 //   - MCP: when --mcp is set, MCP.Mode is forced to "env" (no config-file
 //     injector exists for an arbitrary image; the agent discovers the proxy via
 //     BBOX_MCP_URL). When --mcp is unset, MCP is left nil and runSandbox gates
@@ -554,6 +569,23 @@ func buildRunImageOverride(image string, command []string, f runImageFlags) (dom
 		profile = string(egress.ProfilePermissive)
 	}
 	o.EgressProfile = profile
+
+	// File --allow-host entries under the selected profile so
+	// ValidateCustomAgent sees them: run-image has no config file to declare
+	// egress_hosts, so --allow-host is the only host source available here.
+	if len(f.allowHosts) > 0 {
+		cfgs := make([]domainconfig.EgressHostConfig, 0, len(f.allowHosts))
+		for _, h := range f.allowHosts {
+			parsed, err := egress.ParseHostFlag(h)
+			if err != nil {
+				return domainconfig.AgentOverride{}, fmt.Errorf("--allow-host %q: %w", h, err)
+			}
+			cfgs = append(cfgs, domainconfig.EgressHostConfig{
+				Name: parsed.Name, Ports: parsed.Ports, Protocol: parsed.Protocol,
+			})
+		}
+		o.EgressHosts = map[string][]domainconfig.EgressHostConfig{profile: cfgs}
+	}
 
 	// Resource overrides: only set when the operator supplied them so the
 	// custom-agent floor (2 vCPU / 4096 MiB) applies otherwise.
@@ -604,6 +636,24 @@ func validateMCPFlags(profile string, ttl time.Duration) error {
 		return fmt.Errorf("--mcp-session-ttl must be non-negative, got %s", ttl)
 	}
 	return nil
+}
+
+// mcpSubFlagsWithoutMCP returns the MCP sub-flag names the operator explicitly
+// set (via cmd.Flags().Changed) when mcp is false. --mcp-group and --mcp-port
+// have non-zero defaults, so detecting "set" requires Changed rather than a
+// zero-value comparison. An empty/nil result means either mcp is true or no
+// sub-flag was set, in which case the caller prints nothing.
+func mcpSubFlagsWithoutMCP(cmd *cobra.Command, mcp bool) []string {
+	if mcp {
+		return nil
+	}
+	var set []string
+	for _, name := range []string{"mcp-authz-profile", "mcp-group", "mcp-port", "mcp-config", "mcp-session-ttl"} {
+		if cmd.Flags().Changed(name) {
+			set = append(set, "--"+name)
+		}
+	}
+	return set
 }
 
 // checkAgentNameCollision rejects a run-image agent name that collides with any
