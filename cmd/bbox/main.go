@@ -233,6 +233,7 @@ Example:
 	cmd.AddCommand(authCmd())
 	cmd.AddCommand(configCmd())
 	cmd.AddCommand(cacheCmd())
+	cmd.AddCommand(runImageCmd())
 
 	return cmd
 }
@@ -440,6 +441,14 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		}
 	}
 
+	// Validate MCP flags up front (shared with run-image). runSandbox re-checks
+	// these as defence-in-depth.
+	if flags.mcpAuthzProfile != "" || flags.mcpSessionTTL != 0 {
+		if err := validateMCPFlags(flags.mcpAuthzProfile, flags.mcpSessionTTL); err != nil {
+			return err
+		}
+	}
+
 	// Resolve workspace early so we can derive a deterministic VM name.
 	earlyWs := flags.workspace
 	if earlyWs == "" {
@@ -625,21 +634,80 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		return fmt.Errorf("config network.%w", egressErr)
 	}
 
+	return runSandbox(ctx, sandboxRunInput{
+		agentName:         agentName,
+		flags:             flags,
+		registry:          registry,
+		cfg:               cfg,
+		ws:                ws,
+		snapDir:           snapDir,
+		vmName:            vmName,
+		sessionID:         sessionID,
+		logPath:           logPath,
+		logFile:           logFile,
+		logger:            logger,
+		observer:          observer,
+		timingObs:         timingObs,
+		tracerProvider:    tracerProvider,
+		terminal:          terminal,
+		directMode:        directMode,
+		interactiveReview: interactiveReview,
+		snapshotMatcher:   snapshotMatcher,
+		diffMatcher:       diffMatcher,
+		configEgressHosts: configEgressHosts,
+		parsedPorts:       parsedPorts,
+	})
+}
+
+// sandboxRunInput bundles the resolved state that run() and runRunImage()
+// share with the post-resolution run tail (runSandbox). Keeping it in a
+// struct avoids a 20-parameter signature as the shared tail grew.
+type sandboxRunInput struct {
+	agentName         string
+	flags             runFlags
+	registry          *infraagent.Registry
+	cfg               *domainconfig.Config
+	ws                string
+	snapDir           string
+	vmName            string
+	sessionID         string
+	logPath           string
+	logFile           *os.File
+	logger            *slog.Logger
+	observer          progress.Observer
+	timingObs         *infraprogress.TimingObserver
+	tracerProvider    *sdktrace.TracerProvider
+	terminal          *infraterminal.OSTerminal
+	directMode        bool
+	interactiveReview bool
+	snapshotMatcher   snapshot.Matcher
+	diffMatcher       snapshot.Matcher
+	configEgressHosts []egress.Host
+	parsedPorts       []domvm.PortForward
+}
+
+// runSandbox is the shared post-resolution run tail: it wires the VM runner,
+// MCP proxy, snapshot isolation, credentials and settings from the resolved
+// registry/config, then drives the SandboxRunner through Prepare → Attach →
+// Stop → review/flush. Both run() (built-in/custom agents from config) and
+// runRunImage() (ephemeral in-memory agent built from CLI flags) reach the
+// same execution path through this function.
+func runSandbox(ctx context.Context, in sandboxRunInput) error {
 	// Build SandboxConfig from the loaded config.
 	sandboxCfg := &sandbox.SandboxConfig{
-		Defaults:         cfg.Defaults,
-		AgentOverrides:   cfg.Agents,
-		ExtraEgressHosts: configEgressHosts,
-		Image:            cfg.Image,
-		MCP:              cfg.MCP,
-		SettingsImport:   cfg.SettingsImport,
+		Defaults:         in.cfg.Defaults,
+		AgentOverrides:   in.cfg.Agents,
+		ExtraEgressHosts: in.configEgressHosts,
+		Image:            in.cfg.Image,
+		MCP:              in.cfg.MCP,
+		SettingsImport:   in.cfg.SettingsImport,
 	}
 
 	firmwareDownloadEnabled := true
-	if cfg.Runtime.FirmwareDownload != nil {
-		firmwareDownloadEnabled = *cfg.Runtime.FirmwareDownload
+	if in.cfg.Runtime.FirmwareDownload != nil {
+		firmwareDownloadEnabled = *in.cfg.Runtime.FirmwareDownload
 	}
-	if flags.noFirmwareDL {
+	if in.flags.noFirmwareDL {
 		firmwareDownloadEnabled = false
 	}
 
@@ -657,18 +725,18 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		CacheDir:        firmwareCachePath,
 		Version:         infraruntime.Version,
 		DownloadEnabled: firmwareDownloadEnabled,
-		Logger:          logger,
+		Logger:          in.logger,
 	})
 	if fwErr != nil {
 		return fmt.Errorf("resolving firmware: %w", fwErr)
 	}
-	logger.Debug("resolved firmware",
+	in.logger.Debug("resolved firmware",
 		"source", firmwareRes.Source,
 		"dir", firmwareRes.Dir,
 		"version", firmwareRes.Version,
 		"url", firmwareRes.URL,
 	)
-	dataDir, dataErr := infravm.VMDataDir(vmName)
+	dataDir, dataErr := infravm.VMDataDir(in.vmName)
 	if dataErr != nil {
 		return fmt.Errorf("resolving VM data directory: %w", dataErr)
 	}
@@ -692,11 +760,11 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			infravm.WithRuntimeSource(infraruntime.RuntimeSource()),
 			infravm.WithCacheDir(cacheDir),
 		)
-		logger.Info("using embedded go-microvm runtime", "version", infraruntime.Version)
+		in.logger.Info("using embedded go-microvm runtime", "version", infraruntime.Version)
 	}
 
 	// Wire external OCI image cache (unless --no-image-cache is set).
-	if !flags.noImageCache {
+	if !in.flags.noImageCache {
 		imgCacheDir, imgCacheErr := imageCacheDir()
 		if imgCacheErr != nil {
 			return fmt.Errorf("resolving image cache directory: %w", imgCacheErr)
@@ -706,29 +774,29 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		// Best-effort stale cache eviction (entries older than 7 days).
 		cache := image.NewCache(imgCacheDir)
 		if removed, evictErr := cache.Evict(7 * 24 * time.Hour); evictErr != nil {
-			logger.Warn("failed to evict stale image cache entries", "error", evictErr)
+			in.logger.Warn("failed to evict stale image cache entries", "error", evictErr)
 		} else if removed > 0 {
-			logger.Info("evicted stale image cache entries", "count", removed)
+			in.logger.Info("evicted stale image cache entries", "count", removed)
 		}
 	}
 
 	// Resolve credential persistence setting.
-	saveCredentials := cfg.Auth.SaveCredentialsEnabled() && !flags.noSaveCredentials
+	saveCredentials := in.cfg.Auth.SaveCredentialsEnabled() && !in.flags.noSaveCredentials
 
 	// Resolve host credential seeding: opt-in via flag or config.
-	seedCreds := flags.seedCredentials || cfg.Auth.SeedHostCredentialsEnabled()
+	seedCreds := in.flags.seedCredentials || in.cfg.Auth.SeedHostCredentialsEnabled()
 
 	var credentialStore credential.Store
 	if saveCredentials {
 		credStateDir := filepath.Join(xdg.ConfigHome, "broodbox", "agent-state")
-		fsStore := infracredential.NewFSStore(credStateDir, logger)
+		fsStore := infracredential.NewFSStore(credStateDir, in.logger)
 		credentialStore = fsStore
 
 		if seedCreds {
-			if entry, lookupErr := registry.Get(agentName); lookupErr == nil && entry.Plugin != nil {
+			if entry, lookupErr := in.registry.Get(in.agentName); lookupErr == nil && entry.Plugin != nil {
 				if seeder := entry.Plugin.Seeder(); seeder != nil {
 					if err := seeder.Seed(fsStore); err != nil {
-						logger.Warn("credential seeding failed", "agent", agentName, "error", err)
+						in.logger.Warn("credential seeding failed", "agent", in.agentName, "error", err)
 					}
 				}
 			}
@@ -741,11 +809,11 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	// Wire settings injector (enabled by default, --no-settings to disable).
 	var settingsInjector *infrasettings.FSInjector
-	settingsEnabled := cfg.SettingsImport.IsEnabled() && !flags.noSettings
+	settingsEnabled := in.cfg.SettingsImport.IsEnabled() && !in.flags.noSettings
 	if settingsEnabled {
-		settingsInjector = infrasettings.NewFSInjector(logger)
+		settingsInjector = infrasettings.NewFSInjector(in.logger)
 		vmRunnerOpts = append(vmRunnerOpts, infravm.WithSettingsInjector(settingsInjector))
-	} else if flags.noSettings {
+	} else if in.flags.noSettings {
 		// Ensure sandbox config reflects disabled state for the application layer.
 		disabled := false
 		sandboxCfg.SettingsImport.Enabled = &disabled
@@ -753,61 +821,64 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	// Wire dependencies.
 	deps := sandbox.SandboxDeps{
-		Registry:         registry,
-		VMRunner:         infravm.NewMicroVMRunner(logger, vmRunnerOpts...),
-		SessionRunner:    infrassh.NewInteractiveSession(logger),
+		Registry:         in.registry,
+		VMRunner:         infravm.NewMicroVMRunner(in.logger, vmRunnerOpts...),
+		SessionRunner:    infrassh.NewInteractiveSession(in.logger),
 		Config:           sandboxCfg,
 		EnvProvider:      agent.NewOSEnvProvider(os.Environ),
-		Logger:           logger,
-		Observer:         observer,
+		Logger:           in.logger,
+		Observer:         in.observer,
 		CredentialStore:  credentialStore,
 		SettingsInjector: settingsInjector,
 	}
 
-	// Validate MCP authz profile flag early (before wiring).
-	if flags.mcpAuthzProfile != "" && !domainconfig.IsValidMCPAuthzProfile(flags.mcpAuthzProfile) {
+	// Validate MCP authz profile flag early (before wiring). This is a
+	// defence-in-depth re-check: the run() and runRunImage front-ends already
+	// validate via validateMCPFlags. For run() it is the primary guard since
+	// the front-end only checks when a flag is set; runSandbox always re-checks.
+	if in.flags.mcpAuthzProfile != "" && !domainconfig.IsValidMCPAuthzProfile(in.flags.mcpAuthzProfile) {
 		return fmt.Errorf("invalid --mcp-authz-profile %q: valid values are %v",
-			flags.mcpAuthzProfile, domainconfig.ValidMCPAuthzProfiles())
+			in.flags.mcpAuthzProfile, domainconfig.ValidMCPAuthzProfiles())
 	}
-	if flags.mcpSessionTTL < 0 {
-		return fmt.Errorf("--mcp-session-ttl must be non-negative, got %s", flags.mcpSessionTTL)
+	if in.flags.mcpSessionTTL < 0 {
+		return fmt.Errorf("--mcp-session-ttl must be non-negative, got %s", in.flags.mcpSessionTTL)
 	}
 
 	// Wire MCP proxy (enabled by default, --no-mcp to disable).
-	mcpEnabled := !flags.noMCP
-	if mcpEnabled && cfg != nil && cfg.MCP.Enabled != nil && !*cfg.MCP.Enabled {
+	mcpEnabled := !in.flags.noMCP
+	if mcpEnabled && in.cfg != nil && in.cfg.MCP.Enabled != nil && !*in.cfg.MCP.Enabled {
 		mcpEnabled = false
 	}
 	if mcpEnabled {
-		mcpGroup := flags.mcpGroup
-		mcpPort := flags.mcpPort
-		if cfg != nil {
-			if mcpGroup == "default" && cfg.MCP.Group != "" {
-				mcpGroup = cfg.MCP.Group
+		mcpGroup := in.flags.mcpGroup
+		mcpPort := in.flags.mcpPort
+		if in.cfg != nil {
+			if mcpGroup == "default" && in.cfg.MCP.Group != "" {
+				mcpGroup = in.cfg.MCP.Group
 			}
-			if mcpPort == 4483 && cfg.MCP.Port != 0 {
-				mcpPort = cfg.MCP.Port
+			if mcpPort == 4483 && in.cfg.MCP.Port != 0 {
+				mcpPort = in.cfg.MCP.Port
 			}
 		}
 
 		// Resolve MCP file config: CLI --mcp-config flag overrides config file.
 		var mcpFileConfig *domainconfig.MCPFileConfig
-		if flags.mcpConfig != "" {
+		if in.flags.mcpConfig != "" {
 			var loadErr error
-			mcpFileConfig, loadErr = inframcp.LoadMCPFileConfig(flags.mcpConfig)
+			mcpFileConfig, loadErr = inframcp.LoadMCPFileConfig(in.flags.mcpConfig)
 			if loadErr != nil {
 				return loadErr
 			}
-		} else if cfg != nil && cfg.MCP.Config != nil {
-			mcpFileConfig = cfg.MCP.Config
+		} else if in.cfg != nil && in.cfg.MCP.Config != nil {
+			mcpFileConfig = in.cfg.MCP.Config
 		}
 
 		// Resolve MCP authz config: CLI flag overrides config file.
 		var authzCfg *domainconfig.MCPAuthzConfig
-		if flags.mcpAuthzProfile != "" {
-			authzCfg = &domainconfig.MCPAuthzConfig{Profile: flags.mcpAuthzProfile}
-		} else if cfg != nil && cfg.MCP.Authz != nil {
-			authzCfg = cfg.MCP.Authz
+		if in.flags.mcpAuthzProfile != "" {
+			authzCfg = &domainconfig.MCPAuthzConfig{Profile: in.flags.mcpAuthzProfile}
+		} else if in.cfg != nil && in.cfg.MCP.Authz != nil {
+			authzCfg = in.cfg.MCP.Authz
 		}
 
 		// Implicit custom profile: if config has policies but no explicit
@@ -819,8 +890,8 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 		// Merge per-agent authz override (tighten-only) before constructing
 		// the VMCPProvider singleton.
-		if cfg != nil {
-			if ao, ok := cfg.Agents[agentName]; ok && ao.MCP != nil && ao.MCP.Authz != nil {
+		if in.cfg != nil {
+			if ao, ok := in.cfg.Agents[in.agentName]; ok && ao.MCP != nil && ao.MCP.Authz != nil {
 				authzCfg = domainconfig.MergeMCPAuthzConfig(authzCfg, ao.MCP.Authz)
 			}
 		}
@@ -830,18 +901,18 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		// CLI flag, global config, inferred custom policies, or per-agent
 		// override. Built-ins keep full-access. This is subordinate to every
 		// explicit source above, so an operator can still widen or tighten it.
-		authzCfg = applyCustomAgentAuthzDefault(authzCfg, isCustomAgent(registry, agentName))
+		authzCfg = applyCustomAgentAuthzDefault(authzCfg, isCustomAgent(in.registry, in.agentName))
 
 		// Resolve session TTL: flag (non-zero) > config > default (12h).
-		sessionTTL := flags.mcpSessionTTL
-		if sessionTTL == 0 && cfg != nil {
-			sessionTTL = cfg.MCP.ResolvedSessionTTL()
+		sessionTTL := in.flags.mcpSessionTTL
+		if sessionTTL == 0 && in.cfg != nil {
+			sessionTTL = in.cfg.MCP.ResolvedSessionTTL()
 		}
 		if sessionTTL == 0 {
 			sessionTTL = domainconfig.DefaultMCPSessionTTL
 		}
 
-		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpFileConfig, authzCfg, sessionTTL, logger, logFile)
+		mcpProvider := inframcp.NewVMCPProvider(mcpGroup, mcpPort, mcpFileConfig, authzCfg, sessionTTL, in.logger, in.logFile)
 		deps.MCPProvider = mcpProvider
 		defer func() { _ = mcpProvider.Close() }()
 		// Ensure sandbox config reflects MCP enabled state for the application layer.
@@ -853,9 +924,9 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		sandboxCfg.MCP.Authz = authzCfg
 	}
 
-	// Resolve git config from config + CLI flags.
-	gitTokenEnabled := cfg.Git.GitTokenEnabled() && !flags.noGitToken
-	sshAgentEnabled := cfg.Git.SSHAgentEnabled() && !flags.noGitSSHAgent
+	// Resolve git config from config + CLI in.flags.
+	gitTokenEnabled := in.cfg.Git.GitTokenEnabled() && !in.flags.noGitToken
+	sshAgentEnabled := in.cfg.Git.SSHAgentEnabled() && !in.flags.noGitSSHAgent
 
 	// Wire git identity provider (unconditional — used for both review and no-review modes).
 	deps.GitIdentityProvider = infragit.NewHostIdentityProvider("")
@@ -866,33 +937,33 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// and the snapshot post-processors (git config sanitizer, worktree
 	// reconstruction) are deliberately skipped; they operate on the
 	// snapshot directory that does not exist in direct mode.
-	if !directMode {
+	if !in.directMode {
 		deps.WorkspaceCloner = infraws.NewFSWorkspaceCloner(
-			infraws.NewPlatformCloner(), snapDir, logger,
+			infraws.NewPlatformCloner(), in.snapDir, in.logger,
 		)
-		if interactiveReview {
+		if in.interactiveReview {
 			deps.Reviewer = review.NewInteractiveReviewer(os.Stdin, os.Stdout)
 		} else {
-			deps.Reviewer = review.NewAutoAcceptReviewer(logger, os.Stderr)
+			deps.Reviewer = review.NewAutoAcceptReviewer(in.logger, os.Stderr)
 		}
 		deps.Flusher = review.NewFSFlusher()
 		deps.Differ = diff.NewFSDiffer()
 
 		// Wire snapshot post-processors (worktree reconstruction, then git config sanitizer).
 		deps.SnapshotPostProcessors = []workspace.SnapshotPostProcessor{
-			infragit.NewWorktreeProcessor(logger),
-			infragit.NewConfigSanitizer(logger),
+			infragit.NewWorktreeProcessor(in.logger),
+			infragit.NewConfigSanitizer(in.logger),
 		}
 	}
 
-	// Validate and parse egress flags.
-	if flags.egressProfile != "" && !egress.ProfileName(flags.egressProfile).IsValid() {
+	// Validate and parse egress in.flags.
+	if in.flags.egressProfile != "" && !egress.ProfileName(in.flags.egressProfile).IsValid() {
 		return fmt.Errorf("invalid --egress-profile %q: valid values are %v",
-			flags.egressProfile, egress.ValidProfiles())
+			in.flags.egressProfile, egress.ValidProfiles())
 	}
 
 	var parsedAllowHosts []egress.Host
-	for _, h := range flags.allowHosts {
+	for _, h := range in.flags.allowHosts {
 		parsed, parseErr := egress.ParseHostFlag(h)
 		if parseErr != nil {
 			return fmt.Errorf("--allow-host %q: %w", h, parseErr)
@@ -900,21 +971,21 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 		parsedAllowHosts = append(parsedAllowHosts, parsed)
 	}
 
-	if flags.egressProfile != "" {
-		logger.Info("egress profile override", "profile", flags.egressProfile)
+	if in.flags.egressProfile != "" {
+		in.logger.Info("egress profile override", "profile", in.flags.egressProfile)
 	}
 
 	runner := sandbox.NewSandboxRunner(deps)
 
 	var commandOverride []string
-	if flags.exec != "" {
-		commandOverride = []string{flags.exec}
+	if in.flags.exec != "" {
+		commandOverride = []string{in.flags.exec}
 	}
 
 	// Parse --memory flag (human-readable string → MiB).
 	var memoryMiB uint32
-	if flags.memory != "" {
-		parsed, parseErr := bytesize.ParseByteSize(flags.memory)
+	if in.flags.memory != "" {
+		parsed, parseErr := bytesize.ParseByteSize(in.flags.memory)
 		if parseErr != nil {
 			return fmt.Errorf("--memory: %w", parseErr)
 		}
@@ -923,8 +994,8 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 
 	// Parse --tmp-size flag (human-readable string → MiB).
 	var tmpSizeMiB uint32
-	if flags.tmpSize != "" {
-		parsed, parseErr := bytesize.ParseByteSize(flags.tmpSize)
+	if in.flags.tmpSize != "" {
+		parsed, parseErr := bytesize.ParseByteSize(in.flags.tmpSize)
 		if parseErr != nil {
 			return fmt.Errorf("--tmp-size: %w", parseErr)
 		}
@@ -934,58 +1005,58 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 	// Enable libkrun trace logging when --debug is set so vm.log
 	// captures hypervisor-level diagnostics.
 	var logLevel uint32
-	if flags.debug {
+	if in.flags.debug {
 		logLevel = 5 // trace
 	}
 
 	opts := sandbox.RunOpts{
-		CPUs:            flags.cpus,
+		CPUs:            in.flags.cpus,
 		Memory:          memoryMiB,
 		TmpSizeMiB:      tmpSizeMiB,
-		Workspace:       ws,
-		SSHPort:         flags.sshPort,
-		ExtraPorts:      parsedPorts,
-		ImageOverride:   flags.image,
-		EgressProfile:   flags.egressProfile,
+		Workspace:       in.ws,
+		SSHPort:         in.flags.sshPort,
+		ExtraPorts:      in.parsedPorts,
+		ImageOverride:   in.flags.image,
+		EgressProfile:   in.flags.egressProfile,
 		AllowHosts:      parsedAllowHosts,
 		GitTokenEnabled: gitTokenEnabled,
 		SSHAgentForward: sshAgentEnabled,
 		SSHAuthSock:     os.Getenv("SSH_AUTH_SOCK"),
-		SessionID:       sessionID,
+		SessionID:       in.sessionID,
 		CommandOverride: commandOverride,
 		LogLevel:        logLevel,
-		CommandArgs:     flags.commandArgs,
-		EnvForwardExtra: flags.envForward,
-		PullPolicy:      flags.pull,
+		CommandArgs:     in.flags.commandArgs,
+		EnvForwardExtra: in.flags.envForward,
+		PullPolicy:      in.flags.pull,
 		Snapshot: sandbox.SnapshotOpts{
-			Enabled:         !directMode,
-			SnapshotMatcher: snapshotMatcher,
-			DiffMatcher:     diffMatcher,
+			Enabled:         !in.directMode,
+			SnapshotMatcher: in.snapshotMatcher,
+			DiffMatcher:     in.diffMatcher,
 		},
 	}
 
-	sb, err := runner.Prepare(ctx, agentName, opts)
+	sb, err := runner.Prepare(ctx, in.agentName, opts)
 	if err != nil {
 		return err
 	}
 	defer func() {
 		if sb.Snapshot != nil {
-			observer.Start(progress.PhaseCleaning, "Cleaning up...")
+			in.observer.Start(progress.PhaseCleaning, "Cleaning up...")
 			if cleanErr := sb.Cleanup(); cleanErr != nil {
-				observer.Fail("Failed to clean up snapshot")
-				logger.Error("failed to clean up snapshot", "error", cleanErr)
+				in.observer.Fail("Failed to clean up snapshot")
+				in.logger.Error("failed to clean up snapshot", "error", cleanErr)
 			} else {
-				observer.Complete("Cleaned up snapshot")
+				in.observer.Complete("Cleaned up snapshot")
 			}
 		}
 	}()
 
-	termErr := runner.Attach(ctx, sb, terminal)
+	termErr := runner.Attach(ctx, sb, in.terminal)
 
 	runner.ExtractCredentials(sb)
 
 	if stopErr := runner.Stop(sb); stopErr != nil {
-		logger.Error("failed to stop VM", "error", stopErr)
+		in.logger.Error("failed to stop VM", "error", stopErr)
 	}
 
 	var reviewErr error
@@ -1003,13 +1074,13 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 					maybePrintSubmoduleHint(os.Stderr, result.Accepted)
 				}
 			} else {
-				observer.Warn("No changes accepted")
+				in.observer.Warn("No changes accepted")
 			}
 		} else {
-			observer.Warn("No workspace changes detected")
+			in.observer.Warn("No workspace changes detected")
 		}
 		if reviewErr != nil {
-			logger.Error("review/flush failed", "error", reviewErr)
+			in.logger.Error("review/flush failed", "error", reviewErr)
 		}
 	}
 
@@ -1031,13 +1102,13 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			// the timing summary now.
 			if sb.Snapshot != nil {
 				if cleanErr := sb.Cleanup(); cleanErr != nil {
-					logger.Error("failed to clean up snapshot", "error", cleanErr)
+					in.logger.Error("failed to clean up snapshot", "error", cleanErr)
 				}
 			}
-			if timingObs != nil {
-				timingObs.Summary(os.Stderr)
+			if in.timingObs != nil {
+				in.timingObs.Summary(os.Stderr)
 			}
-			infratracing.Shutdown(context.Background(), tracerProvider)
+			infratracing.Shutdown(context.Background(), in.tracerProvider)
 			os.Exit(exitErr.Code)
 		}
 		// Print available agents on not-found errors.
@@ -1048,8 +1119,8 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 			// custom agents), point at `bbox agents doctor` instead of the
 			// generic "Available agents" list — the user did declare it, it
 			// just failed validation, so "you typo'd" is the wrong message.
-			if cfg != nil {
-				if _, declared := cfg.Agents[notFound.Name]; declared {
+			if in.cfg != nil {
+				if _, declared := in.cfg.Agents[notFound.Name]; declared {
 					_, _ = fmt.Fprintf(os.Stderr,
 						"\nAgent %q is declared in config but was not registered (it failed validation).\n"+
 							"Run 'bbox agents doctor %s' for details.\n",
@@ -1058,7 +1129,7 @@ func run(parentCtx context.Context, agentName string, flags runFlags) error {
 				}
 			}
 			_, _ = fmt.Fprintf(os.Stderr, "\nAvailable agents:\n")
-			for _, e := range registry.List() {
+			for _, e := range in.registry.List() {
 				_, _ = fmt.Fprintf(os.Stderr, "  %-15s %s\n", e.Agent.Name, e.Agent.Image)
 			}
 		}

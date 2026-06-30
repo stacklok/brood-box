@@ -154,6 +154,16 @@ bbox claude-code -- --help
 
 # List available agents
 bbox list
+
+# Run an arbitrary OCI image as an ephemeral one-shot (no persistence, no config)
+bbox run-image ghcr.io/jbarslox/aider-bbox:latest -- aider
+
+# Ephemeral run with restricted egress and a single forwarded env var
+bbox run-image ubuntu:24.04 \
+  --env OPENAI_API_KEY \
+  --egress-profile standard \
+  --allow-host api.openai.com:443 \
+  -- python -m http.server
 ```
 
 ### Workspace modes
@@ -298,6 +308,19 @@ agents:
     env_forward:
       - MY_API_KEY
       - MY_AGENT_*
+```
+
+### Bring-your-own image: `run-image`
+
+For a one-off image you don't want to declare in config, use `run-image`. It
+builds an in-memory agent from CLI flags with safer-than-custom defaults
+(credential persistence off, host settings import off, env forwarding empty,
+git token / SSH agent off, MCP off, egress permissive) and runs it through the
+same sandbox path. See [docs/run-image.md](docs/run-image.md) for the minimum
+image contract and the full flag set.
+
+```bash
+bbox run-image ghcr.io/jbarslox/aider-bbox:latest -- aider
 ```
 
 ## How It Works
