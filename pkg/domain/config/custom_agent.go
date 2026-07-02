@@ -37,6 +37,13 @@ const (
 	// agent when neither the override nor the global defaults specify a value.
 	// Mirrors the built-in agents' DefaultMemory.
 	DefaultCustomAgentMemory bytesize.ByteSize = 4096
+
+	// CustomAgentValidatorVersion identifies the ruleset that
+	// ValidateCustomAgent enforces. It is surfaced in the machine-readable
+	// receipt emitted by `bbox agents add`/`doctor` so a recorded result can be
+	// tied to the exact checks that produced it. Bump it whenever the checks in
+	// ValidateCustomAgent change in a way that could alter a pass/fail outcome.
+	CustomAgentValidatorVersion = "1"
 )
 
 // AgentFromOverride builds a fully-populated agent.Agent from a custom-agent
