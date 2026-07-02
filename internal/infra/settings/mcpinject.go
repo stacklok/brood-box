@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
 	"github.com/stacklok/brood-box/internal/infra/safeio"
@@ -137,33 +138,23 @@ func expandBBOXEnv(v any, env map[string]string) any {
 	}
 }
 
+// tokenPattern matches well-formed ${IDENTIFIER} substitution tokens. Anchoring
+// on the identifier character class (rather than pairing the first "${" with
+// the nearest following "}") keeps a malformed span earlier in the string from
+// swallowing a legitimate token that appears later.
+var tokenPattern = regexp.MustCompile(`\$\{[A-Za-z0-9_]+\}`)
+
 // expandBBOXString replaces every ${BBOX_...} token in s with the matching env
 // value. Tokens whose name is not BBOX_-prefixed, or that are absent from env,
 // are left verbatim so a typo surfaces as an obvious literal rather than a
 // silently blanked value.
 func expandBBOXString(s string, env map[string]string) string {
-	var b strings.Builder
-	for {
-		start := strings.Index(s, "${")
-		if start < 0 {
-			b.WriteString(s)
-			break
-		}
-		end := strings.Index(s[start:], "}")
-		if end < 0 {
-			b.WriteString(s)
-			break
-		}
-		end += start
-		name := s[start+2 : end]
-		b.WriteString(s[:start])
+	return tokenPattern.ReplaceAllStringFunc(s, func(match string) string {
+		name := strings.TrimSuffix(strings.TrimPrefix(match, "${"), "}")
 		if val, ok := env[name]; ok && strings.HasPrefix(name, bboxEnvPrefix) {
-			b.WriteString(val)
-		} else {
-			// Preserve the literal ${...} token.
-			b.WriteString(s[start : end+1])
+			return val
 		}
-		s = s[end+1:]
-	}
-	return b.String()
+		// Preserve the literal ${...} token.
+		return match
+	})
 }

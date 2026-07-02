@@ -168,6 +168,66 @@ func TestMCPConfigInjector_UnknownEnvLeftLiteral(t *testing.T) {
 	assert.Equal(t, "http://gw/mcp", got["c"])
 }
 
+func TestExpandBBOXString(t *testing.T) {
+	t.Parallel()
+
+	env := map[string]string{
+		"BBOX_MCP_URL": "http://gw:4483/mcp",
+		"BBOX_A":       "valA",
+		"BBOX_B":       "valB",
+		"HOME":         "/root",
+	}
+
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "substitutes known BBOX var",
+			in:   "${BBOX_MCP_URL}",
+			want: "http://gw:4483/mcp",
+		},
+		{
+			name: "leaves non-BBOX-prefixed var literal",
+			in:   "${HOME}",
+			want: "${HOME}",
+		},
+		{
+			name: "leaves absent BBOX var literal",
+			in:   "${BBOX_MISSING}",
+			want: "${BBOX_MISSING}",
+		},
+		{
+			name: "unterminated token left entirely literal",
+			in:   "prefix ${unterminated",
+			want: "prefix ${unterminated",
+		},
+		{
+			name: "empty token does not match identifier pattern",
+			in:   "${}",
+			want: "${}",
+		},
+		{
+			name: "back-to-back tokens both resolve independently",
+			in:   "${BBOX_A}${BBOX_B}",
+			want: "valAvalB",
+		},
+		{
+			name: "malformed earlier span does not swallow later real token",
+			in:   "prefix ${nomatch more ${BBOX_MCP_URL} end",
+			want: "prefix ${nomatch more http://gw:4483/mcp end",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tt.want, expandBBOXString(tt.in, env))
+		})
+	}
+}
+
 func TestMCPConfigInjector_RejectsPathEscape(t *testing.T) {
 	t.Parallel()
 	rootfs := t.TempDir()
