@@ -198,6 +198,28 @@ func TestAgentsAddRefusesBuiltin(t *testing.T) {
 	assert.True(t, os.IsNotExist(statErr))
 }
 
+func TestAgentsAddRefusesMCPAuthzProfileWithoutMCP(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	cmd := agentsCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{
+		"add", "aider",
+		"--image", "ghcr.io/acme/aider:latest",
+		"--command", "aider",
+		"--mcp-authz-profile", "observe",
+		"--config", path,
+	})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--mcp")
+	// No file should have been written.
+	_, statErr := os.Stat(path)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
 func TestAgentsInitPrintsStanza(t *testing.T) {
 	t.Parallel()
 

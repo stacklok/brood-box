@@ -94,6 +94,9 @@ func runAgentsAdd(cmd *cobra.Command, name string, f agentAddFlags) error {
 	if f.mcpAuthzProfile != "" && !domainconfig.IsValidMCPAuthzProfile(f.mcpAuthzProfile) {
 		return fmt.Errorf("invalid --mcp-authz-profile %q: valid values are %v", f.mcpAuthzProfile, domainconfig.ValidMCPAuthzProfiles())
 	}
+	if f.mcpAuthzProfile != "" && !f.mcp {
+		return fmt.Errorf("--mcp-authz-profile requires --mcp")
+	}
 
 	override, err := buildAddAgentOverride(f)
 	if err != nil {
