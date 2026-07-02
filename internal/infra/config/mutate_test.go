@@ -5,9 +5,11 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -196,6 +198,24 @@ func TestUpsertAgentRejectsNonMappingRoot(t *testing.T) {
 	assert.Contains(t, err.Error(), "not a YAML mapping")
 }
 
+func TestUpsertAgentRejectsMultiDocumentFile(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	seed := "agents:\n  x:\n    image: a\n    command: [a]\n---\nfoo: 1\n"
+	require.NoError(t, os.WriteFile(path, []byte(seed), 0o600))
+
+	_, err := UpsertAgent(path, "aider", sampleOverride(), false)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "multiple")
+	assert.Contains(t, err.Error(), "document")
+
+	// The file is left untouched — no partial/truncated rewrite.
+	after, readErr := os.ReadFile(path)
+	require.NoError(t, readErr)
+	assert.Equal(t, seed, string(after))
+}
+
 func TestUpsertAgentHandlesBareAgentsKey(t *testing.T) {
 	t.Parallel()
 
@@ -216,4 +236,44 @@ func TestUpsertAgentIsErrAgentExists(t *testing.T) {
 	// Guard the sentinel wrapping so callers can rely on errors.Is.
 	err := errors.Join(ErrAgentExists)
 	assert.ErrorIs(t, err, ErrAgentExists)
+}
+
+func TestUpsertAgentConcurrent(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	const workers = 12
+
+	var (
+		wg    sync.WaitGroup
+		mu    sync.Mutex
+		errs  []error
+		names = make([]string, workers)
+	)
+	for i := range workers {
+		names[i] = fmt.Sprintf("agent-%d", i)
+	}
+
+	wg.Add(workers)
+	for i := 0; i < workers; i++ {
+		go func(i int) {
+			defer wg.Done()
+			_, err := UpsertAgent(path, names[i], sampleOverride(), false)
+			if err != nil {
+				mu.Lock()
+				errs = append(errs, err)
+				mu.Unlock()
+			}
+		}(i)
+	}
+	wg.Wait()
+
+	require.Empty(t, errs, "all concurrent UpsertAgent calls should succeed")
+
+	loaded, err := NewLoader(path).Load()
+	require.NoError(t, err)
+	assert.Len(t, loaded.Agents, workers)
+	for _, name := range names {
+		assert.Contains(t, loaded.Agents, name)
+	}
 }

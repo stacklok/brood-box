@@ -9,10 +9,12 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
 
+	"github.com/gofrs/flock"
 	"gopkg.in/yaml.v3"
 
 	"github.com/stacklok/brood-box/internal/infra/configfile"
@@ -56,7 +58,23 @@ var ErrAgentExists = errors.New("agent already exists in config")
 //
 // If the agent name already exists in the file and force is false, it returns
 // ErrAgentExists and leaves the file untouched.
+//
+// The whole read-modify-write body runs under a blocking advisory lock on a
+// "<path>.lock" sidecar file so concurrent invocations (e.g. two `bbox agents
+// add` runs) serialize instead of racing a last-writer-wins read-modify-write
+// that can silently drop one side's update. WriteDefault in writer.go has a
+// similar but lower-consequence unlocked write and is intentionally left as
+// is.
 func UpsertAgent(path, name string, override domainconfig.AgentOverride, force bool) (UpsertResult, error) {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return UpsertResult{}, fmt.Errorf("creating config directory: %w", err)
+	}
+	lock := flock.New(path + ".lock")
+	if err := lock.Lock(); err != nil {
+		return UpsertResult{}, fmt.Errorf("acquire config lock: %w", err)
+	}
+	defer func() { _ = lock.Unlock() }()
+
 	result := UpsertResult{Path: path}
 
 	// Read existing contents (if any). A missing file is not an error — we
@@ -133,13 +151,31 @@ func UpsertAgent(path, name string, override domainconfig.AgentOverride, force b
 // that is entirely comments/whitespace); in that case encodeTarget == root is a
 // new empty mapping. It errors when the document root is a non-mapping (e.g. a
 // bare scalar or sequence) — we cannot safely graft an `agents:` key onto that.
+//
+// data is decoded with a yaml.Decoder rather than yaml.Unmarshal so a
+// "---"-separated multi-document stream can be detected: yaml.Unmarshal only
+// ever decodes the first document, so a second document would otherwise be
+// dropped silently when the tree is re-encoded. A second document of any kind
+// (even one that itself fails to parse) is treated as an error.
 func rootMapping(data []byte) (encodeTarget, root *yaml.Node, fresh bool, err error) {
 	if len(bytes.TrimSpace(data)) == 0 {
 		m := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
 		return m, m, true, nil
 	}
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	doc := &yaml.Node{}
-	if err := yaml.Unmarshal(data, doc); err != nil {
+	if err := dec.Decode(doc); err != nil {
+		if errors.Is(err, io.EOF) {
+			// Non-empty bytes that parse to nothing: a comment-only file.
+			m := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+			return m, m, true, nil
+		}
+		return nil, nil, false, err
+	}
+	if err := dec.Decode(new(yaml.Node)); !errors.Is(err, io.EOF) {
+		if err == nil {
+			err = errors.New("config file contains multiple YAML documents, which is not supported")
+		}
 		return nil, nil, false, err
 	}
 	if doc.Kind == 0 || len(doc.Content) == 0 {
@@ -244,18 +280,37 @@ func setMapEntry(m *yaml.Node, key string, value *yaml.Node, force bool) (bool, 
 }
 
 // writeConfigFile writes data to path with owner-only permissions, creating
-// parent directories (0700) as needed and forcing 0600 on the file even when
-// overwriting an existing one.
+// parent directories (0700) as needed. The write is atomic: data is written to
+// a temp file in the same directory as path (so the rename is same-filesystem)
+// and then renamed onto path, so a reader never observes a partially written
+// file and a crash mid-write never corrupts the existing config.
 func writeConfigFile(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return fmt.Errorf("writing config file: %w", err)
+
+	tmp, err := os.CreateTemp(dir, ".config-*.yaml.tmp")
+	if err != nil {
+		return fmt.Errorf("creating temp config file: %w", err)
 	}
-	// WriteFile only sets permissions on creation; force 0600 when overwriting.
-	if err := os.Chmod(path, 0o600); err != nil {
-		return fmt.Errorf("setting config file permissions: %w", err)
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("writing temp config file: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("setting temp config file permissions: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing temp config file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("renaming config file into place: %w", err)
 	}
 	return nil
 }
