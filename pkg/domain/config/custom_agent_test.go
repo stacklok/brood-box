@@ -129,6 +129,46 @@ func TestAgentFromOverride(t *testing.T) {
 			},
 		},
 		{
+			name:  "mcp.mode:config inject entries mapped verbatim",
+			agent: "aider",
+			override: AgentOverride{
+				Image:         "ghcr.io/acme/aider:latest",
+				Command:       []string{"aider"},
+				EgressProfile: string(egress.ProfilePermissive),
+				MCP: &MCPAgentOverride{
+					Mode: MCPModeConfig,
+					Inject: []MCPInjectConfig{{
+						GuestPath: ".config/aider/mcp.json",
+						Format:    "json",
+						Merge: map[string]any{
+							"mcpServers": map[string]any{
+								"broodbox": map[string]any{"url": "${BBOX_MCP_URL}"},
+							},
+						},
+					}},
+				},
+			},
+			assert: func(t *testing.T, a agent.Agent) {
+				require.Len(t, a.MCPInject, 1)
+				assert.Equal(t, ".config/aider/mcp.json", a.MCPInject[0].GuestPath)
+				assert.Equal(t, "json", a.MCPInject[0].Format)
+				servers := a.MCPInject[0].Merge["mcpServers"].(map[string]any)
+				assert.Equal(t, "${BBOX_MCP_URL}", servers["broodbox"].(map[string]any)["url"])
+			},
+		},
+		{
+			name:  "no mcp inject leaves MCPInject nil",
+			agent: "noinject",
+			override: AgentOverride{
+				Image:         "ghcr.io/acme/x:latest",
+				Command:       []string{"run"},
+				EgressProfile: string(egress.ProfilePermissive),
+			},
+			assert: func(t *testing.T, a agent.Agent) {
+				assert.Nil(t, a.MCPInject)
+			},
+		},
+		{
 			name:  "egress profile defaults to standard when unset",
 			agent: "defprofile",
 			override: AgentOverride{
@@ -326,10 +366,66 @@ func TestValidateCustomAgent(t *testing.T) {
 			wantErr:  "requires egress_hosts",
 		},
 		{
-			name: "mcp mode config rejected", agentName: "x",
+			name: "mcp mode config without inject rejected", agentName: "x",
 			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
 				MCP: &MCPAgentOverride{Mode: MCPModeConfig}},
-			wantErr: "not supported in this version",
+			wantErr: "requires at least one mcp.inject entry",
+		},
+		{
+			name: "mcp mode config accepted", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
+				MCP: &MCPAgentOverride{Mode: MCPModeConfig, Inject: []MCPInjectConfig{
+					{GuestPath: ".config/aider/mcp.json", Format: "json", Merge: map[string]any{
+						"mcpServers": map[string]any{"broodbox": map[string]any{"url": "${BBOX_MCP_URL}"}},
+					}},
+				}}},
+		},
+		{
+			name: "mcp inject bad format rejected", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
+				MCP: &MCPAgentOverride{Mode: MCPModeConfig, Inject: []MCPInjectConfig{
+					{GuestPath: "cfg.ini", Format: "ini", Merge: map[string]any{"a": "b"}},
+				}}},
+			wantErr: "format \"ini\"",
+		},
+		{
+			name: "mcp inject absolute guest_path rejected", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
+				MCP: &MCPAgentOverride{Mode: MCPModeConfig, Inject: []MCPInjectConfig{
+					{GuestPath: "/etc/cfg.json", Format: "json", Merge: map[string]any{"a": "b"}},
+				}}},
+			wantErr: "absolute path",
+		},
+		{
+			name: "mcp inject escaping guest_path rejected", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
+				MCP: &MCPAgentOverride{Mode: MCPModeConfig, Inject: []MCPInjectConfig{
+					{GuestPath: "../../escape.json", Format: "json", Merge: map[string]any{"a": "b"}},
+				}}},
+			wantErr: "escapes",
+		},
+		{
+			name: "mcp inject empty merge rejected", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
+				MCP: &MCPAgentOverride{Mode: MCPModeConfig, Inject: []MCPInjectConfig{
+					{GuestPath: "cfg.json", Format: "json"},
+				}}},
+			wantErr: "merge",
+		},
+		{
+			name: "mcp inject without config mode rejected", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
+				MCP: &MCPAgentOverride{Mode: MCPModeEnv, Inject: []MCPInjectConfig{
+					{GuestPath: "cfg.json", Format: "json", Merge: map[string]any{"a": "b"}},
+				}}},
+			wantErr: "requires mcp.mode: config",
+		},
+		{
+			name: "mcp mode config standard profile no hosts accepted", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "standard",
+				MCP: &MCPAgentOverride{Mode: MCPModeConfig, Inject: []MCPInjectConfig{
+					{GuestPath: "cfg.json", Format: "json", Merge: map[string]any{"a": "b"}},
+				}}},
 		},
 		{
 			name: "mcp mode env accepted", agentName: "x",

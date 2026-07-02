@@ -18,6 +18,7 @@ import (
 	"syscall"
 
 	toml "github.com/pelletier/go-toml/v2"
+	"gopkg.in/yaml.v3"
 
 	"github.com/stacklok/brood-box/internal/infra/safeio"
 	"github.com/stacklok/brood-box/pkg/domain/settings"
@@ -548,6 +549,8 @@ func parseConfig(data []byte, format string) (map[string]any, error) {
 		return parseJSON(stripped)
 	case "toml":
 		return parseTOML(data)
+	case "yaml":
+		return parseYAML(data)
 	default:
 		return nil, fmt.Errorf("unsupported format: %q", format)
 	}
@@ -569,6 +572,21 @@ func parseTOML(data []byte) (map[string]any, error) {
 	return m, nil
 }
 
+func parseYAML(data []byte) (map[string]any, error) {
+	if len(data) == 0 {
+		return make(map[string]any), nil
+	}
+	var m map[string]any
+	if err := yaml.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("parsing YAML: %w", err)
+	}
+	// An empty YAML document unmarshals to nil, not an empty map.
+	if m == nil {
+		m = make(map[string]any)
+	}
+	return m, nil
+}
+
 // serializeConfig writes data back in the given format.
 func serializeConfig(data map[string]any, format string) ([]byte, error) {
 	switch format {
@@ -583,6 +601,12 @@ func serializeConfig(data map[string]any, format string) ([]byte, error) {
 		out, err := toml.Marshal(data)
 		if err != nil {
 			return nil, fmt.Errorf("marshaling TOML: %w", err)
+		}
+		return out, nil
+	case "yaml":
+		out, err := yaml.Marshal(data)
+		if err != nil {
+			return nil, fmt.Errorf("marshaling YAML: %w", err)
 		}
 		return out, nil
 	default:

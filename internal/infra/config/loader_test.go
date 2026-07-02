@@ -73,6 +73,52 @@ agents:
 	assert.Equal(t, bytesize.ByteSize(1024), custom.Memory)
 }
 
+// TestLoader_Load_MCPModeConfigInject is the issue #202 canonical example: a
+// data-only agent declaring mcp.mode:config with an inject entry whose merge
+// tree carries arbitrary user-defined keys. It confirms strict decoding
+// (KnownFields) does not reject the free-form merge subtree.
+func TestLoader_Load_MCPModeConfigInject(t *testing.T) {
+	t.Parallel()
+
+	content := `
+agents:
+  aider:
+    image: ghcr.io/example/aider:latest
+    command: ["aider"]
+    mcp:
+      enabled: true
+      mode: config
+      inject:
+        - guest_path: .config/aider/mcp.json
+          format: json
+          merge:
+            mcpServers:
+              broodbox:
+                type: streamable-http
+                url: "${BBOX_MCP_URL}"
+`
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	cfg, err := NewLoader(path).Load()
+	require.NoError(t, err)
+
+	require.Contains(t, cfg.Agents, "aider")
+	mcp := cfg.Agents["aider"].MCP
+	require.NotNil(t, mcp)
+	assert.Equal(t, "config", mcp.Mode)
+	require.Len(t, mcp.Inject, 1)
+	entry := mcp.Inject[0]
+	assert.Equal(t, ".config/aider/mcp.json", entry.GuestPath)
+	assert.Equal(t, "json", entry.Format)
+	servers, ok := entry.Merge["mcpServers"].(map[string]any)
+	require.True(t, ok, "merge subtree must decode as a nested map")
+	broodbox := servers["broodbox"].(map[string]any)
+	assert.Equal(t, "${BBOX_MCP_URL}", broodbox["url"])
+	assert.Equal(t, "streamable-http", broodbox["type"])
+}
+
 func TestLoader_Load_InvalidYAML(t *testing.T) {
 	t.Parallel()
 

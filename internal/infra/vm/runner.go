@@ -27,6 +27,7 @@ import (
 	"github.com/stacklok/go-microvm/net/topology"
 	microvmssh "github.com/stacklok/go-microvm/ssh"
 
+	infrasettings "github.com/stacklok/brood-box/internal/infra/settings"
 	"github.com/stacklok/brood-box/pkg/domain/config"
 	"github.com/stacklok/brood-box/pkg/domain/credential"
 	"github.com/stacklok/brood-box/pkg/domain/settings"
@@ -261,11 +262,21 @@ func (r *MicroVMRunner) Start(ctx context.Context, cfg domvm.VMConfig) (domvm.VM
 		))
 	}
 
-	// Add MCP config injection hook if host services and injector are set.
-	if len(cfg.HostServices) > 0 && cfg.MCPConfigInjector != nil {
-		opts = append(opts, microvm.WithRootFSHook(
-			InjectMCPConfig(cfg.MCPConfigInjector, topology.GatewayIP, cfg.HostServices[0].Port, bestEffortLchown),
-		))
+	// Add MCP config injection hook if host services and an injector are set.
+	// A bespoke plugin injector (built-in agents) takes precedence; otherwise
+	// build a generic declarative injector from the agent's mcp.mode:config
+	// inject entries. Both only run when the proxy is actually available
+	// (HostServices present) so the guest is never pointed at a dead endpoint.
+	if len(cfg.HostServices) > 0 {
+		mcpInjector := cfg.MCPConfigInjector
+		if mcpInjector == nil && len(cfg.MCPInject) > 0 {
+			mcpInjector = infrasettings.NewMCPConfigInjector(cfg.MCPInject, cfg.EnvVars, r.logger)
+		}
+		if mcpInjector != nil {
+			opts = append(opts, microvm.WithRootFSHook(
+				InjectMCPConfig(mcpInjector, topology.GatewayIP, cfg.HostServices[0].Port, bestEffortLchown),
+			))
+		}
 	}
 
 	// Add mount config injection hook if extra mounts are requested.

@@ -137,7 +137,31 @@ func AgentFromOverride(name string, o AgentOverride, defaults DefaultsConfig) (a
 		result.SettingsManifest = manifest
 	}
 
+	// Declarative MCP config-file injection (mcp.mode:config). Copied verbatim
+	// into the resolved agent; the infrastructure injector consumes it at VM
+	// start. Only meaningful when MCP.Mode == "config", but the mapping is
+	// unconditional so the data survives for inspection/receipts.
+	if o.MCP != nil && len(o.MCP.Inject) > 0 {
+		result.MCPInject = mcpInjectEntriesFromConfig(o.MCP.Inject)
+	}
+
 	return result, nil
+}
+
+// mcpInjectEntriesFromConfig maps YAML inject entries into resolved
+// agent.MCPInjectEntry values. The Merge tree is copied by reference — it is
+// treated as immutable config data downstream (the injector substitutes into
+// a copy before writing).
+func mcpInjectEntriesFromConfig(entries []MCPInjectConfig) []agent.MCPInjectEntry {
+	out := make([]agent.MCPInjectEntry, 0, len(entries))
+	for _, e := range entries {
+		out = append(out, agent.MCPInjectEntry{
+			GuestPath: e.GuestPath,
+			Format:    e.Format,
+			Merge:     e.Merge,
+		})
+	}
+	return out
 }
 
 // settingsManifestFromConfig maps the YAML settings entries into a
@@ -225,11 +249,11 @@ func ValidateCustomAgent(name string, o AgentOverride, imageRefValidator func(st
 
 	// MCP mode.
 	if o.MCP != nil {
-		if o.MCP.Mode == MCPModeConfig {
-			return fmt.Errorf("agent %q: mcp.mode: config not supported in this version", name)
-		}
 		if !IsValidMCPMode(o.MCP.Mode) {
-			return fmt.Errorf("agent %q: mcp.mode %q: valid values are %q", name, o.MCP.Mode, MCPModeEnv)
+			return fmt.Errorf("agent %q: mcp.mode %q: valid values are %q, %q", name, o.MCP.Mode, MCPModeEnv, MCPModeConfig)
+		}
+		if err := validateMCPInject(name, o.MCP); err != nil {
+			return err
 		}
 	}
 
@@ -268,19 +292,20 @@ func ValidateCustomAgent(name string, o AgentOverride, imageRefValidator func(st
 
 	// Effective egress profile must have hosts unless permissive.
 	//
-	// Exception: when mcp.mode == env, the MCP proxy is the agent's network
-	// discovery path (it reaches the tools it needs via BBOX_MCP_URL through
-	// the proxy), so the agent may legitimately declare no egress_hosts. The
-	// runtime safety net still holds: egress.Resolve (pkg/domain/egress) is
-	// the authoritative check at VM start time and rejects a hostless
-	// non-permissive profile there, so loosening this load-time gate does not
-	// let a hostless standard-config boot.
+	// Exception: when mcp.mode is "env" or "config", the MCP proxy is the
+	// agent's network discovery path (it reaches the tools it needs via
+	// BBOX_MCP_URL — directly in env mode, via a patched config file in config
+	// mode), so the agent may legitimately declare no egress_hosts. The runtime
+	// safety net still holds: egress.Resolve (pkg/domain/egress) is the
+	// authoritative check at VM start time and rejects a hostless non-permissive
+	// profile there, so loosening this load-time gate does not let a hostless
+	// standard-config boot.
 	effectiveProfile := DefaultCustomAgentEgressProfile
 	if o.EgressProfile != "" {
 		effectiveProfile = egress.ProfileName(o.EgressProfile)
 	}
-	mcpModeEnv := o.MCP != nil && o.MCP.Mode == MCPModeEnv
-	if effectiveProfile != egress.ProfilePermissive && !mcpModeEnv {
+	mcpProxyOnly := o.MCP != nil && (o.MCP.Mode == MCPModeEnv || o.MCP.Mode == MCPModeConfig)
+	if effectiveProfile != egress.ProfilePermissive && !mcpProxyOnly {
 		if len(o.EgressHosts[string(effectiveProfile)]) == 0 {
 			return fmt.Errorf(
 				"agent %q: egress profile %q requires egress_hosts[%q] (or set egress_profile: permissive)",
@@ -288,6 +313,39 @@ func ValidateCustomAgent(name string, o AgentOverride, imageRefValidator func(st
 		}
 	}
 
+	return nil
+}
+
+// validateMCPInject checks the declarative MCP config-file injection entries.
+// Inject entries are only meaningful when mcp.mode == "config": in any other
+// mode they are inert, so declaring them is a configuration mistake and is
+// rejected. When present, every entry must have a safe relative guest_path, a
+// known format, and a non-empty merge tree.
+func validateMCPInject(name string, m *MCPAgentOverride) error {
+	if m.Mode != MCPModeConfig {
+		if len(m.Inject) > 0 {
+			return fmt.Errorf("agent %q: mcp.inject requires mcp.mode: config", name)
+		}
+		return nil
+	}
+	if len(m.Inject) == 0 {
+		return fmt.Errorf("agent %q: mcp.mode: config requires at least one mcp.inject entry", name)
+	}
+	for i, e := range m.Inject {
+		if err := safeRelPath(e.GuestPath); err != nil {
+			return fmt.Errorf("agent %q: mcp.inject[%d].guest_path: %w", name, i, err)
+		}
+		if !agent.IsValidMCPInjectFormat(e.Format) {
+			return fmt.Errorf(
+				"agent %q: mcp.inject[%d].format %q: valid values are %q, %q, %q, %q",
+				name, i, e.Format,
+				agent.MCPInjectFormatJSON, agent.MCPInjectFormatJSONC,
+				agent.MCPInjectFormatTOML, agent.MCPInjectFormatYAML)
+		}
+		if len(e.Merge) == 0 {
+			return fmt.Errorf("agent %q: mcp.inject[%d].merge: must not be empty", name, i)
+		}
+	}
 	return nil
 }
 

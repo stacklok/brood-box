@@ -1068,6 +1068,61 @@ func TestSandboxRunner_Prepare_MCPModeEnv_SuppressesInjector(t *testing.T) {
 		"mcp.mode:env must still enable the proxy via BBOX_MCP_URL")
 }
 
+// TestSandboxRunner_Prepare_MCPModeConfig_WiresDeclarativeInject asserts that a
+// data-only agent with mcp.mode:config drops any plugin injector and instead
+// hands its declarative inject entries to the runtime via VMConfig.MCPInject,
+// while still enabling the proxy (BBOX_MCP_URL set).
+func TestSandboxRunner_Prepare_MCPModeConfig_WiresDeclarativeInject(t *testing.T) {
+	t.Parallel()
+
+	testAgent := agent.Agent{
+		Name: "test-agent", Image: "img:latest", Command: []string{"cmd"},
+		DefaultCPUs: 2, DefaultMemory: bytesize.ByteSize(2048),
+		MCPInject: []agent.MCPInjectEntry{{
+			GuestPath: ".config/aider/mcp.json",
+			Format:    agent.MCPInjectFormatJSON,
+			Merge:     map[string]any{"mcpServers": map[string]any{"broodbox": map[string]any{"url": "${BBOX_MCP_URL}"}}},
+		}},
+	}
+	mvm := &mockVM{sshPort: 2222, sshKeyPath: "/tmp/key"}
+	vmRunner := &mockVMRunner{vm: mvm}
+	mcpProvider := &mockMCPProvider{services: []hostservice.Service{{Name: "mcp", Port: 4483}}}
+
+	runner := NewSandboxRunner(SandboxDeps{
+		Registry: &mockRegistry{
+			agents: map[string]agent.Agent{"test-agent": testAgent},
+			// Plugin present with an injector — must be dropped in config mode.
+			plugins: map[string]agent.Plugin{"test-agent": &mockPlugin{injector: mockMCPInjector{}}},
+		},
+		VMRunner:      vmRunner,
+		SessionRunner: &mockSessionRunner{},
+		Config: &SandboxConfig{
+			AgentOverrides: map[string]domainconfig.AgentOverride{
+				"test-agent": {MCP: &domainconfig.MCPAgentOverride{Mode: domainconfig.MCPModeConfig}},
+			},
+		},
+		EnvProvider: &mockEnvProvider{},
+		Logger:      testLogger(),
+		MCPProvider: mcpProvider,
+	})
+
+	sb, err := runner.Prepare(context.Background(), "test-agent", RunOpts{
+		Workspace:     "/tmp/ws",
+		EgressProfile: string(egress.ProfilePermissive),
+		SessionID:     "abcd1234",
+	})
+	require.NoError(t, err)
+	defer func() { _ = sb.Cleanup() }()
+
+	assert.Nil(t, vmRunner.startCfg.MCPConfigInjector,
+		"mcp.mode:config must drop the plugin config-file injector")
+	require.Len(t, vmRunner.startCfg.MCPInject, 1,
+		"mcp.mode:config must forward declarative inject entries to the runtime")
+	assert.Equal(t, ".config/aider/mcp.json", vmRunner.startCfg.MCPInject[0].GuestPath)
+	assert.Equal(t, "http://"+gatewayIP+":4483"+domainconfig.MCPEndpointPath, vmRunner.startCfg.EnvVars[agent.EnvBBOXMCPURL],
+		"mcp.mode:config must still enable the proxy via BBOX_MCP_URL")
+}
+
 // TestSandboxRunner_Prepare_MCPDefaultMode_UsesInjector is the companion to the
 // mode:env test: with no mode override, a plugin's injector is used.
 func TestSandboxRunner_Prepare_MCPDefaultMode_UsesInjector(t *testing.T) {
