@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 // defaultConfigTemplate is a fully commented YAML template documenting every
@@ -216,7 +217,14 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   #       rules: true
 #   #       skills: true
 #
-#   # Custom (bring-your-own) agent declared entirely in config.
+` + customAgentExampleBlock
+
+// customAgentExampleBlock is the commented starter documentation for a custom
+// (bring-your-own) agent. It is shared between defaultConfigTemplate (written
+// by `bbox config init`) and AgentStarterStanza (printed by `bbox agents
+// init`), so the two never drift. The `#   #` prefix keeps it commented and
+// nested under the `# agents:` section of the default template.
+const customAgentExampleBlock = `#   # Custom (bring-your-own) agent declared entirely in config.
 #   # Custom agents are SAFER by default than built-ins: env_forward is empty
 #   # (no host env is forwarded), the egress profile defaults to "standard"
 #   # (so you must declare egress_hosts or set it to "permissive"), and when
@@ -279,6 +287,49 @@ var defaultConfigTemplate = `# Brood Box configuration
 #   #       optional: true
 #   #       allow_keys: ["theme", "editor"]
 `
+
+// AgentStarterStanza returns a self-contained, fully commented `agents:` stanza
+// documenting how to declare a custom (bring-your-own) agent. It is printed by
+// `bbox agents init` for the user to paste into their global config. When name
+// is non-empty it replaces the example agent key so the stanza reads as a
+// starting point for that specific agent.
+//
+// The body is derived from the same customAgentExampleBlock used by the default
+// config template. That block is written to sit under a commented `# agents:`
+// section (each line prefixed with "#   "); here the `agents:` key is real, so
+// the outer comment level is stripped and the body is indented two spaces under
+// it, leaving the example fields themselves commented for the user to fill in.
+func AgentStarterStanza(name string) string {
+	if name == "" {
+		name = "my-agent"
+	}
+
+	var b strings.Builder
+	for _, line := range strings.Split(strings.TrimRight(customAgentExampleBlock, "\n"), "\n") {
+		switch {
+		case strings.HasPrefix(line, "#   "):
+			b.WriteString("  " + line[len("#   "):] + "\n")
+		case line == "#":
+			b.WriteString("  #\n")
+		default:
+			b.WriteString(line + "\n")
+		}
+	}
+	stanza := b.String()
+	if name != "my-agent" {
+		stanza = strings.Replace(stanza, "# my-agent:\n", "# "+name+":\n", 1)
+	}
+
+	header := `# Custom (bring-your-own) agent starter stanza for Brood Box.
+# Paste this into your global config (default: ~/.config/broodbox/config.yaml)
+# and uncomment/fill the fields you need. Custom agents are GLOBAL-ONLY: they
+# cannot be declared in a workspace .broodbox.yaml. Add it non-interactively
+# with 'bbox agents add', or after editing validate with 'bbox agents doctor'.
+
+agents:
+`
+	return header + stanza
+}
 
 // WriteDefault writes the default config template to the given path.
 // Parent directories are created with mode 0o700. The file is written

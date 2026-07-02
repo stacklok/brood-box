@@ -157,3 +157,25 @@ func TestWriteDefault(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentStarterStanza(t *testing.T) {
+	t.Parallel()
+
+	t.Run("default name", func(t *testing.T) {
+		t.Parallel()
+		out := AgentStarterStanza("")
+		assert.Contains(t, out, "agents:")
+		assert.Contains(t, out, "GLOBAL-ONLY")
+		// The body is indented under the real agents: key and still commented.
+		assert.Contains(t, out, "  # my-agent:")
+	})
+
+	t.Run("named agent substitutes the key", func(t *testing.T) {
+		t.Parallel()
+		out := AgentStarterStanza("aider")
+		assert.Contains(t, out, "  # aider:")
+		assert.NotContains(t, out, "# my-agent:")
+		// Example field values are left intact for illustration.
+		assert.Contains(t, out, "ghcr.io/acme/my-agent:latest")
+	})
+}

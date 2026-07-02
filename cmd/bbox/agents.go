@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	infraconfig "github.com/stacklok/brood-box/internal/infra/config"
 	"github.com/stacklok/brood-box/pkg/clients"
 	domainagent "github.com/stacklok/brood-box/pkg/domain/agent"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
@@ -30,6 +31,8 @@ func agentsCmd() *cobra.Command {
 	cmd.AddCommand(agentsListCmd())
 	cmd.AddCommand(agentsInspectCmd())
 	cmd.AddCommand(agentsDoctorCmd())
+	cmd.AddCommand(agentsAddCmd())
+	cmd.AddCommand(agentsInitCmd())
 	return cmd
 }
 
@@ -215,19 +218,21 @@ func renderInspect(w io.Writer, ag domainagent.Agent, resolved *resolvedRegistry
 
 func agentsDoctorCmd() *cobra.Command {
 	var cfgPath string
+	var jsonOut bool
 	cmd := &cobra.Command{
 		Use:   "doctor <name>",
 		Short: "Validate an agent's configuration",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentsDoctor(cmd, cfgPath, args[0])
+			return runAgentsDoctor(cmd, cfgPath, args[0], jsonOut)
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/broodbox/config.yaml)")
+	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit a JSON receipt (re-checkable predicate) instead of per-check lines")
 	return cmd
 }
 
-func runAgentsDoctor(cmd *cobra.Command, cfgPath, agentName string) error {
+func runAgentsDoctor(cmd *cobra.Command, cfgPath, agentName string, jsonOut bool) error {
 	ws, err := os.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting current directory: %w", err)
@@ -255,6 +260,21 @@ func runAgentsDoctor(cmd *cobra.Command, cfgPath, agentName string) error {
 	results, ok := runDoctor(agentName, override, isBuiltin, os.LookupEnv, imageRefValidator, localAddedAgent, localAddedCreds)
 
 	out := cmd.OutOrStdout()
+	if jsonOut {
+		configPath := cfgPath
+		if configPath == "" {
+			configPath = infraconfig.NewLoader("").Path()
+		}
+		receipt := buildDoctorReceipt(agentName, override, isBuiltin, configPath,
+			resolvedAgentOrNil(resolved, agentName), results, ok, os.LookupEnv)
+		if err := emitReceiptJSON(out, receipt); err != nil {
+			return err
+		}
+		if !ok {
+			return errors.New("agent configuration has problems (see receipt)")
+		}
+		return nil
+	}
 	for _, r := range results {
 		status := "PASS"
 		if !r.ok {
