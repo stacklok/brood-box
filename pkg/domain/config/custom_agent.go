@@ -252,6 +252,9 @@ func ValidateCustomAgent(name string, o AgentOverride, imageRefValidator func(st
 		if !IsValidMCPMode(o.MCP.Mode) {
 			return fmt.Errorf("agent %q: mcp.mode %q: valid values are %q, %q", name, o.MCP.Mode, MCPModeEnv, MCPModeConfig)
 		}
+		if o.MCP.Authz != nil && o.MCP.Authz.Profile != "" && !IsValidMCPAuthzProfile(o.MCP.Authz.Profile) {
+			return fmt.Errorf("agent %q: invalid mcp.authz.profile %q: valid values are %v", name, o.MCP.Authz.Profile, ValidMCPAuthzProfiles())
+		}
 		if err := validateMCPInject(name, o.MCP); err != nil {
 			return err
 		}
@@ -288,6 +291,13 @@ func ValidateCustomAgent(name string, o AgentOverride, imageRefValidator func(st
 		if _, err := ToEgressHosts(entries); err != nil {
 			return fmt.Errorf("agent %q: egress_hosts[%q]: %w", name, profile, err)
 		}
+	}
+
+	// Egress profile name must be a recognized value before it is used to
+	// compute the effective profile below — otherwise a typo surfaces as a
+	// confusing "requires egress_hosts" error instead of an actionable one.
+	if o.EgressProfile != "" && !egress.ProfileName(o.EgressProfile).IsValid() {
+		return fmt.Errorf("agent %q: invalid egress_profile %q: valid values are %v", name, o.EgressProfile, egress.ValidProfiles())
 	}
 
 	// Effective egress profile must have hosts unless permissive.
