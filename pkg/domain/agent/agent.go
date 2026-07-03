@@ -95,6 +95,11 @@ type Agent struct {
 	// SettingsManifest declares host settings to inject into the VM.
 	// Nil means no settings injection for this agent.
 	SettingsManifest *settings.Manifest
+
+	// MCPInject holds declarative config-file patches applied when the agent
+	// runs with mcp.mode:config. Empty means no declarative MCP injection —
+	// built-in agents use their bespoke Plugin.MCPConfig() injector instead.
+	MCPInject []MCPInjectEntry
 }
 
 // Registry provides access to registered clients by name. Each entry pairs

@@ -50,8 +50,9 @@ type receiptAgent struct {
 	MCPEnabled      *bool        `json:"mcp_enabled,omitempty"`
 	MCPMode         string       `json:"mcp_mode,omitempty"`
 	MCPAuthzProfile string       `json:"mcp_authz_profile,omitempty"`
-	EnvForward      []string     `json:"env_forward,omitempty"`  // names/patterns only
-	EnvRequired     []receiptEnv `json:"env_required,omitempty"` // names + presence only
+	MCPInjectCount  int          `json:"mcp_inject_count,omitempty"` // declarative config-file patches (mode:config)
+	EnvForward      []string     `json:"env_forward,omitempty"`      // names/patterns only
+	EnvRequired     []receiptEnv `json:"env_required,omitempty"`     // names + presence only
 	CredentialPaths []string     `json:"credential_paths,omitempty"`
 	SettingsEntries int          `json:"settings_entries"`
 }
@@ -137,6 +138,10 @@ func buildReceiptAgent(
 		if override.MCP.Authz != nil {
 			ra.MCPAuthzProfile = override.MCP.Authz.Profile
 		}
+		ra.MCPInjectCount = len(override.MCP.Inject)
+	}
+	if ra.MCPInjectCount == 0 && resolved != nil {
+		ra.MCPInjectCount = len(resolved.MCPInject)
 	}
 	if ra.MCPAuthzProfile == "" && !isBuiltin && !mcpDisabled && override.MCP != nil {
 		ra.MCPAuthzProfile = domainconfig.DefaultCustomAgentMCPAuthzProfile
@@ -285,6 +290,9 @@ func mcpSummary(a receiptAgent) string {
 	}
 	if a.MCPAuthzProfile != "" {
 		parts = append(parts, "authz="+a.MCPAuthzProfile)
+	}
+	if a.MCPInjectCount > 0 {
+		parts = append(parts, fmt.Sprintf("inject=%d", a.MCPInjectCount))
 	}
 	return strings.Join(parts, ", ")
 }

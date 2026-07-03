@@ -481,8 +481,8 @@ func StricterMCPAuthzProfile(a, b string) string {
 }
 
 // MCPAgentOverride holds the subset of MCP settings that can be
-// overridden per-agent. Only Enabled (gate), Mode, and Authz
-// (tighten-only) have runtime effect at the per-agent level.
+// overridden per-agent: Enabled (gate), Mode, Authz (tighten-only), and
+// Inject (declarative config-file patches when Mode == "config").
 type MCPAgentOverride struct {
 	// Enabled controls whether the MCP proxy is active for this agent.
 	// nil means "no override" (inherit global setting), unlike
@@ -493,13 +493,39 @@ type MCPAgentOverride struct {
 	// "" (default) preserves legacy behavior: a config-file injector runs
 	// if the agent's plugin supplies one. "env" enables the proxy but runs
 	// NO config-file injector — the agent only learns the proxy via the
-	// universal BBOX_MCP_URL environment variable. "config" (declarative
-	// file injection) is reserved for a future release and rejected today.
+	// universal BBOX_MCP_URL environment variable. "config" enables
+	// declarative config-file injection driven by the Inject entries below.
 	Mode string `yaml:"mode,omitempty"`
 
 	// Authz overrides the MCP authorization profile for this agent.
 	// Tighten-only: can only make the profile stricter, not more permissive.
 	Authz *MCPAuthzConfig `yaml:"authz,omitempty"`
+
+	// Inject declares the guest config files to patch when Mode == "config".
+	// Each entry deep-merges a config tree (with ${BBOX_*} substitution) into
+	// a file in the guest home so a data-only agent whose harness reads a
+	// config file can be wired to the in-VM proxy without a Go MCPInjector.
+	//
+	// Sourced from the trusted global config only: mergeAgentOverride never
+	// reads Inject from a workspace-local .broodbox.yaml, so a repository
+	// cannot introduce or widen declarative injection.
+	Inject []MCPInjectConfig `yaml:"inject,omitempty"`
+}
+
+// MCPInjectConfig is one declarative config-file patch for mcp.mode:config.
+// It is the YAML-facing counterpart of agent.MCPInjectEntry; the mapping into
+// the resolved agent value happens in AgentFromOverride.
+type MCPInjectConfig struct {
+	// GuestPath is the config file to patch, relative to the sandbox user's
+	// home directory inside the guest (e.g. ".config/aider/mcp.json").
+	GuestPath string `yaml:"guest_path"`
+
+	// Format is the serialization format: "json", "jsonc", "toml", or "yaml".
+	Format string `yaml:"format"`
+
+	// Merge is the config tree deep-merged into the guest file. String leaves
+	// may reference ${BBOX_*} environment variables (notably ${BBOX_MCP_URL}).
+	Merge map[string]any `yaml:"merge"`
 }
 
 // MCPEndpointPath is the HTTP path the vmcp proxy serves the MCP endpoint on.
@@ -515,17 +541,17 @@ const (
 	// injection).
 	MCPModeEnv = "env"
 
-	// MCPModeConfig requests declarative config-file injection. Reserved for
-	// a future release; rejected by ValidateCustomAgent today.
+	// MCPModeConfig enables declarative config-file injection: the agent's
+	// config file(s) are patched with the proxy endpoint per the mcp.inject
+	// entries (validated by ValidateCustomAgent).
 	MCPModeConfig = "config"
 )
 
-// IsValidMCPMode reports whether the given MCP mode is accepted in this
-// release. The empty string (legacy behavior) and "env" are valid.
-// "config" is recognized as a future value but is NOT yet supported.
+// IsValidMCPMode reports whether the given MCP mode is accepted. The empty
+// string (legacy behavior), "env", and "config" are all valid.
 func IsValidMCPMode(mode string) bool {
 	switch mode {
-	case "", MCPModeEnv:
+	case "", MCPModeEnv, MCPModeConfig:
 		return true
 	default:
 		return false

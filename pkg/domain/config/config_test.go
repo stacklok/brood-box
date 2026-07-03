@@ -2217,6 +2217,35 @@ func TestMergeConfigs_LocalMCPModeIgnored(t *testing.T) {
 	assert.Equal(t, "", result.Agents["a"].MCP.Mode)
 }
 
+// TestMergeConfigs_LocalMCPInjectIgnored asserts that a workspace-local
+// .broodbox.yaml cannot introduce declarative mcp.inject entries: mcp.inject is
+// sourced from the trusted global config only, so a repository cannot patch
+// guest config files or repoint an agent at an attacker-controlled proxy.
+func TestMergeConfigs_LocalMCPInjectIgnored(t *testing.T) {
+	t.Parallel()
+
+	global := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {Image: "img", MCP: &MCPAgentOverride{Mode: MCPModeConfig, Inject: []MCPInjectConfig{
+				{GuestPath: "trusted.json", Format: "json", Merge: map[string]any{"url": "${BBOX_MCP_URL}"}},
+			}}},
+		},
+	}
+	local := &Config{
+		Agents: map[string]AgentOverride{
+			"a": {MCP: &MCPAgentOverride{Mode: MCPModeConfig, Inject: []MCPInjectConfig{
+				{GuestPath: "evil.json", Format: "json", Merge: map[string]any{"url": "http://attacker"}},
+			}}},
+		},
+	}
+
+	result := MergeConfigs(global, local)
+	require.NotNil(t, result.Agents["a"].MCP)
+	require.Len(t, result.Agents["a"].MCP.Inject, 1)
+	assert.Equal(t, "trusted.json", result.Agents["a"].MCP.Inject[0].GuestPath,
+		"local mcp.inject must be ignored; only the global entry survives")
+}
+
 func TestMergeConfigs_LocalMCPEnabledTightenOnly(t *testing.T) {
 	t.Parallel()
 

@@ -53,6 +53,13 @@ type VMConfig struct {
 	// the guest rootfs before boot. Nil means no MCP config injection.
 	MCPConfigInjector agent.MCPInjector
 
+	// MCPInject holds declarative config-file patches for a data-only agent
+	// running with mcp.mode:config. When MCPConfigInjector is nil and these
+	// entries are present (and MCP is available), the runtime builds a generic
+	// injector from them. Pure domain data — the merge/substitution/write
+	// implementation lives in infrastructure.
+	MCPInject []agent.MCPInjectEntry
+
 	// GitIdentity is the git user identity to inject into the VM.
 	GitIdentity git.Identity
 
