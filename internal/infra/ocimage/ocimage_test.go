@@ -4,9 +4,12 @@
 package ocimage
 
 import (
+	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-containerregistry/pkg/crane"
 	"github.com/google/go-containerregistry/pkg/name"
@@ -14,6 +17,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/empty"
 	"github.com/google/go-containerregistry/pkg/v1/mutate"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
+	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -135,6 +139,23 @@ func TestExtractFromImage(t *testing.T) {
 			wantErr:     true,
 			errContains: []string{customPath},
 		},
+		{
+			// docker build/podman build emit tar entries with a leading "./".
+			name: "LeadingDotSlashTarEntryMatchesAbsolutePath",
+			layers: []map[string][]byte{
+				{"./usr/share/broodbox/agent.yaml": []byte(validManifestYAML)},
+			},
+			wantData: validManifestYAML,
+		},
+		{
+			// Relative tar entry (no leading "/" or "./") must still match an
+			// absolute target path.
+			name: "RelativeTarEntryMatchesAbsolutePath",
+			layers: []map[string][]byte{
+				{"usr/share/broodbox/agent.yaml": []byte(validManifestYAML)},
+			},
+			wantData: validManifestYAML,
+		},
 	}
 
 	for _, tc := range tests {
@@ -219,5 +240,84 @@ func TestEnrichRemoteError(t *testing.T) {
 			require.Error(t, got)
 			assert.Contains(t, got.Error(), tc.wantSubstr)
 		})
+	}
+}
+
+// foreignLayer is a v1.Layer whose Descriptor carries an attacker-controlled
+// `urls` list (OCI "foreign" blob). Uncompressed panics, proving the foreign-URL
+// rejection happens before any I/O.
+type foreignLayer struct {
+	desc v1.Descriptor
+}
+
+func (f *foreignLayer) Digest() (v1.Hash, error) { return f.desc.Digest, nil }
+func (f *foreignLayer) DiffID() (v1.Hash, error) { return f.desc.Digest, nil }
+func (f *foreignLayer) Compressed() (io.ReadCloser, error) {
+	panic("Compressed must not be called for foreign layers")
+}
+func (f *foreignLayer) Uncompressed() (io.ReadCloser, error) {
+	panic("Uncompressed must not be called for foreign layers")
+}
+func (f *foreignLayer) Size() (int64, error)                { return f.desc.Size, nil }
+func (f *foreignLayer) MediaType() (types.MediaType, error) { return f.desc.MediaType, nil }
+func (f *foreignLayer) Descriptor() (*v1.Descriptor, error) { return &f.desc, nil }
+
+func TestExtractFromImageRejectsForeignLayerURLs(t *testing.T) {
+	t.Parallel()
+
+	// An attacker-controlled foreign layer whose Descriptor carries URLs. The
+	// rejection must fire before Uncompressed is ever called.
+	digest, err := v1.NewHash("sha256:" + strings.Repeat("00", 32))
+	require.NoError(t, err)
+	layer := &foreignLayer{
+		desc: v1.Descriptor{
+			Digest:    digest,
+			URLs:      []string{"https://attacker.example/x"},
+			MediaType: types.OCILayer,
+		},
+	}
+	img, err := mutate.Append(empty.Image, mutate.Addendum{Layer: layer})
+	require.NoError(t, err)
+
+	_, err = extractFromImage(img, LabelAgent, WellKnownManifestPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "foreign-layer URLs are not permitted")
+	assert.Contains(t, err.Error(), "1 external URL(s)")
+}
+
+func TestNewRemoteFetcherIncludesDefaultKeychain(t *testing.T) {
+	t.Parallel()
+
+	// Weak but useful: NewRemoteFetcher prepends the default-keychain option so
+	// `docker login`/`podman login` credentials are picked up. Asserting at
+	// least one option is present catches an accidental removal of the
+	// keychain wiring. remote.Option is an opaque interface, so introspecting
+	// which option carries the keychain is not feasible without a live
+	// registry.
+	f := NewRemoteFetcher()
+	require.NotEmpty(t, f.remoteOptions, "NewRemoteFetcher must register at least the default keychain option")
+}
+
+func TestFetchAgentManifestRespectsCancelledContext(t *testing.T) {
+	// Not parallel: relies on context timing. Use a ref that parses but points
+	// nowhere (localhost:1 will not accept, but go-containerregistry checks the
+	// context before dialing). A pre-cancelled context must yield an error
+	// quickly without a real network round-trip.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	f := NewRemoteFetcher()
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := f.FetchAgentManifest(ctx, "localhost:1/test:latest")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+	// Generous deadline: context cancellation should short-circuit well before.
+	case <-time.After(5 * time.Second):
+		t.Fatal("FetchAgentManifest did not return within 5s of a cancelled context")
 	}
 }

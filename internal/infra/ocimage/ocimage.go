@@ -24,6 +24,7 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/partial"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/remote/transport"
 
@@ -51,8 +52,10 @@ type Fetcher interface {
 }
 
 // RemoteFetcher pulls manifests from a remote registry via go-containerregistry.
-// The zero value is usable; remote options (auth, platform) may be supplied via
-// NewRemoteFetcher, which stores them in the unexported remoteOptions field.
+// The zero value is usable but pulls anonymously; use NewRemoteFetcher to pick up
+// host credentials from the default keychain (docker login/podman login). Remote
+// options (auth, platform) may be supplied via NewRemoteFetcher, which stores
+// them in the unexported remoteOptions field.
 type RemoteFetcher struct {
 	// remoteOptions are passed to remote.Image (auth, transport, platform
 	// selection). nil/empty uses anonymous access and the host platform.
@@ -154,12 +157,29 @@ func extractFromImage(img v1.Image, label, defaultPath string) ([]byte, error) {
 // and returns its bytes. found is false (with nil error) when the layer does
 // not contain the path.
 func readLayerPath(layer v1.Layer, path string) (data []byte, found bool, err error) {
+	// Reject foreign-layer URLs (OCI "foreign" blobs) before any I/O. A remote
+	// layer whose descriptor carries a `urls` field would otherwise cause
+	// go-containerregistry's Uncompressed()/Compressed() to fetch those
+	// attacker-controlled URLs on the host, bypassing the sandbox VM egress
+	// policy (DNS-rebinding to cloud metadata is possible). partial.Descriptor
+	// returns the original manifest descriptor (with URLs) for remote layers
+	// and computes one for in-memory layers (no URLs); if it errors or returns
+	// nil, proceed normally.
+	if desc, derr := partial.Descriptor(layer); derr == nil && desc != nil && len(desc.URLs) > 0 {
+		label := path
+		if desc.Digest.String() != "" {
+			label = desc.Digest.String()
+		}
+		return nil, false, fmt.Errorf("foreign-layer URLs are not permitted for the agent manifest (layer %s declares %d external URL(s))", label, len(desc.URLs))
+	}
+
 	rc, err := layer.Uncompressed()
 	if err != nil {
 		return nil, false, fmt.Errorf("opening uncompressed layer: %w", err)
 	}
 	defer func() { _ = rc.Close() }()
 
+	target := cleanTarPath(path)
 	tr := tar.NewReader(rc)
 	for {
 		hdr, err := tr.Next()
@@ -169,7 +189,7 @@ func readLayerPath(layer v1.Layer, path string) (data []byte, found bool, err er
 			}
 			return nil, false, fmt.Errorf("reading tar entry: %w", err)
 		}
-		if hdr.Name != path {
+		if cleanTarPath(hdr.Name) != target {
 			continue
 		}
 		// A directory entry (or other non-regular type) at the target path is
@@ -184,6 +204,17 @@ func readLayerPath(layer v1.Layer, path string) (data []byte, found bool, err er
 		}
 		return buf, true, nil
 	}
+}
+
+// cleanTarPath normalizes a tar entry name or a target manifest path for
+// comparison. docker build/podman build commonly emit entries with a leading
+// "./" (e.g. "./usr/share/broodbox/agent.yaml"), and the target path may be
+// absolute (e.g. "/usr/share/broodbox/agent.yaml"). Stripping a leading "/" and
+// a leading "./" from both sides makes the two forms comparable.
+func cleanTarPath(s string) string {
+	s = strings.TrimPrefix(s, "/")
+	s = strings.TrimPrefix(s, "./")
+	return s
 }
 
 // enrichRemoteError appends a registry hint when the error is an HTTP 401/403/404

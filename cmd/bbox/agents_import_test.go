@@ -886,6 +886,22 @@ func TestIsImageRef(t *testing.T) {
 			source: "ghcr.io/acme/x@sha256:0000000000000000000000000000000000000000000000000000000000000000",
 			want:   true,
 		},
+		{
+			name:   "parent-dir relative path is not an image",
+			source: "../aider.yaml",
+			want:   false,
+		},
+		{
+			name:   "absolute path is not an image even if it parses as a ref",
+			source: "/nonexistent/absolute/path.yaml",
+			want:   false,
+		},
+		// A permission-denied stat error (non-ErrNotExist) is intentionally not
+		// tested here: it is filesystem- and privilege-dependent (root bypasses
+		// it, some CI runners run as root, some filesystems don't honor 0o000),
+		// making a hermetic, non-flaky subtest impractical. The branch is covered
+		// by inspection of isImageRef: any non-ErrNotExist stat error returns
+		// false and falls through to the file path.
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
