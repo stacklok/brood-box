@@ -432,6 +432,27 @@ func TestValidateCustomAgent(t *testing.T) {
 			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
 				MCP: &MCPAgentOverride{Mode: MCPModeEnv}},
 		},
+		{
+			name: "invalid egress_profile rejected", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "bogus"},
+			wantErr:  "invalid egress_profile",
+		},
+		{
+			name: "invalid mcp authz profile rejected", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
+				MCP: &MCPAgentOverride{Authz: &MCPAuthzConfig{Profile: "totally-wrong"}}},
+			wantErr: "invalid mcp.authz.profile",
+		},
+		{
+			name: "valid mcp authz profile accepted", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
+				MCP: &MCPAgentOverride{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileSafeTools}}},
+		},
+		{
+			name: "custom mcp authz profile accepted", agentName: "x",
+			override: AgentOverride{Image: "img", Command: []string{"run"}, EgressProfile: "permissive",
+				MCP: &MCPAgentOverride{Authz: &MCPAuthzConfig{Profile: MCPAuthzProfileCustom}}},
+		},
 	}
 
 	for _, tt := range tests {
