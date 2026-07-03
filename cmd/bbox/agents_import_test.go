@@ -5,7 +5,9 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -420,4 +422,475 @@ func TestLoadManifestOperatorPathAcceptsSymlink(t *testing.T) {
 	m, err := infraconfig.LoadManifest(link)
 	require.NoError(t, err)
 	assert.Equal(t, "aider", m.Name)
+}
+
+// fakeFetcher is an in-memory ocimage.Fetcher for e2e tests of the image
+// import path. It returns canned manifest bytes and a fake digest-pinned ref,
+// so the full CLI path is exercised without network.
+type fakeFetcher struct {
+	manifestBytes []byte
+	pinnedRef     string
+	err           error
+	calledRef     string
+}
+
+func (f *fakeFetcher) FetchAgentManifest(_ context.Context, ref string) ([]byte, string, error) {
+	f.calledRef = ref
+	if f.err != nil {
+		return nil, "", f.err
+	}
+	return f.manifestBytes, f.pinnedRef, nil
+}
+
+// imageManifestYAML is a manifest as it would be embedded in an image. Its
+// image field is intentionally the un-pinned tag; the import path overrides it
+// with the digest-pinned ref returned by the fake fetcher.
+const imageManifestYAML = `name: aider
+image: ghcr.io/acme/aider-bbox:latest
+command: ["aider"]
+description: ACME agent
+env_forward: [OPENAI_API_KEY]
+env_required: [OPENAI_API_KEY]
+egress_profile: standard
+egress_hosts:
+  standard:
+    - name: api.openai.com
+      ports: [443]
+mcp:
+  enabled: true
+  mode: env
+  authz:
+    profile: safe-tools
+`
+
+// fakePinnedRef is a digest-pinned ref shape the fake fetcher returns. It must
+// pass imageRefValidator (name.ParseReference), so it is a valid digest ref.
+const fakePinnedRef = "ghcr.io/acme/aider-bbox@sha256:0000000000000000000000000000000000000000000000000000000000000000"
+
+func TestAgentsImportImageEndToEnd(t *testing.T) {
+	t.Setenv("OPENAI_API_KEY", "present-value")
+
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte(imageManifestYAML),
+		pinnedRef:     fakePinnedRef,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	var out, errBuf bytes.Buffer
+	cmd := agentsImportCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath, "--json"})
+	require.NoError(t, runAgentsImport(cmd, imageRef, cfgPath, "", false, true, fetcher))
+
+	// The fetcher was invoked with the operator-typed ref.
+	assert.Equal(t, imageRef, fetcher.calledRef)
+
+	var receipt agentReceipt
+	require.NoError(t, json.Unmarshal(out.Bytes(), &receipt))
+	assert.Equal(t, "agents import", receipt.Command)
+	assert.True(t, receipt.OK)
+	assert.Equal(t, "custom", receipt.Agent.Type)
+	assert.Equal(t, "aider", receipt.Agent.Name)
+	// The image field is the digest-pinned ref, not the un-pinned tag.
+	assert.Equal(t, fakePinnedRef, receipt.Agent.Image)
+	assert.Equal(t, "standard", receipt.Agent.EgressProfile)
+	assert.Equal(t, domainconfig.MCPModeEnv, receipt.Agent.MCPMode)
+	require.NotNil(t, receipt.Write)
+	assert.True(t, receipt.Write.Created)
+
+	// doctor --json on the imported agent passes (the pinned ref is a valid ref).
+	var dout bytes.Buffer
+	dcmd := agentsCmd()
+	dcmd.SetOut(&dout)
+	dcmd.SetErr(&dout)
+	dcmd.SetArgs([]string{"doctor", "aider", "--config", cfgPath, "--json"})
+	require.NoError(t, dcmd.Execute())
+
+	var dr agentReceipt
+	require.NoError(t, json.Unmarshal(dout.Bytes(), &dr))
+	assert.True(t, dr.OK)
+
+	// The written config round-trips through the loader with the pinned image.
+	loaded, err := infraconfig.NewLoader(cfgPath).Load()
+	require.NoError(t, err)
+	custom, ok := loaded.Agents["aider"]
+	require.True(t, ok)
+	assert.Equal(t, fakePinnedRef, custom.Image)
+	assert.Equal(t, []string{"aider"}, custom.Command)
+	assert.Equal(t, []string{"OPENAI_API_KEY"}, custom.EnvForward)
+	require.NotNil(t, custom.MCP)
+	assert.Equal(t, domainconfig.MCPModeEnv, custom.MCP.Mode)
+}
+
+func TestAgentsImportImageWarnsOnDeclaredImageMismatch(t *testing.T) {
+	t.Parallel()
+
+	// The embedded manifest declares a DIFFERENT repository than the imported
+	// ref — this is a real mismatch and must warn. (A same-repo tag→digest pin
+	// is silent, exercised by TestAgentsImportImageSameRepoNoWarning.)
+	embeddedYAML := `name: aider
+image: ghcr.io/acme/other-bbox:latest
+command: ["aider"]
+egress_profile: permissive
+`
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte(embeddedYAML),
+		pinnedRef:     fakePinnedRef,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	var out, errBuf bytes.Buffer
+	cmd := agentsImportCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath})
+	require.NoError(t, runAgentsImport(cmd, imageRef, cfgPath, "", false, false, fetcher))
+
+	// The warning names the declared image and the overriding pinned ref.
+	warning := errBuf.String()
+	assert.Contains(t, warning, "Warning: image manifest declares image")
+	assert.Contains(t, warning, "ghcr.io/acme/other-bbox:latest")
+	assert.Contains(t, warning, fakePinnedRef)
+
+	// The persisted image is the pinned ref, not the declared tag.
+	loaded, err := infraconfig.NewLoader(cfgPath).Load()
+	require.NoError(t, err)
+	assert.Equal(t, fakePinnedRef, loaded.Agents["aider"].Image)
+}
+
+func TestAgentsImportImageSameRepoNoWarning(t *testing.T) {
+	t.Parallel()
+
+	// The embedded manifest declares the same repository as the imported ref
+	// (only the tag differs). Pinning the tag to a digest is the normal case —
+	// no warning should be emitted.
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte(imageManifestYAML),
+		pinnedRef:     fakePinnedRef,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	var out, errBuf bytes.Buffer
+	cmd := agentsImportCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath, "--json"})
+	require.NoError(t, runAgentsImport(cmd, imageRef, cfgPath, "", false, true, fetcher))
+
+	// No mismatch warning — the declared tag and pinned digest share a repo.
+	assert.NotContains(t, errBuf.String(), "Warning: image manifest declares image")
+}
+
+func TestAgentsImportImageMalformedDeclaredImageWarns(t *testing.T) {
+	t.Parallel()
+
+	// The embedded manifest declares a malformed image ref — the import path
+	// cannot compare repositories, so it warns that the declared image is
+	// malformed.
+	embeddedYAML := `name: aider
+image: "not a valid ref with spaces"
+command: ["aider"]
+egress_profile: permissive
+`
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte(embeddedYAML),
+		pinnedRef:     fakePinnedRef,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	var out, errBuf bytes.Buffer
+	cmd := agentsImportCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath})
+	require.NoError(t, runAgentsImport(cmd, imageRef, cfgPath, "", false, false, fetcher))
+
+	assert.Contains(t, errBuf.String(), "malformed image")
+
+	loaded, err := infraconfig.NewLoader(cfgPath).Load()
+	require.NoError(t, err)
+	assert.Equal(t, fakePinnedRef, loaded.Agents["aider"].Image)
+}
+
+func TestAgentsImportImageNameOverride(t *testing.T) {
+	t.Parallel()
+
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte(imageManifestYAML),
+		pinnedRef:     fakePinnedRef,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	var out, errBuf bytes.Buffer
+	cmd := agentsImportCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath, "--json", "--name", "aider2"})
+	require.NoError(t, runAgentsImport(cmd, imageRef, cfgPath, "aider2", false, true, fetcher))
+
+	var receipt agentReceipt
+	require.NoError(t, json.Unmarshal(out.Bytes(), &receipt))
+	assert.Equal(t, "aider2", receipt.Agent.Name)
+
+	loaded, err := infraconfig.NewLoader(cfgPath).Load()
+	require.NoError(t, err)
+	_, ok := loaded.Agents["aider2"]
+	assert.True(t, ok)
+	_, originalOk := loaded.Agents["aider"]
+	assert.False(t, originalOk, "the --name override renamed the agent, not duplicated it")
+}
+
+func TestAgentsImportImageRefusesBuiltinWithoutForce(t *testing.T) {
+	t.Parallel()
+
+	// The embedded manifest names a built-in; without --force this is rejected
+	// before any config is written.
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte(`name: claude-code
+image: ghcr.io/acme/x:latest
+command: ["x"]
+egress_profile: permissive
+`),
+		pinnedRef: "ghcr.io/acme/x@sha256:1111111111111111111111111111111111111111111111111111111111111111",
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/x:latest"
+
+	cmd := agentsImportCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath})
+	err := runAgentsImport(cmd, imageRef, cfgPath, "", false, false, fetcher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "built-in agent")
+	_, statErr := os.Stat(cfgPath)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestAgentsImportImageRejectsMalformedManifest(t *testing.T) {
+	t.Parallel()
+
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte("name: : not yaml {"),
+		pinnedRef:     fakePinnedRef,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	cmd := agentsImportCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath})
+	err := runAgentsImport(cmd, imageRef, cfgPath, "", false, false, fetcher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parsing manifest from image")
+}
+
+func TestAgentsImportImageFetcherErrorPropagation(t *testing.T) {
+	t.Parallel()
+
+	// The fetcher returns an error; the CLI surfaces it wrapped with the image
+	// ref and the fetcher's error message.
+	fetchErr := fmt.Errorf("boom: connection refused")
+	fetcher := &fakeFetcher{
+		err: fetchErr,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	cmd := agentsImportCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath})
+	err := runAgentsImport(cmd, imageRef, cfgPath, "", false, false, fetcher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), imageRef)
+	assert.Contains(t, err.Error(), "connection refused")
+
+	// No config written on fetch failure.
+	_, statErr := os.Stat(cfgPath)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestAgentsImportImageNameOverrideToBuiltin(t *testing.T) {
+	t.Parallel()
+
+	// --name overriding to a built-in name is rejected even though the
+	// embedded manifest's name is a custom one.
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte(imageManifestYAML),
+		pinnedRef:     fakePinnedRef,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	cmd := agentsImportCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath, "--name", "claude-code"})
+	err := runAgentsImport(cmd, imageRef, cfgPath, "claude-code", false, false, fetcher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "built-in agent")
+
+	_, statErr := os.Stat(cfgPath)
+	assert.True(t, os.IsNotExist(statErr))
+}
+
+func TestAgentsImportImageCollidesWithExistingCustom(t *testing.T) {
+	t.Parallel()
+
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte(imageManifestYAML),
+		pinnedRef:     fakePinnedRef,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	// First import succeeds.
+	cmd1 := agentsImportCmd()
+	cmd1.SetOut(&bytes.Buffer{})
+	cmd1.SetErr(&bytes.Buffer{})
+	cmd1.SetArgs([]string{"import", imageRef, "--config", cfgPath})
+	require.NoError(t, runAgentsImport(cmd1, imageRef, cfgPath, "", false, false, fetcher))
+
+	// Second import without --force fails with "already exists".
+	cmd2 := agentsImportCmd()
+	cmd2.SetOut(&bytes.Buffer{})
+	cmd2.SetErr(&bytes.Buffer{})
+	cmd2.SetArgs([]string{"import", imageRef, "--config", cfgPath})
+	err := runAgentsImport(cmd2, imageRef, cfgPath, "", false, false, fetcher)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "already exists")
+
+	// Second import with --force succeeds.
+	cmd3 := agentsImportCmd()
+	cmd3.SetOut(&bytes.Buffer{})
+	cmd3.SetErr(&bytes.Buffer{})
+	cmd3.SetArgs([]string{"import", imageRef, "--config", cfgPath})
+	require.NoError(t, runAgentsImport(cmd3, imageRef, cfgPath, "", true, false, fetcher))
+}
+
+func TestAgentsImportImageNoImageField(t *testing.T) {
+	t.Parallel()
+
+	// An image manifest with no `image` field: import succeeds, no warning is
+	// printed, and the config holds the digest-pinned ref from the import.
+	embeddedYAML := `name: aider
+command: ["aider"]
+egress_profile: permissive
+`
+	fetcher := &fakeFetcher{
+		manifestBytes: []byte(embeddedYAML),
+		pinnedRef:     fakePinnedRef,
+	}
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	imageRef := "ghcr.io/acme/aider-bbox:latest"
+
+	var out, errBuf bytes.Buffer
+	cmd := agentsImportCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&errBuf)
+	cmd.SetArgs([]string{"import", imageRef, "--config", cfgPath, "--json"})
+	require.NoError(t, runAgentsImport(cmd, imageRef, cfgPath, "", false, true, fetcher))
+
+	// No warning when the declared image is absent.
+	assert.NotContains(t, errBuf.String(), "Warning:")
+
+	var receipt agentReceipt
+	require.NoError(t, json.Unmarshal(out.Bytes(), &receipt))
+	assert.True(t, receipt.OK)
+	assert.Equal(t, fakePinnedRef, receipt.Agent.Image)
+
+	// The persisted image is the digest-pinned ref.
+	loaded, err := infraconfig.NewLoader(cfgPath).Load()
+	require.NoError(t, err)
+	assert.Equal(t, fakePinnedRef, loaded.Agents["aider"].Image)
+}
+
+func TestIsImageRef(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	existingFile := filepath.Join(dir, "aider.yaml")
+	require.NoError(t, os.WriteFile(existingFile, []byte("name: x\n"), 0o600))
+
+	tests := []struct {
+		name   string
+		source string
+		want   bool
+	}{
+		{
+			name:   "existing local file is not an image",
+			source: existingFile,
+			want:   false,
+		},
+		{
+			name:   "fully-qualified image ref is an image",
+			source: "ghcr.io/acme/aider-bbox:latest",
+			want:   true,
+		},
+		{
+			name:   "image ref by digest is an image",
+			source: "ghcr.io/acme/aider-bbox@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			want:   true,
+		},
+		{
+			name:   "nonexistent path that does not parse as a ref falls through to file",
+			source: filepath.Join(dir, "does-not-exist-and-not-a-ref.yaml"),
+			want:   false,
+		},
+		{
+			name:   "docker hub short ref with no slash is treated as a file",
+			source: "ubuntu:24.04",
+			want:   false,
+		},
+		{
+			name:   "fully-qualified docker hub library ref is an image",
+			source: "docker.io/library/ubuntu:24.04",
+			want:   true,
+		},
+		{
+			name:   "misspelled bare manifest path is not an image",
+			source: "aider.yaml",
+			want:   false,
+		},
+		{
+			name:   "misspelled bare relative manifest path is not an image",
+			source: "./aider.yaml",
+			want:   false,
+		},
+		{
+			name:   "bare name with no extension is not an image",
+			source: "aider",
+			want:   false,
+		},
+		{
+			name:   "image ref by digest with slash is an image",
+			source: "ghcr.io/acme/x@sha256:0000000000000000000000000000000000000000000000000000000000000000",
+			want:   true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, isImageRef(tc.source))
+		})
+	}
 }
