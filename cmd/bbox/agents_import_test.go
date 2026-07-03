@@ -317,6 +317,95 @@ func TestAgentsExportRefusesUnknown(t *testing.T) {
 	assert.Contains(t, err.Error(), "not declared")
 }
 
+func TestAgentsExportImportRoundTripsCredentialsAndSettings(t *testing.T) {
+	t.Parallel()
+
+	cfgPath := filepath.Join(t.TempDir(), "config.yaml")
+	manifestPath := filepath.Join(t.TempDir(), "aider.yaml")
+	writeManifest(t, manifestPath, `name: aider
+image: ghcr.io/acme/aider-bbox:latest
+command: ["aider"]
+egress_profile: permissive
+credentials:
+  persist:
+    - ".gitconfig"
+    - ".config/foo/"
+settings:
+  - category: settings
+    host_path: ".aiderrc"
+    guest_path: ".aiderrc"
+    kind: merge-file
+    format: json
+    optional: true
+    allow_keys: ["model", "theme"]
+`)
+
+	// Import into the first config.
+	importCmd := agentsCmd()
+	importCmd.SetOut(&bytes.Buffer{})
+	importCmd.SetErr(&bytes.Buffer{})
+	importCmd.SetArgs([]string{"import", manifestPath, "--config", cfgPath})
+	require.NoError(t, importCmd.Execute())
+
+	// Export it back out.
+	var out bytes.Buffer
+	expCmd := agentsCmd()
+	expCmd.SetOut(&out)
+	expCmd.SetErr(&out)
+	expCmd.SetArgs([]string{"export", "aider", "--config", cfgPath})
+	require.NoError(t, expCmd.Execute())
+
+	exported := out.String()
+	assert.Contains(t, exported, ".gitconfig")
+	assert.Contains(t, exported, ".config/foo/")
+	assert.Contains(t, exported, ".aiderrc")
+	assert.Contains(t, exported, "merge-file")
+	assert.Contains(t, exported, "model")
+	assert.Contains(t, exported, "theme")
+
+	// Re-import the exported manifest into a fresh config.
+	cfgPath2 := filepath.Join(t.TempDir(), "config2.yaml")
+	reExported := filepath.Join(t.TempDir(), "reexported.yaml")
+	writeManifest(t, reExported, exported)
+
+	reimportCmd := agentsCmd()
+	reimportCmd.SetOut(&bytes.Buffer{})
+	reimportCmd.SetErr(&bytes.Buffer{})
+	reimportCmd.SetArgs([]string{"import", reExported, "--config", cfgPath2})
+	require.NoError(t, reimportCmd.Execute())
+
+	// Both configs hold equivalent agent definitions, including credentials/settings.
+	l1, err := infraconfig.NewLoader(cfgPath).Load()
+	require.NoError(t, err)
+	l2, err := infraconfig.NewLoader(cfgPath2).Load()
+	require.NoError(t, err)
+	assert.Equal(t, l1.Agents["aider"], l2.Agents["aider"])
+
+	custom := l1.Agents["aider"]
+	require.NotNil(t, custom.Credentials)
+	assert.Equal(t, []string{".gitconfig", ".config/foo/"}, custom.Credentials.Persist)
+	require.Len(t, custom.Settings, 1)
+	assert.Equal(t, "settings", custom.Settings[0].Category)
+	assert.Equal(t, ".aiderrc", custom.Settings[0].HostPath)
+	assert.Equal(t, "merge-file", custom.Settings[0].Kind)
+	assert.Equal(t, "json", custom.Settings[0].Format)
+	assert.True(t, custom.Settings[0].Optional)
+	assert.Equal(t, []string{"model", "theme"}, custom.Settings[0].AllowKeys)
+}
+
+func TestAgentsExportConfigFileMissing(t *testing.T) {
+	t.Parallel()
+
+	cfgPath := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+	cmd := agentsCmd()
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"export", "aider", "--config", cfgPath})
+	err := cmd.Execute()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not declared")
+}
+
 func TestLoadManifestOperatorPathAcceptsSymlink(t *testing.T) {
 	t.Parallel()
 
