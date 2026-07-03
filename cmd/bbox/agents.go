@@ -33,6 +33,8 @@ func agentsCmd() *cobra.Command {
 	cmd.AddCommand(agentsDoctorCmd())
 	cmd.AddCommand(agentsAddCmd())
 	cmd.AddCommand(agentsInitCmd())
+	cmd.AddCommand(agentsImportCmd())
+	cmd.AddCommand(agentsExportCmd())
 	return cmd
 }
 
