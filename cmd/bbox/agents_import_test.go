@@ -437,7 +437,9 @@ type fakeFetcher struct {
 func (f *fakeFetcher) FetchAgentManifest(_ context.Context, ref string) ([]byte, string, error) {
 	f.calledRef = ref
 	if f.err != nil {
-		return nil, "", f.err
+		// Mirror RemoteFetcher's contract: every error is wrapped with the ref
+		// so callers never need to add their own ref-identifying wrap.
+		return nil, "", fmt.Errorf("importing agent from image %q: %w", ref, f.err)
 	}
 	return f.manifestBytes, f.pinnedRef, nil
 }
@@ -895,6 +897,31 @@ func TestIsImageRef(t *testing.T) {
 			name:   "absolute path is not an image even if it parses as a ref",
 			source: "/nonexistent/absolute/path.yaml",
 			want:   false,
+		},
+		{
+			name:   "subdirectory manifest path is not an image",
+			source: "manifests/aider.yaml",
+			want:   false,
+		},
+		{
+			name:   "another subdirectory manifest path is not an image",
+			source: "subdir/foo.yaml",
+			want:   false,
+		},
+		{
+			name:   "localhost with port and repo is an image",
+			source: "localhost:5001/mecatui:latest",
+			want:   true,
+		},
+		{
+			name:   "ghcr.io ref is an image",
+			source: "ghcr.io/acme/x:latest",
+			want:   true,
+		},
+		{
+			name:   "docker.io fully-qualified ref is an image",
+			source: "docker.io/library/ubuntu:24.04",
+			want:   true,
 		},
 		// A permission-denied stat error (non-ErrNotExist) is intentionally not
 		// tested here: it is filesystem- and privilege-dependent (root bypasses

@@ -43,11 +43,14 @@ written as normalized YAML.
 
 A source is treated as an OCI image when it is not an existing local file AND
 it looks like an image reference an operator would type. Specifically, the
-source must contain a ` + "`/`" + ` (registry+repo, e.g.
-ghcr.io/acme/aider-bbox:latest) or an ` + "`@sha256:`" + ` digest. A bare
-library image like ` + "`ubuntu:24.04`" + ` (no slash) is treated as a local
-file path — use the fully-qualified ` + "`docker.io/library/ubuntu:24.04`" + `
-to import it. For an image, the manifest is extracted from an embedded
+source must contain an ` + "`@sha256:`" + ` digest, or a ` + "`/`" + ` whose
+leading segment looks like a registry host (e.g. ` + "`ghcr.io`" + ` in
+ghcr.io/acme/aider-bbox:latest, or ` + "`localhost:5001`" + `). A bare
+library image like ` + "`ubuntu:24.04`" + ` (no slash), or a path with a
+subdirectory that isn't registry-shaped like ` + "`manifests/aider.yaml`" + `,
+is treated as a local file path — use the fully-qualified
+` + "`docker.io/library/ubuntu:24.04`" + ` to import a bare library image. For
+an image, the manifest is extracted from an embedded
 agent.yaml declared by the ` + "`org.stacklok.broodbox.agent`" + ` config label,
 or from the well-known path ` + "`/usr/share/broodbox/agent.yaml`" + ` when the
 label is absent. The imported image ref is pinned to its resolved digest so the
@@ -165,7 +168,10 @@ func loadImportManifest(
 	if isImageRef(source) {
 		manifestBytes, pinnedRef, err := fetcher.FetchAgentManifest(ctx, source)
 		if err != nil {
-			return domainconfig.AgentManifest{}, source, fmt.Errorf("importing agent from image %q: %w", source, err)
+			// The Fetcher contract promises a ref-identifying error already —
+			// don't double-wrap (RemoteFetcher wraps every error path with
+			// "importing agent from image %q").
+			return domainconfig.AgentManifest{}, source, err
 		}
 		// Reuse the same size cap + strict decode as the file path so a
 		// malformed or oversized embedded manifest fails loudly.
@@ -200,14 +206,17 @@ func loadImportManifest(
 
 // isImageRef reports whether source should be treated as an OCI image reference
 // rather than a local manifest file. A source is an image when it is NOT an
-// existing local file AND it contains a "/" (registry+repo, e.g.
-// ghcr.io/acme/x:latest) or an "@sha256:" digest, AND it parses as a valid image
-// reference. The slash/digest requirement excludes bare local-looking names
-// like "aider.yaml" or "aider" (which go-containerregistry would otherwise
-// accept as docker.io library refs) so a typo'd manifest path does not trigger
-// a network pull. A nonexistent path that does not qualify falls through to the
-// file path, which then produces a precise "no such file" error from
-// LoadManifest.
+// existing local file AND it contains an "@sha256:" digest (an explicit digest
+// is unambiguous intent) OR contains a "/" whose first segment looks like a
+// registry host (has a "." or ":", or is exactly "localhost" — e.g.
+// ghcr.io/acme/x:latest, localhost:5001/x:latest), AND it parses as a valid
+// image reference. A slash-containing source whose first segment does NOT look
+// like a registry host (e.g. "manifests/aider.yaml", "subdir/foo.yaml") is a
+// subdirectory file path, not an image reference — this excludes bare
+// local-looking names, including ones with subdirectories, so a typo'd or
+// relative manifest path does not trigger a network pull. A nonexistent path
+// that does not qualify falls through to the file path, which then produces a
+// precise "no such file" error from LoadManifest.
 func isImageRef(source string) bool {
 	if _, err := os.Stat(source); err == nil {
 		// Exists on disk — treat as a file, even if it also looks like a ref.
@@ -222,13 +231,29 @@ func isImageRef(source string) bool {
 		// file path, not an image reference.
 		return false
 	}
-	if !strings.Contains(source, "/") && !strings.Contains(source, "@sha256:") {
+	hasDigest := strings.Contains(source, "@sha256:")
+	if slashIdx := strings.Index(source, "/"); slashIdx < 0 {
+		if !hasDigest {
+			// No slash, no digest: a bare name like "aider" or "ubuntu:24.04".
+			return false
+		}
+	} else if !hasDigest && !looksLikeRegistryHost(source[:slashIdx]) {
+		// Slash present but the leading segment isn't registry-host-shaped and
+		// there's no digest to disambiguate — treat as a subdirectory path.
 		return false
 	}
 	if _, err := name.ParseReference(source); err != nil {
 		return false
 	}
 	return true
+}
+
+// looksLikeRegistryHost reports whether segment (the text before the first
+// "/" in a source string) is shaped like a registry host rather than a
+// directory name — i.e. it contains a "." (a domain, e.g. ghcr.io) or a ":"
+// (a host:port, e.g. localhost:5001), or is exactly "localhost".
+func looksLikeRegistryHost(segment string) bool {
+	return strings.ContainsAny(segment, ".:") || segment == "localhost"
 }
 
 // agentsExportCmd is `bbox agents export <name>`: emit a standalone manifest
