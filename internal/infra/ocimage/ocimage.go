@@ -42,6 +42,20 @@ const (
 	WellKnownManifestPath = "/usr/share/broodbox/agent.yaml"
 )
 
+const (
+	// maxImageConfigSize caps the OCI image config blob size (as declared by
+	// the manifest's config descriptor) that extractFromImage will fetch. The
+	// config is small JSON (labels, env, entrypoint) — a registry declaring a
+	// multi-MB+ config is not a legitimate agent image, it's a DoS attempt.
+	maxImageConfigSize = 4 << 20 // 4 MiB — OCI config is small JSON; reject absurd declarations
+
+	// maxImageLayers caps the number of layers extractFromImage will walk
+	// searching for the embedded manifest. Generous headroom above real-world
+	// images (well under Docker's historical 127-layer norm) while still
+	// bounding a maliciously crafted manifest with thousands of layers.
+	maxImageLayers = 512 // generous; real images are well under Docker's historical 127-layer norm
+)
+
 // Fetcher reads a broodbox agent manifest from an OCI image.
 type Fetcher interface {
 	// FetchAgentManifest pulls just enough of the image to read the embedded
@@ -123,6 +137,16 @@ func pinnedDigestRef(parsed name.Reference, img v1.Image) (string, error) {
 // it only reads the in-memory/passed v1.Image, so tests can feed a hand-built
 // image built with crane.Layer + mutate.Append + mutate.ConfigFile.
 func extractFromImage(img v1.Image, label, defaultPath string) ([]byte, error) {
+	// Check the declared config size before fetching it. Reading the manifest
+	// itself is bounded by go-containerregistry's own 100MiB manifest limit.
+	manifest, err := img.Manifest()
+	if err != nil {
+		return nil, fmt.Errorf("reading image manifest: %w", err)
+	}
+	if manifest.Config.Size > maxImageConfigSize {
+		return nil, fmt.Errorf("image config blob is too large: %d bytes (limit %d)", manifest.Config.Size, maxImageConfigSize)
+	}
+
 	target := defaultPath
 	if cfg, err := img.ConfigFile(); err == nil && cfg != nil {
 		if p, ok := cfg.Config.Labels[label]; ok && strings.TrimSpace(p) != "" {
@@ -133,6 +157,9 @@ func extractFromImage(img v1.Image, label, defaultPath string) ([]byte, error) {
 	layers, err := img.Layers()
 	if err != nil {
 		return nil, fmt.Errorf("listing image layers: %w", err)
+	}
+	if len(layers) > maxImageLayers {
+		return nil, fmt.Errorf("image has too many layers: %d (limit %d)", len(layers), maxImageLayers)
 	}
 
 	// Layers() returns base-first (oldest first). The topmost layer is last,
@@ -197,6 +224,13 @@ func readLayerPath(layer v1.Layer, path string) (data []byte, found bool, err er
 		// surfaces.
 		if hdr.Typeflag != tar.TypeReg {
 			continue
+		}
+		// Reject an oversized manifest outright rather than silently
+		// truncating it via LimitReader below. hdr.Size is attacker-declared,
+		// but combined with the LimitReader this mirrors the file-config
+		// path's stat+limit pattern (internal/infra/configfile.ReadFile).
+		if hdr.Size > configfile.MaxSize {
+			return nil, false, fmt.Errorf("manifest %q in image layer is too large: %d bytes (limit %d)", path, hdr.Size, configfile.MaxSize)
 		}
 		buf, err := io.ReadAll(io.LimitReader(tr, configfile.MaxSize))
 		if err != nil {

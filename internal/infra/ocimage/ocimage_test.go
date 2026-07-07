@@ -4,6 +4,7 @@
 package ocimage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -20,6 +21,8 @@ import (
 	"github.com/google/go-containerregistry/pkg/v1/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/stacklok/brood-box/internal/infra/configfile"
 )
 
 // validManifestYAML is a minimal, schema-valid agent manifest used as the
@@ -175,6 +178,50 @@ func TestExtractFromImage(t *testing.T) {
 			assert.Equal(t, tc.wantData, string(data))
 		})
 	}
+}
+
+func TestExtractFromImageRejectsOversizedConfig(t *testing.T) {
+	t.Parallel()
+
+	// Inflate the real config JSON (via a large label value) past the cap —
+	// this is a genuinely oversized config blob, not a forged descriptor.
+	bloat := strings.Repeat("a", maxImageConfigSize+1024)
+	img := buildImage(t, []map[string][]byte{
+		{WellKnownManifestPath: []byte(validManifestYAML)},
+	}, map[string]string{"bloat": bloat})
+
+	_, err := extractFromImage(img, LabelAgent, WellKnownManifestPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "config blob is too large")
+}
+
+func TestExtractFromImageRejectsTooManyLayers(t *testing.T) {
+	t.Parallel()
+
+	layers := make([]map[string][]byte, maxImageLayers+1)
+	for i := range layers {
+		layers[i] = map[string][]byte{}
+	}
+	img := buildImage(t, layers, nil)
+
+	_, err := extractFromImage(img, LabelAgent, WellKnownManifestPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too many layers")
+}
+
+func TestExtractFromImageRejectsOversizedManifest(t *testing.T) {
+	t.Parallel()
+
+	// A real (not forged) manifest file bigger than configfile.MaxSize must
+	// error, not be silently truncated by the LimitReader.
+	oversized := bytes.Repeat([]byte("a"), int(configfile.MaxSize)+1024)
+	img := buildImage(t, []map[string][]byte{
+		{WellKnownManifestPath: oversized},
+	}, nil)
+
+	_, err := extractFromImage(img, LabelAgent, WellKnownManifestPath)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large")
 }
 
 func TestPinnedDigestRef_Normalizes(t *testing.T) {
