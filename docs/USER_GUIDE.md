@@ -199,6 +199,37 @@ agents:
     memory: "1g"
 ```
 
+### Importing agents
+
+`bbox agents import` reads a standalone agent manifest, validates it, and
+appends the agent to the global config. It works from two sources, picked
+automatically:
+
+- **A local manifest file** — `bbox agents import ./aider.yaml`. The manifest
+  is a YAML file with a top-level `name` plus the same fields as an
+  `agents:<name>` block.
+- **A self-describing OCI image** — `bbox agents import ghcr.io/acme/aider-bbox:latest`.
+  The manifest is read from an `agent.yaml` embedded in the image, located by
+  the `org.stacklok.broodbox.agent` config label or the well-known path
+  `/usr/share/broodbox/agent.yaml`. The image ref is pinned to its resolved
+  digest so the registered agent is reproducible.
+
+```bash
+# From a local file
+bbox agents import ./aider.yaml
+
+# From an image (reads the embedded manifest, pins to digest)
+bbox agents import ghcr.io/acme/aider-bbox:latest
+
+# Override the manifest's name, or overwrite an existing agent
+bbox agents import ghcr.io/acme/aider-bbox:latest --name aider2 --force
+```
+
+Both paths reuse the same validation, collision-gating (`--force` to overwrite
+a built-in or existing custom agent), and `--json` receipt as `bbox agents add`.
+`bbox agents export <name>` writes a manifest back out for a custom agent
+(stripping env values), so `export` → `import` round-trips cleanly.
+
 ### Config Resolution Order
 
 For each setting, the first non-zero value wins:

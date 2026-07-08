@@ -95,6 +95,42 @@ An arbitrary image used with `run-image` must provide:
 `bbox-init` is **not** in the image — it is embedded by the VM runtime and runs
 as PID 1. The image only provides the userspace/agent tooling.
 
+## Self-describing images (`agents import`)
+
+An image that satisfies the minimum contract above can also be **self-describing**:
+`bbox agents import IMAGE` reads an embedded `agent.yaml` from the image and
+registers the agent in the global config with no local YAML authoring. The
+manifest is located by one of:
+
+- the OCI config label `org.stacklok.broodbox.agent`, whose value is the path
+  to the manifest file inside the image, or
+- the well-known fallback path `/usr/share/broodbox/agent.yaml` when the label
+  is absent.
+
+Layers are walked topmost-first, so a manifest in a later layer shadows one in
+an earlier layer (matching how a container's filesystem is assembled). The
+imported image ref is pinned to its resolved digest, so a moving `:latest` tag
+is captured at import time; if the embedded manifest declares a different
+`image`, `import` warns and overrides it with the imported ref.
+
+The embedded manifest uses the same format as a local manifest file (a
+top-level `name` plus the `agents:<name>` fields):
+
+```yaml
+name: aider
+image: ghcr.io/acme/aider-bbox:latest   # overridden with the imported, digest-pinned ref
+command: ["aider"]
+env_forward: [OPENAI_API_KEY]
+egress_profile: standard
+egress_hosts:
+  standard:
+    - { name: api.openai.com, ports: [443] }
+```
+
+`run-image` itself does not read an embedded manifest — it stays flag-driven.
+The label/well-known-path convention is consumed only by `agents import`. See
+the User Guide for `agents import` usage.
+
 ## Flags
 
 `run-image` accepts a subset of the root command's flags. Notable differences:

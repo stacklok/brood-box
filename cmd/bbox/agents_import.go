@@ -4,38 +4,66 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/fs"
 	"os"
+	"strings"
 
+	"github.com/google/go-containerregistry/pkg/name"
 	"github.com/spf13/cobra"
 
 	infraconfig "github.com/stacklok/brood-box/internal/infra/config"
+	"github.com/stacklok/brood-box/internal/infra/configfile"
+	infraocimage "github.com/stacklok/brood-box/internal/infra/ocimage"
 	domainconfig "github.com/stacklok/brood-box/pkg/domain/config"
 )
 
-// agentsImportCmd is `bbox agents import <file>`: read a standalone agent
-// manifest, validate it, and append the agent to the global config (reuse the
-// exact path `agents add` takes so behavior, receipts, and safety match).
+// agentsImportCmd is `bbox agents import <file|image>`: read a standalone agent
+// manifest — from a local YAML file or a self-describing OCI image — validate
+// it, and append the agent to the global config (reuse the exact path `agents
+// add` takes so behavior, receipts, and safety match).
 func agentsImportCmd() *cobra.Command {
 	var (
-		cfgPath string
-		force   bool
-		jsonOut bool
+		cfgPath      string
+		nameOverride string
+		force        bool
+		jsonOut      bool
 	)
 	cmd := &cobra.Command{
-		Use:   "import <manifest>",
-		Short: "Import a custom agent from a manifest file into the global config",
-		Long: `Reads a standalone agent manifest (a YAML file with a top-level name
-plus the same fields as an agents:<name> block), validates it with the same
-checks the loader uses, and appends it to the global config
+		Use:   "import <manifest|image>",
+		Short: "Import a custom agent from a manifest file or OCI image into the global config",
+		Long: `Reads a standalone agent manifest, validates it with the same checks the
+loader uses, and appends it to the global config
 (~/.config/broodbox/config.yaml, or the path given by --config). Existing
 comments/formatting in the config are preserved; the added agent block is
 written as normalized YAML.
 
+A source is treated as an OCI image when it is not an existing local file AND
+it looks like an image reference an operator would type. Specifically, the
+source must contain an ` + "`@sha256:`" + ` digest, or a ` + "`/`" + ` whose
+leading segment looks like a registry host (e.g. ` + "`ghcr.io`" + ` in
+ghcr.io/acme/aider-bbox:latest, or ` + "`localhost:5001`" + `). A bare
+library image like ` + "`ubuntu:24.04`" + ` (no slash), or a path with a
+subdirectory that isn't registry-shaped like ` + "`manifests/aider.yaml`" + `,
+is treated as a local file path — use the fully-qualified
+` + "`docker.io/library/ubuntu:24.04`" + ` to import a bare library image. For
+an image, the manifest is extracted from an embedded
+agent.yaml declared by the ` + "`org.stacklok.broodbox.agent`" + ` config label,
+or from the well-known path ` + "`/usr/share/broodbox/agent.yaml`" + ` when the
+label is absent. The imported image ref is pinned to its resolved digest so the
+registered agent is reproducible. If the embedded manifest declares a different
+repository, a warning is printed and the imported (digest-pinned) ref overrides
+it.
+
 Custom agents are GLOBAL-ONLY: this command never writes to a workspace
 .broodbox.yaml. Refuses to overwrite a built-in or an existing custom agent
 unless --force.
+
+--name overrides the manifest's name (useful when the embedded name collides
+or is undescriptive).
 
 The manifest format is identical to an agents:<name> entry, with a top-level
 name field:
@@ -52,25 +80,45 @@ name field:
       - { name: api.openai.com, ports: [443] }`,
 		Example: `  bbox agents import ./broodbox-agent.yaml
   bbox agents import ./aider.yaml --json
-  bbox agents import ./aider.yaml --force  # overwrite an existing agent`,
+  bbox agents import ghcr.io/acme/aider-bbox:latest
+  bbox agents import ghcr.io/acme/aider-bbox:latest --name aider2 --force`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentsImport(cmd, args[0], cfgPath, force, jsonOut)
+			return runAgentsImport(cmd, args[0], cfgPath, nameOverride, force, jsonOut, defaultImportFetcher)
 		},
 	}
 	cmd.Flags().StringVar(&cfgPath, "config", "", "Config file path (default: ~/.config/broodbox/config.yaml)")
+	cmd.Flags().StringVar(&nameOverride, "name", "", "Override the manifest's agent name")
 	cmd.Flags().BoolVarP(&force, "force", "f", false, "Overwrite a built-in or existing custom agent")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Emit a JSON receipt of the mutation instead of human-readable output")
 	return cmd
 }
 
-func runAgentsImport(cmd *cobra.Command, manifestPath, cfgPath string, force, jsonOut bool) error {
-	manifest, err := infraconfig.LoadManifest(manifestPath)
+// defaultImportFetcher is the Fetcher used by the real CLI. Tests override it
+// (via runAgentsImport's fetcher parameter) to inject an in-memory fake so the
+// e2e path is exercised without network.
+var defaultImportFetcher infraocimage.Fetcher = infraocimage.NewRemoteFetcher()
+
+// runAgentsImport imports a custom agent from a local manifest file or an OCI
+// image. source is classified by isImageRef; when it is an image, fetcher
+// pulls the embedded manifest and the digest-pinned image ref. The validate →
+// collision-gate → UpsertAgent → receipt tail is shared with the file path.
+func runAgentsImport(
+	cmd *cobra.Command,
+	source, cfgPath, nameOverride string,
+	force, jsonOut bool,
+	fetcher infraocimage.Fetcher,
+) error {
+	manifest, sourceLabel, err := loadImportManifest(cmd.Context(), source, fetcher, cmd.ErrOrStderr())
 	if err != nil {
 		return err
 	}
+
+	if nameOverride != "" {
+		manifest.Name = nameOverride
+	}
 	if manifest.Name == "" {
-		return fmt.Errorf("manifest %s: top-level %q field is required", manifestPath, "name")
+		return fmt.Errorf("manifest %s: top-level %q field is required", sourceLabel, "name")
 	}
 
 	override := manifest.AgentOverride
@@ -104,6 +152,108 @@ func runAgentsImport(cmd *cobra.Command, manifestPath, cfgPath string, force, js
 	// is distinguishable from an `agents add` receipt.
 	receipt.Command = "agents import"
 	return emitAddResult(cmd.OutOrStdout(), receipt, jsonOut)
+}
+
+// loadImportManifest loads an AgentManifest from a local file or an OCI image,
+// depending on whether source is an existing file or an image reference. For an
+// image, the manifest's image field is overridden with the digest-pinned ref
+// (with a warning on mismatch written to warn), and sourceLabel describes the
+// source for error messages.
+func loadImportManifest(
+	ctx context.Context,
+	source string,
+	fetcher infraocimage.Fetcher,
+	warn io.Writer,
+) (domainconfig.AgentManifest, string, error) {
+	if isImageRef(source) {
+		manifestBytes, pinnedRef, err := fetcher.FetchAgentManifest(ctx, source)
+		if err != nil {
+			// The Fetcher contract promises a ref-identifying error already —
+			// don't double-wrap (RemoteFetcher wraps every error path with
+			// "importing agent from image %q").
+			return domainconfig.AgentManifest{}, source, err
+		}
+		// Reuse the same size cap + strict decode as the file path so a
+		// malformed or oversized embedded manifest fails loudly.
+		var m domainconfig.AgentManifest
+		if err := configfile.DecodeStrict(manifestBytes, &m); err != nil {
+			return domainconfig.AgentManifest{}, source, fmt.Errorf("parsing manifest from image %s: %w", source, err)
+		}
+
+		// The imported ref is authoritative: pin to the resolved digest so the
+		// registered agent is reproducible. Warn (don't fail) only on a real
+		// REPOSITORY mismatch — a same-repo tag→digest pin is the normal case and
+		// should be silent.
+		if m.Image != "" {
+			declaredRepo, parseErr := name.ParseReference(m.Image)
+			if parseErr != nil {
+				_, _ = fmt.Fprintf(warn, "Warning: image manifest declares a malformed image %q; overriding with imported ref %q\n", m.Image, pinnedRef)
+			} else if importedRepo, err := name.ParseReference(source); err == nil &&
+				declaredRepo.Context().Name() != importedRepo.Context().Name() {
+				_, _ = fmt.Fprintf(warn, "Warning: image manifest declares image %q; overriding with imported ref %q\n", m.Image, pinnedRef)
+			}
+		}
+		m.Image = pinnedRef
+		return m, source, nil
+	}
+
+	manifest, err := infraconfig.LoadManifest(source)
+	if err != nil {
+		return domainconfig.AgentManifest{}, source, err
+	}
+	return manifest, source, nil
+}
+
+// isImageRef reports whether source should be treated as an OCI image reference
+// rather than a local manifest file. A source is an image when it is NOT an
+// existing local file AND it contains an "@sha256:" digest (an explicit digest
+// is unambiguous intent) OR contains a "/" whose first segment looks like a
+// registry host (has a "." or ":", or is exactly "localhost" — e.g.
+// ghcr.io/acme/x:latest, localhost:5001/x:latest), AND it parses as a valid
+// image reference. A slash-containing source whose first segment does NOT look
+// like a registry host (e.g. "manifests/aider.yaml", "subdir/foo.yaml") is a
+// subdirectory file path, not an image reference — this excludes bare
+// local-looking names, including ones with subdirectories, so a typo'd or
+// relative manifest path does not trigger a network pull. A nonexistent path
+// that does not qualify falls through to the file path, which then produces a
+// precise "no such file" error from LoadManifest.
+func isImageRef(source string) bool {
+	if _, err := os.Stat(source); err == nil {
+		// Exists on disk — treat as a file, even if it also looks like a ref.
+		return false
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		// A stat error that isn't "not found" (e.g. permission) is surfaced by
+		// the file path, which wraps it readably. Don't claim it's an image.
+		return false
+	}
+	if strings.HasPrefix(source, "./") || strings.HasPrefix(source, "../") || strings.HasPrefix(source, "/") {
+		// A relative or absolute path — even one that contains "/" — is a
+		// file path, not an image reference.
+		return false
+	}
+	hasDigest := strings.Contains(source, "@sha256:")
+	if slashIdx := strings.Index(source, "/"); slashIdx < 0 {
+		if !hasDigest {
+			// No slash, no digest: a bare name like "aider" or "ubuntu:24.04".
+			return false
+		}
+	} else if !hasDigest && !looksLikeRegistryHost(source[:slashIdx]) {
+		// Slash present but the leading segment isn't registry-host-shaped and
+		// there's no digest to disambiguate — treat as a subdirectory path.
+		return false
+	}
+	if _, err := name.ParseReference(source); err != nil {
+		return false
+	}
+	return true
+}
+
+// looksLikeRegistryHost reports whether segment (the text before the first
+// "/" in a source string) is shaped like a registry host rather than a
+// directory name — i.e. it contains a "." (a domain, e.g. ghcr.io) or a ":"
+// (a host:port, e.g. localhost:5001), or is exactly "localhost".
+func looksLikeRegistryHost(segment string) bool {
+	return strings.ContainsAny(segment, ".:") || segment == "localhost"
 }
 
 // agentsExportCmd is `bbox agents export <name>`: emit a standalone manifest
