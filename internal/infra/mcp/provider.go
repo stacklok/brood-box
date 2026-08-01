@@ -18,14 +18,14 @@ import (
 	"github.com/stacklok/toolhive-core/env"
 	"github.com/stacklok/toolhive-core/logging"
 	thvauth "github.com/stacklok/toolhive/pkg/auth"
+	"github.com/stacklok/toolhive/pkg/authz"
 	"github.com/stacklok/toolhive/pkg/groups"
 	"github.com/stacklok/toolhive/pkg/vmcp"
 	"github.com/stacklok/toolhive/pkg/vmcp/aggregator"
 	vmcpauthfactory "github.com/stacklok/toolhive/pkg/vmcp/auth/factory"
 	vmcpclient "github.com/stacklok/toolhive/pkg/vmcp/client"
 	vmcpconfig "github.com/stacklok/toolhive/pkg/vmcp/config"
-	"github.com/stacklok/toolhive/pkg/vmcp/discovery"
-	"github.com/stacklok/toolhive/pkg/vmcp/router"
+	vmcprouter "github.com/stacklok/toolhive/pkg/vmcp/router"
 	vmcpserver "github.com/stacklok/toolhive/pkg/vmcp/server"
 	vmcpsession "github.com/stacklok/toolhive/pkg/vmcp/session"
 	workloadsmgr "github.com/stacklok/toolhive/pkg/workloads"
@@ -140,20 +140,14 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 	// Create aggregator.
 	agg := aggregator.NewDefaultAggregator(backendClient, conflictResolver, aggConfig, nil)
 
-	// Create discovery manager.
-	discoveryMgr, err := discovery.NewManager(agg)
-	if err != nil {
-		return nil, fmt.Errorf("creating discovery manager: %w", err)
-	}
-
 	// Create backend registry from discovered backends.
 	backendRegistry := vmcp.NewImmutableRegistry(backends)
 
 	// Create router.
-	rt := router.NewDefaultRouter()
+	rt := vmcprouter.NewSessionRouter(&vmcp.RoutingTable{})
 
 	// Resolve authorization middleware.
-	authMiddleware, authzMiddleware, authInfoHandler, err := p.resolveAuthMiddleware(
+	authMiddleware, authzMiddleware, authInfoHandler, authzCoreCfg, err := p.resolveAuthMiddleware(
 		ctx, vmcpIncomingAuth,
 	)
 	if err != nil {
@@ -161,12 +155,14 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 	}
 
 	// Create session factory for vmcp session management.
-	sessionFactory := vmcpsession.NewSessionFactory(
-		authRegistry,
-		vmcpsession.WithAggregator(agg),
-	)
+	// The aggregator is NOT passed to the session factory on the New/Serve
+	// path (v0.41.0+): the core is the single aggregator, fed via
+	// Config.Aggregator below.
+	sessionFactory := vmcpsession.NewSessionFactory(authRegistry)
 
 	// Create vmcp server with the resolved auth/authz middleware.
+	// Config.Aggregator is required (core.New rejects nil); Config.Authz
+	// feeds the core admission seam (nil = allow-all).
 	srv, err := vmcpserver.New(
 		ctx,
 		&vmcpserver.Config{
@@ -179,10 +175,11 @@ func (p *VMCPProvider) Services(ctx context.Context) ([]hostservice.Service, err
 			AuthzMiddleware: authzMiddleware,
 			AuthInfoHandler: authInfoHandler,
 			SessionFactory:  sessionFactory,
+			Aggregator:      agg,
+			Authz:           authzCoreCfg,
 		},
 		rt,
 		backendClient,
-		discoveryMgr,
 		backendRegistry,
 		nil, // no composite workflows
 	)
@@ -231,7 +228,9 @@ func (p *VMCPProvider) Close() error {
 }
 
 // resolveAuthMiddleware builds the auth/authz middleware stack based on the
-// configured authorization profile.
+// configured authorization profile. It also returns the authorizer-agnostic
+// authz config consumed by the core admission seam (v0.41.0+); nil means
+// allow-all.
 //
 // - full-access (or nil config): LocalUserMiddleware only, no authz.
 // - observe / safe-tools: Anonymous auth + Cedar authz with built-in policies.
@@ -243,6 +242,7 @@ func (p *VMCPProvider) resolveAuthMiddleware(
 	authMw func(http.Handler) http.Handler,
 	authzMw func(http.Handler) http.Handler,
 	authInfoH http.Handler,
+	authzCfg *authz.Config,
 	err error,
 ) {
 	// Handle the "custom" profile: read Cedar policies from the vmcp config YAML.
@@ -250,7 +250,7 @@ func (p *VMCPProvider) resolveAuthMiddleware(
 		if vmcpIncomingAuth == nil ||
 			vmcpIncomingAuth.Authz == nil ||
 			len(vmcpIncomingAuth.Authz.Policies) == 0 {
-			return nil, nil, nil, fmt.Errorf(
+			return nil, nil, nil, nil, fmt.Errorf(
 				"MCP authz profile %q requires Cedar policies in --mcp-config "+
 					"(authz.policies)", domainconfig.MCPAuthzProfileCustom)
 		}
@@ -258,38 +258,44 @@ func (p *VMCPProvider) resolveAuthMiddleware(
 			ctx, vmcpIncomingAuth, vmcpServerName, nil, nil, nil,
 		)
 		if err != nil {
-			return nil, nil, nil, fmt.Errorf("creating custom MCP auth middleware: %w", err)
+			return nil, nil, nil, nil, fmt.Errorf("creating custom MCP auth middleware: %w", err)
 		}
-		return authMw, authzMw, authInfoH, nil
+		authzCfg, authErr := vmcpauthfactory.BuildAuthzConfig(vmcpIncomingAuth.Authz)
+		if authErr != nil {
+			return nil, nil, nil, nil, fmt.Errorf("building custom MCP authz config: %w", authErr)
+		}
+		return authMw, authzMw, authInfoH, authzCfg, nil
 	}
 
 	// Resolve built-in profile to Cedar policies.
 	policies, err := ResolveProfile(p.authzConfig)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("resolving MCP authz profile: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("resolving MCP authz profile: %w", err)
 	}
 
 	if policies == nil {
 		// full-access: no authz, just identity for caching.
-		return thvauth.LocalUserMiddleware("sandbox"), nil, nil, nil
+		return thvauth.LocalUserMiddleware("sandbox"), nil, nil, nil, nil
 	}
 
-	authMw, authzMw, authInfoH, err = vmcpauthfactory.NewIncomingAuthMiddleware(
-		ctx,
-		&vmcpconfig.IncomingAuthConfig{
-			Type: "anonymous",
-			Authz: &vmcpconfig.AuthzConfig{
-				Type:     "cedar",
-				Policies: policies,
-			},
+	builtinAuth := &vmcpconfig.IncomingAuthConfig{
+		Type: "anonymous",
+		Authz: &vmcpconfig.AuthzConfig{
+			Type:     "cedar",
+			Policies: policies,
 		},
-		vmcpServerName,
-		nil, nil, nil,
+	}
+	authMw, authzMw, authInfoH, err = vmcpauthfactory.NewIncomingAuthMiddleware(
+		ctx, builtinAuth, vmcpServerName, nil, nil, nil,
 	)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("creating MCP auth middleware: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("creating MCP auth middleware: %w", err)
 	}
-	return authMw, authzMw, authInfoH, nil
+	authzCfg, err = vmcpauthfactory.BuildAuthzConfig(builtinAuth.Authz)
+	if err != nil {
+		return nil, nil, nil, nil, fmt.Errorf("building MCP authz config: %w", err)
+	}
+	return authMw, authzMw, authInfoH, authzCfg, nil
 }
 
 // statusRecorder wraps http.ResponseWriter to capture the status code.
