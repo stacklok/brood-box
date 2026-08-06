@@ -11,7 +11,7 @@ require (
 	github.com/adrg/xdg v0.5.3
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/gofrs/flock v0.13.0
-	github.com/google/go-containerregistry v0.21.8
+	github.com/google/go-containerregistry v0.21.9
 	github.com/pelletier/go-toml/v2 v2.4.3
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/sergi/go-diff v1.4.0
