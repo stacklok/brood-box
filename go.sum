@@ -620,6 +620,8 @@ github.com/stacklok/go-microvm v0.0.38 h1:3TqucF1jWjwE5gUnyon4268KwqTpWWSo96KwDm
 github.com/stacklok/go-microvm v0.0.38/go.mod h1:s5FxGj2cT7LfZnB5Bi5K+bW/z4O4/hM3ZbiaGisPfqA=
 github.com/stacklok/go-microvm v0.0.39 h1:i/IGv9rUS38vboQwFMp3GvBti3fGtWts3DxpXhil0HI=
 github.com/stacklok/go-microvm v0.0.39/go.mod h1:MSeQCQZE65BY0LzaxQszGPqz9TIy8EyV8fnzZm+C+Vk=
+github.com/stacklok/go-microvm v0.0.40 h1:ypiv3oCOdftAFcNnoKO6XOHfNks8ixySm8Ny/L1PbSM=
+github.com/stacklok/go-microvm v0.0.40/go.mod h1:MSeQCQZE65BY0LzaxQszGPqz9TIy8EyV8fnzZm+C+Vk=
 github.com/stacklok/toolhive v0.41.0 h1:p9F8kYJUF6UpgbJPX4qoQ0a+E3BE5iEIQdCMO71r3Pc=
 github.com/stacklok/toolhive v0.41.0/go.mod h1:DyeMzDajVhmTiZsQt902jsRE/4VPjc91HRJfgruEeqk=
 github.com/stacklok/toolhive-core v0.0.37 h1:+pWRm3zfxVFD/7XJ2mv4481bSFQJBmUFBEu0OMbZlYI=
