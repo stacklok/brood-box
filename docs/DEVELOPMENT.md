@@ -6,7 +6,7 @@
 - [Task](https://taskfile.dev/) (task runner)
 - [golangci-lint](https://golangci-lint.run/)
 - [goimports](https://pkg.go.dev/golang.org/x/tools/cmd/goimports)
-- [GitHub CLI (`gh`)](https://cli.github.com/) (for `task build` to download pre-built runtime artifacts)
+- [curl](https://curl.se/) (for `task build` to download pre-built runtime artifacts)
 
 For running VMs:
 - Linux with KVM support, or macOS with Hypervisor.framework (Apple Silicon)
