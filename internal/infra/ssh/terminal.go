@@ -308,9 +308,7 @@ func (s *InteractiveSession) serveAgentChannel(ctx context.Context, authSock str
 	defer func() { _ = agentConn.Close() }()
 
 	agentClient := agent.NewClient(agentConn)
-	if err := agent.ServeAgent(agentClient, channel); err != nil {
-		s.logger.Debug("agent forwarding session ended", "error", err)
-	}
+	s.logger.Debug("agent forwarding session ended", "error", agent.ServeAgent(agentClient, channel))
 }
 
 // dialAgentWithRetry attempts to connect to the host SSH agent socket with
