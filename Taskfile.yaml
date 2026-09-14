@@ -124,24 +124,24 @@ tasks:
     cmds:
       - |
         mkdir -p internal/infra/vm/runtimebin
-        gh release download {{.GOMICROVM_VERSION}} --repo stacklok/go-microvm --dir internal/infra/vm/runtimebin/ --clobber --pattern 'go-microvm-runtime-*.tar.gz'
         archive=""
         for os in "{{.HOST_OS}}" "{{.HOST_OS_ALT}}"; do
           for arch in "{{.HOST_ARCH}}" "{{.HOST_ARCH_ALT}}"; do
             candidate="internal/infra/vm/runtimebin/go-microvm-runtime-${os}-${arch}.tar.gz"
-            if [ -f "$candidate" ]; then
+            url="https://github.com/stacklok/go-microvm/releases/download/{{.GOMICROVM_VERSION}}/go-microvm-runtime-${os}-${arch}.tar.gz"
+            if curl --fail --location --retry 3 --output "$candidate" "$url"; then
               archive="$candidate"
               break 2
             fi
+            rm -f "$candidate"
           done
         done
         if [ -z "$archive" ]; then
-          echo "no runtime archive found in internal/infra/vm/runtimebin"
-          ls -1 internal/infra/vm/runtimebin/go-microvm-runtime-*.tar.gz || true
+          echo "no runtime archive available for {{.HOST_OS}}/{{.HOST_ARCH}}"
           exit 1
         fi
         tar -xzf "$archive" -C internal/infra/vm/runtimebin/ --strip-components=1
-        rm -f internal/infra/vm/runtimebin/go-microvm-runtime-*.tar.gz
+        rm -f "$archive"
 
   fetch-firmware:
     desc: Download pre-built go-microvm firmware from GitHub Release
@@ -150,24 +150,24 @@ tasks:
     cmds:
       - |
         mkdir -p internal/infra/vm/runtimebin
-        gh release download {{.GOMICROVM_VERSION}} --repo stacklok/go-microvm --dir internal/infra/vm/runtimebin/ --clobber --pattern 'go-microvm-firmware-*.tar.gz'
         archive=""
         for os in "{{.HOST_OS}}" "{{.HOST_OS_ALT}}"; do
           for arch in "{{.HOST_ARCH}}" "{{.HOST_ARCH_ALT}}"; do
             candidate="internal/infra/vm/runtimebin/go-microvm-firmware-${os}-${arch}.tar.gz"
-            if [ -f "$candidate" ]; then
+            url="https://github.com/stacklok/go-microvm/releases/download/{{.GOMICROVM_VERSION}}/go-microvm-firmware-${os}-${arch}.tar.gz"
+            if curl --fail --location --retry 3 --output "$candidate" "$url"; then
               archive="$candidate"
               break 2
             fi
+            rm -f "$candidate"
           done
         done
         if [ -z "$archive" ]; then
-          echo "no firmware archive found in internal/infra/vm/runtimebin"
-          ls -1 internal/infra/vm/runtimebin/go-microvm-firmware-*.tar.gz || true
+          echo "no firmware archive available for {{.HOST_OS}}/{{.HOST_ARCH}}"
           exit 1
         fi
         tar -xzf "$archive" -C internal/infra/vm/runtimebin/ --strip-components=1
-        rm -f internal/infra/vm/runtimebin/go-microvm-firmware-*.tar.gz
+        rm -f "$archive"
 
   test:
     desc: Run unit tests

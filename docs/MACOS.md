@@ -30,7 +30,7 @@ The default build embeds the go-microvm runtime into `bbox`:
 task build
 ```
 
-This downloads the pinned runtime artifacts via `gh` and produces a self-contained
+This downloads the pinned runtime artifacts via `curl` and produces a self-contained
 `bin/bbox` (pure Go, no CGO) that does not depend on Homebrew `libkrun`.
 
 Firmware (`libkrunfw`) is not embedded. It is downloaded at runtime and cached

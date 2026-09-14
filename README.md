@@ -65,7 +65,7 @@ VM. When the agent exits, you review the diff and accept or reject each file.
 - Linux with KVM support (`/dev/kvm` must be accessible), or macOS with Hypervisor.framework (Apple Silicon)
 - [Go 1.26+](https://go.dev/dl/)
 - [Task](https://taskfile.dev/) (task runner)
-- [GitHub CLI (`gh`)](https://cli.github.com/) (for downloading pre-built runtime artifacts)
+- [curl](https://curl.se/) (for downloading pre-built runtime artifacts)
 - An API key for your agent (e.g. `ANTHROPIC_API_KEY` for Claude Code)
 
 ### Install from Release
