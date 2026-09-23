@@ -16,7 +16,7 @@ require (
 	github.com/sabhiram/go-gitignore v0.0.0-20210923224102-525f6e181f06
 	github.com/sergi/go-diff v1.4.0
 	github.com/spf13/cobra v1.10.2
-	github.com/stacklok/go-microvm v0.0.40
+	github.com/stacklok/go-microvm v0.0.41
 	github.com/stacklok/toolhive v0.49.0
 	github.com/stacklok/toolhive-core v0.0.47
 	github.com/stretchr/testify v1.12.1
