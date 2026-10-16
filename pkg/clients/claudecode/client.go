@@ -53,7 +53,7 @@ func spec() agent.Agent {
 		DefaultMemory:        bytesize.ByteSize(4096),
 		DefaultTmpSize:       bytesize.ByteSize(2048),
 		DefaultEgressProfile: egress.ProfilePermissive,
-		CredentialPaths:      []string{".claude/"},
+		CredentialPaths:      []string{".claude/", ".claude.json"},
 		EgressHosts: map[egress.ProfileName][]egress.Host{
 			egress.ProfileLocked:   locked,
 			egress.ProfileStandard: append(append([]egress.Host{}, locked...), devhosts.Standard()...),
