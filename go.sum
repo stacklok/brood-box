@@ -643,6 +643,8 @@ github.com/spiffe/go-spiffe/v2 v2.9.0 h1:g5qTg3qIP1HXV+GzuyEfSJFVxUCpEP5Ui1OINVJ
 github.com/spiffe/go-spiffe/v2 v2.9.0/go.mod h1:w2CLWKLMTX/PPYUEUPv3ltH0RXsw5S8suwNF46w9/Aw=
 github.com/stacklok/go-microvm v0.0.40 h1:ypiv3oCOdftAFcNnoKO6XOHfNks8ixySm8Ny/L1PbSM=
 github.com/stacklok/go-microvm v0.0.40/go.mod h1:MSeQCQZE65BY0LzaxQszGPqz9TIy8EyV8fnzZm+C+Vk=
+github.com/stacklok/go-microvm v0.0.41 h1:dWFQYb4hK0Lrm6LMrmbxvkQ9NGJWQ/FRHskcgK0p88U=
+github.com/stacklok/go-microvm v0.0.41/go.mod h1:MSeQCQZE65BY0LzaxQszGPqz9TIy8EyV8fnzZm+C+Vk=
 github.com/stacklok/toolhive v0.49.0 h1:zJdrA99oxeOje15VuGbReOnRQDYR0FdJngLtiMSiODw=
 github.com/stacklok/toolhive v0.49.0/go.mod h1:a1AT//3yROxXP/I7Ngi6hbpAx5lhxV044Gz2iM/SVns=
 github.com/stacklok/toolhive v0.52.0 h1:GeymvonKgrPRTWT9Irp0sto1OlwJgu8exSLnMU7N04U=
