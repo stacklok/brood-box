@@ -7,6 +7,9 @@
 # agents.<name>.image in .broodbox.yaml.
 FROM cgr.dev/chainguard/wolfi-base:latest
 
+# nodejs and curl link the shared Brotli decoder. Require the release that
+# fixes CVE-2026-111497 so a stale package index fails the build instead of
+# shipping the vulnerable decoder.
 RUN apk add --no-cache \
     bash \
     bash-binsh \
@@ -30,7 +33,8 @@ RUN apk add --no-cache \
     py3-virtualenv \
     nodejs \
     npm \
-    rust
+    rust \
+    'libbrotlidec1>=1.2.1'
 
 # Put Go and user-local binaries on PATH for all shells.
 # NOTE: Docker ENV PATH is NOT enough — Wolfi's /etc/profile rebuilds PATH
