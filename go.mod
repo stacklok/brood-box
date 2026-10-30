@@ -9,7 +9,7 @@ require (
 	charm.land/glamour/v2 v2.0.1
 	charm.land/lipgloss/v2 v2.0.6
 	github.com/adrg/xdg v0.5.3
-	github.com/cedar-policy/cedar-go v1.8.0
+	github.com/cedar-policy/cedar-go v1.9.0
 	github.com/gofrs/flock v0.13.1
 	github.com/google/go-containerregistry v0.22.1
 	github.com/pelletier/go-toml/v2 v2.4.3
@@ -109,6 +109,7 @@ require (
 	github.com/go-git/go-git/v5 v5.19.3 // indirect
 	github.com/go-jose/go-jose/v3 v3.0.5 // indirect
 	github.com/go-jose/go-jose/v4 v4.1.5 // indirect
+	github.com/go-json-experiment/json v0.0.0-20260820222146-c27c302e5fc3 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect
 	github.com/go-logr/stdr v1.2.2 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
