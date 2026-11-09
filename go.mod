@@ -7,7 +7,7 @@ go 1.27.0
 
 require (
 	charm.land/glamour/v2 v2.0.1
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.0
 	github.com/adrg/xdg v0.5.3
 	github.com/cedar-policy/cedar-go v1.8.0
 	github.com/gofrs/flock v0.13.1
